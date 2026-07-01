@@ -1,0 +1,12 @@
+node_modules/
+.zed/
+
+dne.db
+dne.db-journal
+dne.db-wal
+dne.db-shm
+
+.env
+.env.development
+.env.production
+.env.test

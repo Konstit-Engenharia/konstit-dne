@@ -1,0 +1,54 @@
+{
+  "$schema": "https://plugins.dprint.dev/dprint/dprint-plugin-json/0.19.4/schema.json",
+  "typescript": {
+    "semiColons": "always",
+    "quoteStyle": "alwaysSingle",
+    "quoteProps": "consistent",
+    "useBraces": "always",
+    "bracePosition": "sameLine",
+    "singleBodyPosition": "nextLine",
+    "importDeclaration.forceMultiLine": "whenMultiple",
+    "module.sortImportDeclarations": "caseInsensitive",
+    "module.sortExportDeclarations": "caseInsensitive",
+    "importDeclaration.sortNamedImports": "caseInsensitive",
+    "exportDeclaration.sortNamedExports": "caseInsensitive",
+    "arrowFunction.useParentheses": "force",
+    "arrayPattern.trailingCommas": "always",
+    "enumDeclaration.trailingCommas": "always",
+    "typeLiteral.trailingCommas": "always",
+    "objectExpression.trailingCommas": "onlyMultiLine",
+    "enumDeclaration.memberSpacing": "maintain",
+    "lineWidth": 140
+  },
+  "json": {
+  },
+  "markdown": {},
+  "toml": {},
+  "excludes": [
+    "**/.cache",
+    "**/.vscode",
+    "**/bin",
+    "**/cache",
+    "**/data",
+    "**/db",
+    "**/docs",
+    "**/sample",
+    "**/node_modules",
+    "**/config",
+    "**/*-lock.json",
+    "**/tsconfig.json",
+    "**/package.json",
+    "./package.json",
+    "./dprint.json",
+    "./tsconfig.json",
+    "./cspell.json",
+    "!./*.user.ts"
+  ],
+  "plugins": [
+    "npm:@dprint/typescript@0.96.1",
+    "npm:@dprint/json@0.22.0",
+    "npm:@dprint/markdown@0.22.1",
+    "npm:@dprint/toml@0.7.0",
+    "npm:@dprint/dockerfile@0.5.0"
+  ]
+}

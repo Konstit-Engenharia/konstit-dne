@@ -1,0 +1,40 @@
+{
+  "name": "edne",
+  "version": "1.0.0",
+  "type": "module",
+  "module": "src/index.ts",
+  "bin": {
+    "edne": "./src/index.ts"
+  },
+  "scripts": {
+    "fetch": "bun run src/index.ts fetch",
+    "lookup": "bun run src/index.ts lookup",
+    "benchmark": "bun run scripts/benchmark.ts",
+    "benchmark:download": "bun run scripts/benchmark-download.ts",
+    "benchmark:micro": "bun run scripts/micro-benchmark.ts",
+    "benchmark:batch-size": "bun run scripts/benchmark-batch-size.ts",
+    "benchmark:direct-zip": "bun run scripts/benchmark-direct-zip.ts",
+    "benchmark:atomic-update": "bun run scripts/benchmark-atomic-update.ts",
+    "tsc": "bunx --bun tsc --noEmit",
+    "lint:biome": "bunx --bun @biomejs/biome check",
+    "lint:oxlint": "bunx --bun oxlint --type-aware",
+    "lint": "bun tsc && bun lint:biome && bun lint:oxlint",
+    "fmt": "bunx --bun dprint fmt"
+  },
+  "dependencies": {
+    "@drizzle-team/brocli": "^0.12.0"
+  },
+  "peerDependencies": {
+    "typescript": "^6.0.3"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.1",
+    "@types/bun": "^1.3.14",
+    "dprint": "^0.55.1",
+    "mitata": "^1.0.34",
+    "oxlint": "^1.72.0"
+  },
+  "engines": {
+    "bun": "^1.3.14"
+  }
+}
