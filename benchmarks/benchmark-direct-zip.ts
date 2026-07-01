@@ -29,7 +29,7 @@ const zipPath = join(workDir, 'dne.zip');
 const schema = buildSchema();
 let databaseCounter = 0;
 
-runCommand('bun', ['run', 'scripts/create-benchmark-dne.ts', dneDir, String(rows)]);
+runCommand('bun', ['run', 'benchmarks/create-benchmark-dne.ts', dneDir, String(rows)]);
 runCommand('zip', ['-qr', zipPath, 'Delimitado'], dneDir);
 
 const zipBuffer = Buffer.from(await Bun.file(zipPath).arrayBuffer());
@@ -69,8 +69,12 @@ summary(() => {
   });
 });
 
-await run({ colors: !Bun.env.NO_COLOR });
+await run({ colors: !envValue('NO_COLOR') });
 rmSync(workDir, { recursive: true, force: true });
+
+function envValue(name: string) {
+  return Bun.env[name];
+}
 
 function collectRequiredFiles(source: DneDataSource, tables: TableDefinition[]) {
   const files: string[] = [];

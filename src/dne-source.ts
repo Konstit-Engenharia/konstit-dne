@@ -169,7 +169,7 @@ function matchingFiles(files: string[], glob: string) {
     return files.filter((file) => file === glob);
   }
 
-  const [prefix, suffix,] = glob.split('*', 2);
+  const [prefix = '', suffix = '',] = glob.split('*', 2);
   return files.filter(
     (file) => file.startsWith(prefix) && file.endsWith(suffix),
   );
@@ -194,7 +194,7 @@ function filenameIsRequiredDneBasicoFile(
       return file === glob;
     }
 
-    const [prefix, suffix,] = glob.split('*', 2);
+    const [prefix = '', suffix = '',] = glob.split('*', 2);
     return file.startsWith(prefix) && file.endsWith(suffix);
   });
 }

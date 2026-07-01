@@ -9,12 +9,12 @@
   "scripts": {
     "fetch": "bun run src/index.ts fetch",
     "lookup": "bun run src/index.ts lookup",
-    "benchmark": "bun run scripts/benchmark.ts",
-    "benchmark:download": "bun run scripts/benchmark-download.ts",
-    "benchmark:micro": "bun run scripts/micro-benchmark.ts",
-    "benchmark:batch-size": "bun run scripts/benchmark-batch-size.ts",
-    "benchmark:direct-zip": "bun run scripts/benchmark-direct-zip.ts",
-    "benchmark:atomic-update": "bun run scripts/benchmark-atomic-update.ts",
+    "benchmark": "bun run benchmarks/benchmark.ts",
+    "benchmark:download": "bun run benchmarks/benchmark-download.ts",
+    "benchmark:micro": "bun run benchmarks/micro-benchmark.ts",
+    "benchmark:batch-size": "bun run benchmarks/benchmark-batch-size.ts",
+    "benchmark:direct-zip": "bun run benchmarks/benchmark-direct-zip.ts",
+    "benchmark:atomic-update": "bun run benchmarks/benchmark-atomic-update.ts",
     "tsc": "bunx --bun tsc --noEmit",
     "lint:biome": "bunx --bun @biomejs/biome check",
     "lint:oxlint": "bunx --bun oxlint --type-aware",
@@ -25,11 +25,11 @@
     "@drizzle-team/brocli": "^0.12.0"
   },
   "peerDependencies": {
-    "typescript": "^6.0.3"
+    "typescript": "5.9.3"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.1",
-    "@types/bun": "^1.3.14",
+    "@biomejs/biome": "2.5.1",
+    "@types/bun": "1.3.14",
     "dprint": "^0.55.1",
     "mitata": "^1.0.34",
     "oxlint": "^1.72.0"

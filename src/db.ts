@@ -12,7 +12,13 @@ import {
 } from './settings.ts';
 
 type InsertStatement = ReturnType<Database['prepare']>;
-export type LoadMetadata = Record<string, string>;
+export type LoadMetadata = Record<string, string> & {
+  source_content_length?: string;
+  source_etag?: string;
+  source_kind?: string;
+  source_last_modified?: string;
+  source_url?: string;
+};
 
 type UnifiedInsertValue = string | number | null;
 type UnifiedInsertRow = [
@@ -68,6 +74,9 @@ class BatchedUnifiedInsert implements UnifiedInsert {
 
     for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
       const row = rows[rowIndex];
+      if (!row) {
+        throw new Error(`Missing row at index ${rowIndex}`);
+      }
       const offset = rowIndex * 8;
       params[offset] = row[0];
       params[offset + 1] = row[1];
@@ -161,8 +170,8 @@ export class DneDatabaseWriter {
       localidades.set(locNu, {
         uf,
         nome,
-        cep,
-        locNuSub,
+        cep: cep ?? null,
+        locNuSub: locNuSub ?? null,
         munNu: munNu === null ? null : Number(munNu),
       });
     });

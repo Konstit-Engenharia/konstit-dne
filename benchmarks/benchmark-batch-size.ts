@@ -31,6 +31,9 @@ for (const size of sizes) {
     const params = Array.from({ length: batch.length * 8 }, () => null as string | number | null);
     for (let rowIndex = 0; rowIndex < batch.length; rowIndex++) {
       const row = batch[rowIndex];
+      if (!row) {
+        throw new Error(`Missing row at index ${rowIndex}`);
+      }
       const offset = rowIndex * 8;
       params[offset] = row[0];
       params[offset + 1] = row[1];
@@ -45,7 +48,7 @@ for (const size of sizes) {
   });
 }
 
-await run({ colors: !Bun.env.NO_COLOR });
+await run({ colors: !envValue('NO_COLOR') });
 
 console.log('\nreal cached load:');
 for (const size of sizes) {
@@ -62,4 +65,8 @@ for (const size of sizes) {
     throw new Error(`batch=${size} failed\n${result.stderr.toString()}`);
   }
   console.log(`batch=${size} seconds=${seconds}`);
+}
+
+function envValue(name: string) {
+  return Bun.env[name];
 }

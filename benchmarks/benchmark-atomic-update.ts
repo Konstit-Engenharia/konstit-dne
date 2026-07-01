@@ -22,8 +22,8 @@ const targetDbPath = join(workDir, 'target.db');
 const scratchDbPath = join(workDir, 'scratch.db');
 
 try {
-  runCommand('bun', ['run', 'scripts/create-benchmark-dne.ts', oldDneDir, String(oldRows)]);
-  runCommand('bun', ['run', 'scripts/create-benchmark-dne.ts', newDneDir, String(newRows)]);
+  runCommand('bun', ['run', 'benchmarks/create-benchmark-dne.ts', oldDneDir, String(oldRows)]);
+  runCommand('bun', ['run', 'benchmarks/create-benchmark-dne.ts', newDneDir, String(newRows)]);
 
   loadDatabase(targetDbPath, oldDneDir);
   loadDatabase(scratchDbPath, newDneDir);

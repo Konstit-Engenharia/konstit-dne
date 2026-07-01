@@ -21,6 +21,7 @@ import {
   quoteIdent,
   readDatabaseMetadata,
   sqlitePathFromDatabaseUrl,
+  type LoadMetadata,
 } from './db.ts';
 import {
   DneResolver,
@@ -290,7 +291,7 @@ function buildLoadMetadata(
   source: string,
   remoteInfo: RemoteDneSourceInfo | null,
 ) {
-  const metadata: Record<string, string> = {
+  const metadata: LoadMetadata = {
     loaded_at: new Date().toISOString(),
     source_input: source,
     source_kind: remoteInfo
@@ -343,7 +344,11 @@ function renderSqlCodeBlock(sql: string) {
 }
 
 function shouldUseAnsi() {
-  return Boolean(process.stdout.isTTY) && Bun.env.NO_COLOR === undefined;
+  return Boolean(process.stdout.isTTY) && envValue('NO_COLOR') === undefined;
+}
+
+function envValue(name: string) {
+  return Bun.env[name];
 }
 
 async function createScratchTarget(target: string) {

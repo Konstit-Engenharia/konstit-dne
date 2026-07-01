@@ -3,7 +3,7 @@ import { Database } from 'bun:sqlite';
 const [leftPath, rightPath,] = Bun.argv.slice(2);
 
 if (!leftPath || !rightPath) {
-  console.error('Usage: bun run scripts/compare-sqlite.ts <left.db> <right.db>');
+  console.error('Usage: bun run benchmarks/compare-sqlite.ts <left.db> <right.db>');
   process.exit(1);
 }
 

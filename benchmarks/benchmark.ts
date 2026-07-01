@@ -10,7 +10,7 @@ const bunDb = join(workDir, 'bun.db');
 
 await rm(workDir, { recursive: true, force: true });
 
-const fixtureSeconds = timed('bun', ['run', 'scripts/create-benchmark-dne.ts', dneDir, String(size)]);
+const fixtureSeconds = timed('bun', ['run', 'benchmarks/create-benchmark-dne.ts', dneDir, String(size)]);
 
 const bun = timed('bun', [
   'run',

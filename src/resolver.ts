@@ -156,7 +156,7 @@ function looksLikeUrl(value: string | URL) {
 }
 
 async function cachedDownloadPath(info: RemoteDneSourceInfo) {
-  if (Bun.env.EDNE_DISABLE_DOWNLOAD_CACHE === '1') {
+  if (envValue('EDNE_DISABLE_DOWNLOAD_CACHE') === '1') {
     return null;
   }
   if (!info.contentLength) {
@@ -172,6 +172,10 @@ async function cachedDownloadPath(info: RemoteDneSourceInfo) {
     .update(`${info.url}\0${info.contentLength}\0${cacheVersionToken(info)}`)
     .digest('hex');
   return join(cacheDir, `${key}.zip`);
+}
+
+function envValue(name: string) {
+  return Bun.env[name];
 }
 
 function cacheVersionToken(info: RemoteDneSourceInfo) {

@@ -85,6 +85,9 @@ summary(() => {
     const params = Array.from({ length: insertRows.length * 8 }, () => null as string | number | null);
     for (let rowIndex = 0; rowIndex < insertRows.length; rowIndex++) {
       const row = insertRows[rowIndex];
+      if (!row) {
+        throw new Error(`Missing row at index ${rowIndex}`);
+      }
       const offset = rowIndex * 8;
       params[offset] = row[0];
       params[offset + 1] = row[1];
@@ -100,5 +103,9 @@ summary(() => {
 });
 
 await run({
-  colors: !Bun.env.NO_COLOR,
+  colors: !envValue('NO_COLOR'),
 });
+
+function envValue(name: string) {
+  return Bun.env[name];
+}

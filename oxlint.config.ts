@@ -1,4 +1,4 @@
-import { defineConfig } from 'oxlint';
+import { defineConfig } from 'oxlint/dist';
 
 export default defineConfig({
   plugins: ['typescript', 'unicorn', 'oxc', 'promise', 'import'],
