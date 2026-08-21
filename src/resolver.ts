@@ -12,9 +12,9 @@ import {
   join,
 } from 'node:path';
 import {
-  type DneDataSource,
   resolveDirectoryDneSource,
   resolveZipDneSource,
+  type DneDataSource,
 } from './dne-source.ts';
 import type { TableDefinition } from './schema.ts';
 import {
@@ -89,7 +89,7 @@ export class DneResolver {
   private async download(url: string) {
     const info = await inspectRemoteDneSource(url);
     const cachedPath = this.options.skipCache ? null : await cachedDownloadPath(info);
-    if (cachedPath && (await fileExists(cachedPath))) {
+    if (cachedPath && (await Bun.file(cachedPath).exists())) {
       return cachedPath;
     }
 
@@ -156,7 +156,7 @@ function looksLikeUrl(value: string | URL) {
 }
 
 async function cachedDownloadPath(info: RemoteDneSourceInfo) {
-  if (envValue('EDNE_DISABLE_DOWNLOAD_CACHE') === '1') {
+  if (process.env['EDNE_DISABLE_DOWNLOAD_CACHE'] === '1') {
     return null;
   }
   if (!info.contentLength) {
@@ -172,10 +172,6 @@ async function cachedDownloadPath(info: RemoteDneSourceInfo) {
     .update(`${info.url}\0${info.contentLength}\0${cacheVersionToken(info)}`)
     .digest('hex');
   return join(cacheDir, `${key}.zip`);
-}
-
-function envValue(name: string) {
-  return Bun.env[name];
 }
 
 function cacheVersionToken(info: RemoteDneSourceInfo) {
@@ -201,8 +197,4 @@ async function cacheDownloadedFile(source: string, target: string): Promise<void
   await Bun.file(partial)
     .delete()
     .catch(() => {});
-}
-
-async function fileExists(path: string): Promise<boolean> {
-  return Bun.file(path).exists();
 }

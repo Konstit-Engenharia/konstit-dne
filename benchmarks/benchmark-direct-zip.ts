@@ -12,9 +12,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DneDatabaseWriter } from '../src/db.ts';
 import {
-  type DneDataSource,
   resolveDirectoryDneSource,
   resolveZipDneSource,
+  type DneDataSource,
 } from '../src/dne-source.ts';
 import {
   buildSchema,

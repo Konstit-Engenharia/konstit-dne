@@ -10,3 +10,5 @@ dne.db-shm
 .env.development
 .env.production
 .env.test
+
+.DS_Store

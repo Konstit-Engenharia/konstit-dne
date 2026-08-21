@@ -25,6 +25,7 @@
     // Some stricter flags
     "noUnusedLocals": true,
     "noUnusedParameters": true,
+    // Conflicts with Biome's useLiteralKeys.
     "noPropertyAccessFromIndexSignature": true,
   },
 }
