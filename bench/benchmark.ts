@@ -10,7 +10,7 @@ const bunDb = join(workDir, 'bun.db');
 
 await rm(workDir, { recursive: true, force: true });
 
-const fixtureSeconds = timed('bun', ['run', 'benchmarks/create-benchmark-dne.ts', dneDir, String(size)]);
+const fixtureSeconds = timed('bun', ['run', 'bench/create-dne.bench.ts', dneDir, String(size)]);
 
 const bun = timed('bun', [
   'run',
@@ -21,7 +21,7 @@ const bun = timed('bun', [
   dneDir,
 ]);
 
-console.log(JSON.stringify({ rowsPerMainTable: size, fixtureSeconds, bunSeconds: bun, bunDb }, null, 2));
+console.log({ rowsPerMainTable: size, fixtureSeconds, bunSeconds: bun, bunDb });
 
 function timed(command: string, args: string[]) {
   const start = performance.now();
