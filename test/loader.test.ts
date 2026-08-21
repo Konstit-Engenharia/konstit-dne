@@ -7,10 +7,14 @@ import {
 } from 'bun:test';
 import {
   mkdtempSync,
+  readdirSync,
   rmSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import {
+  basename,
+  join,
+} from 'node:path';
 import { SQLITE_CEP_TABLE_NAME } from '../src/settings.ts';
 import {
   createFixture,
@@ -31,6 +35,9 @@ describe('loader', () => {
 
     createFixture(dneDir, 40);
     fetchDatabase(dbPath, dneDir);
+
+    const scratchPrefix = `.${basename(dbPath)}.`;
+    expect(readdirSync(workDir).filter((name) => name.startsWith(scratchPrefix))).toEqual([]);
 
     const db = new Database(dbPath, { readonly: true });
     try {

@@ -1,6 +1,8 @@
 node_modules/
 .zed/
 
+*.db
+
 dne.db
 dne.db-journal
 dne.db-wal

@@ -379,8 +379,8 @@ async function createScratchTarget(target: string) {
     cleanup: async () => {
       if (!committed) {
         await rm(scratch, { force: true });
-        await rm(`${scratch}-journal`, { force: true });
       }
+      await rm(`${scratch}-journal`, { force: true });
     },
   };
 }

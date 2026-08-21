@@ -130,7 +130,7 @@ export class DneDatabaseWriter {
   close() {
     this.db.run('PRAGMA locking_mode = NORMAL');
     // Disable persistent WAL (needed on macOS)
-    this.db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0);
+    // this.db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0);
     // Checkpoint and truncate the WAL file
     this.db.run('PRAGMA wal_checkpoint(TRUNCATE);');
     this.db.close();

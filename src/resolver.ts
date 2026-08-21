@@ -113,7 +113,7 @@ export class DneResolver {
 export async function inspectRemoteDneSource(
   url: string,
 ): Promise<RemoteDneSourceInfo> {
-  const response = await fetch(url, { method: 'HEAD' });
+  const response = await fetch(url, { method: 'HEAD', verbose: false });
   if (!response.ok) {
     throw new Error(`Failed to inspect DNE from ${url}: ${response.status}`);
   }
@@ -127,7 +127,7 @@ export async function inspectRemoteDneSource(
 }
 
 async function downloadSimple(url: string, path: string) {
-  const response = await fetch(url);
+  const response = await fetch(url, { verbose: false });
   if (!response.ok) {
     throw new Error(`Failed to download DNE from ${url}: ${response.status}`);
   }
