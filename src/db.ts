@@ -336,8 +336,15 @@ export class DneDatabaseWriter {
     }
 
     for (const file of source.matchingFiles(glob)) {
-      const content = await source.readText(file);
-      forEachLine(content, (start, end) => fn(selectDelimitedFieldsInRange(content, start, end, indexes)));
+      if (source.readText) {
+        const content = await source.readText(file);
+        forEachLine(content, (start, end) => fn(selectDelimitedFieldsInRange(content, start, end, indexes)));
+        continue;
+      }
+
+      for await (const line of source.readLines(file)) {
+        fn(selectDelimitedFields(line, indexes));
+      }
     }
   }
 

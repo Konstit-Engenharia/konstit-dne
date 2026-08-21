@@ -1,4 +1,4 @@
-export const BINARY_NAME = 'edne';
+export const BINARY_NAME = 'dne';
 
 export const SQLITE_FILE_NAME = 'dne.db';
 export const SQLITE_CEP_TABLE_NAME = 'dne';

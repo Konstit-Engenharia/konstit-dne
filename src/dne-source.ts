@@ -1,5 +1,11 @@
 import {
+  mkdir,
+  rename,
+  rm,
+} from 'node:fs/promises';
+import {
   basename,
+  dirname,
   join,
 } from 'node:path';
 import {
@@ -8,9 +14,8 @@ import {
 } from './schema.ts';
 
 const DELIMITED_SUBDIR = 'Delimitado';
-const LATIN1_DECODER = new TextDecoder(
-  'latin1' as ConstructorParameters<typeof TextDecoder>[0],
-);
+const LATIN1_ENCODING = 'latin1' as ConstructorParameters<typeof TextDecoder>[0];
+const LATIN1_DECODER = new TextDecoder(LATIN1_ENCODING);
 
 // ZIP File format reference: https://www.iana.org/assignments/media-types/application/zip
 const CENTRAL_DIR_COMMENT_LEN_OFFSET = 32;
@@ -23,7 +28,7 @@ const CENTRAL_DIR_HEADER = 0x02014b50;
 const CENTRAL_DIR_LOCAL_HEADER_OFFSET = 42;
 const CENTRAL_DIR_UNCOMPRESSED_SIZE_OFFSET = 24;
 const COMPRESSION_ALGO_STORE = 0; // no compression
-const COMPRESSION_ALGO_DEFLATE = 8; // zlib's deflate
+const COMPRESSION_ALGO_DEFLATE = 8; // raw DEFLATE in ZIP entries
 const END_OF_DIRECTORY_MIN_SIZE = 22;
 const END_OF_DIRECTORY_RECORD = 0x06054b50;
 const MAX_COMMENT_LENGTH = 0xffff; // uint16 max size
@@ -37,7 +42,8 @@ const LOCAL_FILE_HEADER = 0x04034b50;
 
 export type DneDataSource = {
   matchingFiles(glob: string): string[];
-  readText(file: string): Promise<string>;
+  readLines(file: string): AsyncIterable<string>;
+  readText?(file: string): Promise<string>;
 };
 
 type ZipEntry = {
@@ -61,12 +67,39 @@ export class DirectoryDneSource implements DneDataSource {
     return matchingFiles(this.files, glob);
   }
 
-  async readText(file: string): Promise<string> {
-    return LATIN1_DECODER.decode(await Bun.file(join(this.path, file)).bytes());
+  async *readLines(file: string) {
+    yield* decodeLines(Bun.file(join(this.path, file)).stream());
   }
 }
 
 class ZipDneSource implements DneDataSource {
+  private files: string[];
+  private entriesByFile: Map<string, ZipEntry>;
+
+  constructor(
+    private path: string,
+    entries: ZipEntry[],
+  ) {
+    this.files = entries.map((entry) => basename(entry.name)).sort();
+    this.entriesByFile = new Map(
+      entries.map((entry) => [basename(entry.name), entry]),
+    );
+  }
+
+  matchingFiles(glob: string) {
+    return matchingFiles(this.files, glob);
+  }
+
+  async *readLines(file: string) {
+    const entry = this.entriesByFile.get(file);
+    if (!entry) {
+      throw new Error(`DNE data file not found: ${file}`);
+    }
+    yield* decodeLines(streamZipEntry(this.path, entry));
+  }
+}
+
+class BufferedZipDneSource implements DneDataSource {
   private files: string[];
   private entriesByFile: Map<string, ZipEntry>;
 
@@ -84,12 +117,17 @@ class ZipDneSource implements DneDataSource {
     return matchingFiles(this.files, glob);
   }
 
+  async *readLines(file: string) {
+    yield* splitLines(await this.readText(file));
+  }
+
   async readText(file: string) {
     const entry = this.entriesByFile.get(file);
     if (!entry) {
       throw new Error(`DNE data file not found: ${file}`);
     }
-    return LATIN1_DECODER.decode(extractZipEntry(this.buffer, entry));
+
+    return LATIN1_DECODER.decode(extractBufferedZipEntry(this.buffer, entry));
   }
 }
 
@@ -115,34 +153,84 @@ export function resolveDirectoryDneSource(
   return findMissingGlob(delimited, schema) ? null : delimited;
 }
 
-export function resolveZipDneSource(
-  buffer: Buffer,
+export async function resolveZipDneSource(
+  path: string,
   schema: TableDefinition[],
-): DneDataSource {
-  const entries = readZipEntries(buffer);
-  const nested = entries.find((entry) => {
-    const lowered = basename(entry.name).toLowerCase();
-    return lowered.startsWith('edne_basico_') && lowered.endsWith('.zip');
-  });
+  nestedZipPath: string,
+): Promise<DneDataSource> {
+  const entries = await readZipEntriesFromFile(path);
+  const nested = findNestedDneZip(entries);
 
   if (nested) {
-    return resolveZipDneSource(
-      Buffer.from(extractZipEntry(buffer, nested)),
+    await materializeZipEntry(path, nested, nestedZipPath);
+    return resolveStreamedZipEntries(
+      nestedZipPath,
+      await readZipEntriesFromFile(nestedZipPath),
       schema,
     );
   }
 
-  const validEntries = entries.filter((entry) => filenameIsRequiredDneBasicoFile(entry.name, schema));
+  return resolveStreamedZipEntries(path, entries, schema);
+}
+
+/**
+ * Preserves the former full-buffer implementation for comparative benchmarks.
+ */
+export function resolveBufferedZipDneSource(
+  buffer: Buffer,
+  schema: TableDefinition[],
+): DneDataSource {
+  const entries = readBufferedZipEntries(buffer);
+  const nested = findNestedDneZip(entries);
+
+  if (nested) {
+    return resolveBufferedZipDneSource(
+      Buffer.from(extractBufferedZipEntry(buffer, nested)),
+      schema,
+    );
+  }
+
+  const validEntries = requiredDneEntries(entries, schema);
+  const source = new BufferedZipDneSource(buffer, validEntries);
+  validateDneSource(source, validEntries, schema);
+  return source;
+}
+
+function resolveStreamedZipEntries(
+  path: string,
+  entries: ZipEntry[],
+  schema: TableDefinition[],
+) {
+  const validEntries = requiredDneEntries(entries, schema);
+  const source = new ZipDneSource(path, validEntries);
+  validateDneSource(source, validEntries, schema);
+  return source;
+}
+
+function requiredDneEntries(entries: ZipEntry[], schema: TableDefinition[]) {
+  return entries.filter((entry) => filenameIsRequiredDneBasicoFile(entry.name, schema));
+}
+
+function validateDneSource(
+  source: DneDataSource,
+  validEntries: ZipEntry[],
+  schema: TableDefinition[],
+) {
   if (!validEntries.length) {
     throw new Error('ZIP file does not contain DNE Basico files');
   }
 
-  const source = new ZipDneSource(buffer, validEntries);
   const missing = findMissingGlob(source, schema);
   if (missing) {
     throw new Error(`DNE data file not found: ${missing}`);
   }
-  return source;
+}
+
+function findNestedDneZip(entries: ZipEntry[]) {
+  return entries.find((entry) => {
+    const lowered = basename(entry.name).toLowerCase();
+    return lowered.startsWith('edne_basico_') && lowered.endsWith('.zip');
+  });
 }
 
 function isDirectory(path: string): boolean {
@@ -199,27 +287,66 @@ function filenameIsRequiredDneBasicoFile(
   });
 }
 
-function readZipEntries(b: Buffer): ZipEntry[] {
-  const eocdOffset = findEndOfCentralDirectory(b);
-  const centralDirectorySize = b.readUInt32LE(eocdOffset + EOCD_CENTRAL_DIRECTORY_SIZE_OFFSET);
-  const centralDirectoryOffset = b.readUInt32LE(eocdOffset + EOCD_CENTRAL_DIRECTORY_OFFSET_OFFSET);
-  const entries: ZipEntry[] = [];
-  let offset = centralDirectoryOffset;
-  const end = centralDirectoryOffset + centralDirectorySize;
+async function readZipEntriesFromFile(path: string): Promise<ZipEntry[]> {
+  const file = Bun.file(path);
+  const fileSize = file.size;
+  if (fileSize < END_OF_DIRECTORY_MIN_SIZE) {
+    throw new Error('Source is not a valid ZIP file');
+  }
 
-  while (offset < end) {
-    if (b.readUInt32LE(offset) !== CENTRAL_DIR_HEADER) {
-      break;
+  const tailStart = Math.max(0, fileSize - END_OF_DIRECTORY_SEARCH_WINDOW);
+  const tail = Buffer.from(await file.slice(tailStart, fileSize).arrayBuffer());
+  const eocdOffset = findEndOfCentralDirectory(tail);
+  const centralDirectorySize = tail.readUInt32LE(eocdOffset + EOCD_CENTRAL_DIRECTORY_SIZE_OFFSET);
+  const centralDirectoryOffset = tail.readUInt32LE(eocdOffset + EOCD_CENTRAL_DIRECTORY_OFFSET_OFFSET);
+  const centralDirectoryEnd = centralDirectoryOffset + centralDirectorySize;
+
+  if (centralDirectoryEnd > fileSize) {
+    throw new Error('Invalid ZIP central directory range');
+  }
+
+  const centralDirectory = Buffer.from(
+    await file.slice(centralDirectoryOffset, centralDirectoryEnd).arrayBuffer(),
+  );
+  return parseCentralDirectory(centralDirectory);
+}
+
+function readBufferedZipEntries(buffer: Buffer): ZipEntry[] {
+  const eocdOffset = findEndOfCentralDirectory(buffer);
+  const centralDirectorySize = buffer.readUInt32LE(eocdOffset + EOCD_CENTRAL_DIRECTORY_SIZE_OFFSET);
+  const centralDirectoryOffset = buffer.readUInt32LE(eocdOffset + EOCD_CENTRAL_DIRECTORY_OFFSET_OFFSET);
+  const centralDirectoryEnd = centralDirectoryOffset + centralDirectorySize;
+  if (centralDirectoryEnd > buffer.length) {
+    throw new Error('Invalid ZIP central directory range');
+  }
+  return parseCentralDirectory(buffer.subarray(centralDirectoryOffset, centralDirectoryEnd));
+}
+
+function parseCentralDirectory(directory: Buffer): ZipEntry[] {
+  const entries: ZipEntry[] = [];
+  let offset = 0;
+
+  while (offset < directory.length) {
+    if (
+      offset + CENTRAL_DIR_FIXED_SIZE > directory.length
+      || directory.readUInt32LE(offset) !== CENTRAL_DIR_HEADER
+    ) {
+      throw new Error('Invalid ZIP central directory entry');
     }
 
-    const compression = b.readUInt16LE(offset + CENTRAL_DIR_COMPRESSION_OFFSET);
-    const compressedSize = b.readUInt32LE(offset + CENTRAL_DIR_COMPRESSED_SIZE_OFFSET);
-    const uncompressedSize = b.readUInt32LE(offset + CENTRAL_DIR_UNCOMPRESSED_SIZE_OFFSET);
-    const filenameLength = b.readUInt16LE(offset + CENTRAL_DIR_FILENAME_LEN_OFFSET);
-    const extraLength = b.readUInt16LE(offset + CENTRAL_DIR_EXTRA_LEN_OFFSET);
-    const commentLength = b.readUInt16LE(offset + CENTRAL_DIR_COMMENT_LEN_OFFSET);
-    const localHeaderOffset = b.readUInt32LE(offset + CENTRAL_DIR_LOCAL_HEADER_OFFSET);
-    const name = b
+    const compression = directory.readUInt16LE(offset + CENTRAL_DIR_COMPRESSION_OFFSET);
+    const compressedSize = directory.readUInt32LE(offset + CENTRAL_DIR_COMPRESSED_SIZE_OFFSET);
+    const uncompressedSize = directory.readUInt32LE(offset + CENTRAL_DIR_UNCOMPRESSED_SIZE_OFFSET);
+    const filenameLength = directory.readUInt16LE(offset + CENTRAL_DIR_FILENAME_LEN_OFFSET);
+    const extraLength = directory.readUInt16LE(offset + CENTRAL_DIR_EXTRA_LEN_OFFSET);
+    const commentLength = directory.readUInt16LE(offset + CENTRAL_DIR_COMMENT_LEN_OFFSET);
+    const localHeaderOffset = directory.readUInt32LE(offset + CENTRAL_DIR_LOCAL_HEADER_OFFSET);
+    const entrySize = CENTRAL_DIR_FIXED_SIZE + filenameLength + extraLength + commentLength;
+    if (offset + entrySize > directory.length) {
+      throw new Error('Invalid ZIP central directory entry size');
+    }
+
+    const name = directory
       .subarray(
         offset + CENTRAL_DIR_FIXED_SIZE,
         offset + CENTRAL_DIR_FIXED_SIZE + filenameLength,
@@ -236,10 +363,7 @@ function readZipEntries(b: Buffer): ZipEntry[] {
       });
     }
 
-    offset += CENTRAL_DIR_FIXED_SIZE
-      + filenameLength
-      + extraLength
-      + commentLength;
+    offset += entrySize;
   }
 
   return entries;
@@ -259,7 +383,139 @@ function findEndOfCentralDirectory(buffer: Buffer) {
   throw new Error('Source is not a valid ZIP file');
 }
 
-function extractZipEntry(buffer: Buffer, entry: ZipEntry): Buffer<ArrayBufferLike> | Uint8Array<ArrayBuffer> {
+async function* streamZipEntry(path: string, entry: ZipEntry): AsyncIterable<Uint8Array> {
+  const file = Bun.file(path);
+  const headerEnd = entry.localHeaderOffset + LOCAL_FILE_FIXED_SIZE;
+  const header = Buffer.from(
+    await file.slice(entry.localHeaderOffset, headerEnd).arrayBuffer(),
+  );
+  if (
+    header.length !== LOCAL_FILE_FIXED_SIZE
+    || header.readUInt32LE(0) !== LOCAL_FILE_HEADER
+  ) {
+    throw new Error(`Invalid ZIP local header for ${entry.name}`);
+  }
+
+  const filenameLength = header.readUInt16LE(LOCAL_FILE_FILENAME_LENGTH_OFFSET);
+  const extraLength = header.readUInt16LE(LOCAL_FILE_EXTRA_LENGTH_OFFSET);
+  const dataStart = headerEnd + filenameLength + extraLength;
+  const dataEnd = dataStart + entry.compressedSize;
+  if (dataEnd > file.size) {
+    throw new Error(`Invalid ZIP data range for ${entry.name}`);
+  }
+
+  const compressed = file.slice(dataStart, dataEnd).stream();
+  let stream: ReadableStream<Uint8Array>;
+  if (entry.compression === COMPRESSION_ALGO_STORE) {
+    stream = compressed;
+  } else if (entry.compression === COMPRESSION_ALGO_DEFLATE) {
+    stream = compressed.pipeThrough(new DecompressionStream('deflate-raw'));
+  } else {
+    throw new Error(
+      `Unsupported ZIP compression method ${entry.compression} for ${entry.name}`,
+    );
+  }
+
+  let uncompressedSize = 0;
+  for await (const chunk of stream) {
+    uncompressedSize += chunk.byteLength;
+    yield chunk;
+  }
+
+  if (entry.uncompressedSize && uncompressedSize !== entry.uncompressedSize) {
+    throw new Error(`Invalid decompressed size for ${entry.name}`);
+  }
+}
+
+async function materializeZipEntry(
+  sourcePath: string,
+  entry: ZipEntry,
+  targetPath: string,
+) {
+  if (await Bun.file(targetPath).exists()) {
+    return;
+  }
+
+  await mkdir(dirname(targetPath), { recursive: true });
+  const partialPath = `${targetPath}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  const writer = Bun.file(partialPath).writer();
+  let writerEnded = false;
+
+  try {
+    for await (const chunk of streamZipEntry(sourcePath, entry)) {
+      await writer.write(chunk);
+    }
+    await writer.end();
+    writerEnded = true;
+
+    try {
+      await rename(partialPath, targetPath);
+    } catch (error) {
+      if (!(await Bun.file(targetPath).exists())) {
+        throw error;
+      }
+    }
+  } finally {
+    if (!writerEnded) {
+      await Promise.resolve(writer.end()).catch(() => {});
+    }
+    await rm(partialPath, { force: true });
+  }
+}
+
+async function* decodeLines(chunks: AsyncIterable<Uint8Array>) {
+  const decoder = new TextDecoder(LATIN1_ENCODING);
+  let pending = '';
+
+  for await (const chunk of chunks) {
+    const content = pending + decoder.decode(chunk, { stream: true });
+    let start = 0;
+    let end = content.indexOf('\n');
+
+    while (end !== -1) {
+      const lineEnd = end > start && content.charCodeAt(end - 1) === 13 ? end - 1 : end;
+      if (lineEnd > start) {
+        yield content.slice(start, lineEnd);
+      }
+      start = end + 1;
+      end = content.indexOf('\n', start);
+    }
+
+    pending = content.slice(start);
+  }
+
+  pending += decoder.decode();
+  if (pending.endsWith('\r')) {
+    pending = pending.slice(0, -1);
+  }
+  if (pending) {
+    yield pending;
+  }
+}
+
+async function* splitLines(content: string) {
+  let start = 0;
+
+  for (let offset = 0; offset <= content.length; offset++) {
+    if (offset !== content.length && content.charCodeAt(offset) !== 10) {
+      continue;
+    }
+
+    let end = offset;
+    if (end > start && content.charCodeAt(end - 1) === 13) {
+      end--;
+    }
+    if (end > start) {
+      yield content.slice(start, end);
+    }
+    start = offset + 1;
+  }
+}
+
+function extractBufferedZipEntry(
+  buffer: Buffer,
+  entry: ZipEntry,
+): Buffer<ArrayBufferLike> | Uint8Array<ArrayBuffer> {
   const offset = entry.localHeaderOffset;
   if (buffer.readUInt32LE(offset) !== LOCAL_FILE_HEADER) {
     throw new Error(`Invalid ZIP local header for ${entry.name}`);

@@ -31,6 +31,7 @@ export type RemoteDneSourceInfo = {
 
 export class DneResolver {
   private tempDir?: string;
+  private nestedZipPath?: string;
 
   constructor(
     private source?: string,
@@ -72,10 +73,9 @@ export class DneResolver {
     }
 
     if (await Bun.file(path).exists()) {
-      return resolveZipDneSource(
-        Buffer.from(await Bun.file(path).arrayBuffer()),
-        schema,
-      );
+      const nestedZipPath = this.nestedZipPath
+        ?? join(await this.getTempDir(), 'edne-inner.zip');
+      return await resolveZipDneSource(path, schema, nestedZipPath);
     }
 
     const directorySource = resolveDirectoryDneSource(path, schema);
@@ -89,7 +89,12 @@ export class DneResolver {
   private async download(url: string) {
     const info = await inspectRemoteDneSource(url);
     const cachedPath = this.options.skipCache ? null : await cachedDownloadPath(info);
+    const cachedInnerPath = cachedPath ? `${cachedPath}.inner.zip` : null;
+    if (cachedInnerPath && (await Bun.file(cachedInnerPath).exists())) {
+      return cachedInnerPath;
+    }
     if (cachedPath && (await Bun.file(cachedPath).exists())) {
+      this.nestedZipPath = cachedInnerPath ?? undefined;
       return cachedPath;
     }
 
@@ -99,6 +104,7 @@ export class DneResolver {
     await downloadSimple(url, path);
     if (cachedPath) {
       await cacheDownloadedFile(path, cachedPath);
+      this.nestedZipPath = cachedInnerPath ?? undefined;
     }
     return path;
   }

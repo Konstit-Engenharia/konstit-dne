@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { SQLITE_CEP_TABLE_NAME } from '../src/settings.ts';
 import {
   createFixture,
+  createNestedZipFixture,
   fetchDatabase,
 } from './helpers.ts';
 
@@ -70,6 +71,26 @@ describe('loader', () => {
       expect(row.count).toBeGreaterThan(2500);
     } finally {
       db.close();
+    }
+  });
+
+  test('streams files from a nested ZIP into SQLite', () => {
+    const fixtureDirectory = join(workDir, 'nested-zip-fixture');
+    const zipPath = createNestedZipFixture(fixtureDirectory, 250);
+    const directoryDbPath = join(workDir, 'nested-directory.db');
+    const zipDbPath = join(workDir, 'nested-zip.db');
+
+    fetchDatabase(directoryDbPath, join(fixtureDirectory, 'dne'));
+    fetchDatabase(zipDbPath, zipPath);
+
+    const directoryDb = new Database(directoryDbPath, { readonly: true });
+    const zipDb = new Database(zipDbPath, { readonly: true });
+    try {
+      const rows = `SELECT * FROM ${SQLITE_CEP_TABLE_NAME} ORDER BY cep`;
+      expect(zipDb.query(rows).all()).toEqual(directoryDb.query(rows).all());
+    } finally {
+      directoryDb.close();
+      zipDb.close();
     }
   });
 });

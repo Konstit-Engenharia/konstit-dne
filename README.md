@@ -33,11 +33,11 @@ Opções principais:
 - `--source <path|zip|url>`: diretório, ZIP local ou URL com o e-DNE. Quando omitido, baixa o e-DNE Básico mais recente dos Correios.
 - `--force`: força novo download e nova carga mesmo quando a metadata remota não mudou ou existe cache local.
 
-Downloads remotos usam streaming incremental via `Bun.file(...).writer()`, evitando carregar o ZIP inteiro em memória durante o download.
+Downloads remotos usam streaming incremental via `Bun.file(...).writer()`, evitando carregar o ZIP inteiro em memória durante o download. O ZIP externo dos Correios é descompactado uma vez para um ZIP interno em cache. Os arquivos TXT não são extraídos.
 
 Depois de carregar uma URL remota, o banco grava `Last-Modified`, ETag e tamanho em `edne_metadata`. Na próxima execução contra a mesma URL, se essa metadata ainda bater, o loader pula download e reprocessamento.
 
-O ZIP remoto também fica em cache em `~/.cache/edne-correios-loader`. Se o banco for removido mas a versão remota for a mesma, o loader reconstrói o SQLite sem novo download.
+Os ZIPs remoto e interno ficam em cache em `~/.cache/edne`. Se o banco for removido mas a versão remota for a mesma, o loader reconstrói o SQLite sem novo download ou nova descompactação do ZIP externo.
 
 Consulta:
 
@@ -47,7 +47,7 @@ bun run ./src/index.ts lookup dne.db 01001000
 
 ## Tabela unificada
 
-O loader cria `dne` e a tabela pequena `edne_metadata`. Ele não cria tabelas brutas intermediárias: lê ZIPs direto em memória, usa apenas os TXT necessários, lê só as colunas usadas e insere direto na tabela final.
+O loader cria `dne` e a tabela pequena `edne_metadata`. Ele não cria tabelas brutas intermediárias: lê o diretório central do ZIP, descompacta cada TXT necessário com `DecompressionStream('deflate-raw')`, processa linhas incrementais e insere direto na tabela final.
 
 `dne` usa `PRIMARY KEY (cep) WITHOUT ROWID` e `page_size = 32768`, otimizado para busca direta por CEP e menor arquivo SQLite.
 
@@ -88,6 +88,12 @@ Benchmark de batch size com `mitata` e carga real cacheada:
 
 ```shell
 bun run benchmark:batch-size
+```
+
+Comparar a implementação anterior em memória com o streaming de ZIP, incluindo cache frio e quente:
+
+```shell
+bun run benchmark:zip-stream /caminho/para/eDNE_Basico.zip 3
 ```
 
 Também é possível comparar dois bancos manualmente:

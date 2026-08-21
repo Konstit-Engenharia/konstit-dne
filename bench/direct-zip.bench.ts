@@ -28,8 +28,9 @@ const dneDir = join(workDir, 'dne');
 const zipPath = join(workDir, 'dne.zip');
 const schema = buildSchema();
 let databaseCounter = 0;
+const nestedZipPath = join(workDir, 'inner.zip');
 
-runCommand('bun', ['run', 'benchmarks/create-benchmark-dne.ts', dneDir, String(rows)]);
+runCommand('bun', ['run', 'bench/create-dne.bench.ts', dneDir, String(rows)]);
 runCommand('zip', ['-qr', zipPath, 'Delimitado'], dneDir);
 
 const zipBuffer = Buffer.from(await Bun.file(zipPath).arrayBuffer());
@@ -38,7 +39,7 @@ if (!directorySource) {
   throw new Error(`Failed to resolve generated DNE directory: ${dneDir}`);
 }
 
-const zipSource = resolveZipDneSource(zipBuffer, schema);
+const zipSource = await resolveZipDneSource(zipPath, schema, nestedZipPath);
 const requiredFiles = collectRequiredFiles(zipSource, schema);
 const zipBytes = zipBuffer.length;
 const textBytes = await readAllText(zipSource, requiredFiles);
@@ -48,8 +49,8 @@ console.log(
 );
 
 summary(() => {
-  bench('direct ZIP resolve central directory', () => {
-    resolveZipDneSource(zipBuffer, schema);
+  bench('direct ZIP resolve central directory', async () => {
+    await resolveZipDneSource(zipPath, schema, nestedZipPath);
   });
 
   bench('directory read all required TXT', async () => {
@@ -57,7 +58,7 @@ summary(() => {
   });
 
   bench('direct ZIP read all required TXT', async () => {
-    await readAllText(resolveZipDneSource(zipBuffer, schema), requiredFiles);
+    await readAllText(await resolveZipDneSource(zipPath, schema, nestedZipPath), requiredFiles);
   });
 
   bench('directory load SQLite', async () => {
@@ -65,7 +66,7 @@ summary(() => {
   });
 
   bench('direct ZIP load SQLite', async () => {
-    await loadSqlite(resolveZipDneSource(zipBuffer, schema));
+    await loadSqlite(await resolveZipDneSource(zipPath, schema, nestedZipPath));
   });
 });
 
@@ -93,7 +94,9 @@ function collectRequiredFiles(source: DneDataSource, tables: TableDefinition[]) 
 async function readAllText(source: DneDataSource, files: string[]) {
   let bytes = 0;
   for (const file of files) {
-    bytes += (await source.readText(file)).length;
+    for await (const line of source.readLines(file)) {
+      bytes += line.length;
+    }
   }
   return bytes;
 }

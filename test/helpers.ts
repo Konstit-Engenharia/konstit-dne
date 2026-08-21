@@ -1,16 +1,31 @@
 import type { Database } from 'bun:sqlite';
 import { spawnSync } from 'node:child_process';
+import {
+  basename,
+  join,
+} from 'node:path';
 import { SQLITE_CEP_TABLE_NAME } from '../src/settings.ts';
 
-export function run(command: string, args: string[]) {
-  const result = spawnSync(command, args, { cwd: process.cwd(), stdio: 'pipe' });
+export function run(command: string, args: string[], cwd = process.cwd()) {
+  const result = spawnSync(command, args, { cwd, stdio: 'pipe' });
   if (result.status !== 0) {
     throw new Error(`${command} ${args.join(' ')} failed\n${result.stderr.toString()}`);
   }
 }
 
 export function createFixture(directory: string, rows: number) {
-  run('bun', ['run', 'benchmarks/create-benchmark-dne.ts', directory, String(rows)]);
+  run('bun', ['run', 'bench/create-dne.bench.ts', directory, String(rows)]);
+}
+
+export function createNestedZipFixture(directory: string, rows: number) {
+  const dneDirectory = join(directory, 'dne');
+  const innerZip = join(directory, 'eDNE_Basico_12345.zip');
+  const outerZip = join(directory, 'eDNE_Basico.zip');
+
+  createFixture(dneDirectory, rows);
+  run('zip', ['-qr', innerZip, 'Delimitado'], dneDirectory);
+  run('zip', ['-q', outerZip, basename(innerZip)], directory);
+  return outerZip;
 }
 
 export function fetchDatabase(databasePath: string, sourcePath: string) {
