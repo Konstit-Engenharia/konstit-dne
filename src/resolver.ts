@@ -16,6 +16,7 @@ import {
   resolveZipDneSource,
   type DneDataSource,
 } from './dne-source.ts';
+import { downloadRemoteFile } from './parallel-download.ts';
 import type { TableDefinition } from './schema.ts';
 import {
   CACHE_LAST_MODIFIED_BUCKET_MS,
@@ -27,6 +28,7 @@ export type RemoteDneSourceInfo = {
   lastModified: string | null;
   etag: string | null;
   contentLength: string | null;
+  acceptRanges: string | null;
 };
 
 export class DneResolver {
@@ -101,7 +103,7 @@ export class DneResolver {
     const tempDir = await this.getTempDir();
     const path = join(tempDir, 'edne-download.zip');
 
-    await downloadSimple(url, path);
+    await downloadRemoteFile(url, path, info);
     if (cachedPath) {
       await cacheDownloadedFile(path, cachedPath);
       this.nestedZipPath = cachedInnerPath ?? undefined;
@@ -123,33 +125,8 @@ export async function inspectRemoteDneSource(
     lastModified: response.headers.get('last-modified'),
     etag: response.headers.get('etag'),
     contentLength: response.headers.get('content-length'),
+    acceptRanges: response.headers.get('accept-ranges'),
   };
-}
-
-async function downloadSimple(url: string, path: string) {
-  const response = await fetch(url, { verbose: false });
-  if (!response.ok) {
-    throw new Error(`Failed to download DNE from ${url}: ${response.status}`);
-  }
-  if (!response.body) {
-    throw new Error(`Failed to stream DNE from ${url}: empty response body`);
-  }
-
-  const reader = response.body.getReader();
-  const writer = Bun.file(path).writer();
-
-  try {
-    while (true) {
-      const chunk = await reader.read();
-      if (chunk.done) {
-        break;
-      }
-      void writer.write(chunk.value);
-    }
-  } finally {
-    await writer.end();
-    reader.releaseLock();
-  }
 }
 
 function looksLikeUrl(value: string | URL) {
