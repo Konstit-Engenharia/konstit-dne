@@ -1,7 +1,4 @@
-import {
-  constants,
-  Database,
-} from 'bun:sqlite';
+import { Database } from 'bun:sqlite';
 import type { DneDataSource } from './dne-source.ts';
 import {
   getTableFilesGlob,
