@@ -48,7 +48,7 @@ for (const size of sizes) {
   });
 }
 
-await run({ colors: !envValue('NO_COLOR') });
+await run({ colors: !process.env['NO_COLOR'] });
 
 console.log('\nreal cached load:');
 for (const size of sizes) {
@@ -65,8 +65,4 @@ for (const size of sizes) {
     throw new Error(`batch=${size} failed\n${result.stderr.toString()}`);
   }
   console.log(`batch=${size} seconds=${seconds}`);
-}
-
-function envValue(name: string) {
-  return Bun.env[name];
 }
