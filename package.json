@@ -1,11 +1,14 @@
 {
-  "name": "edne",
+  "name": "@konstit/dne",
   "version": "1.0.0",
   "type": "module",
   "module": "src/index.ts",
   "bin": {
-    "edne": "./src/index.ts"
+    "@konstit/dne": "src/index.ts"
   },
+  "files": [
+    "src"
+  ],
   "scripts": {
     "fetch": "bun run src/index.ts fetch",
     "lookup": "bun run src/index.ts lookup",
@@ -25,19 +28,20 @@
   "dependencies": {
     "@drizzle-team/brocli": "^0.12.0"
   },
-  "peerDependencies": {
-    "typescript": "5.9.3"
-  },
   "devDependencies": {
     "@biomejs/biome": "2.5.9",
     "@types/bun": "1.4.0",
     "dprint": "^0.56.0",
     "mitata": "^1.0.34",
     "oxlint": "^1.79.0",
-    "oxlint-tsgolint": "7.0.2001"
+    "oxlint-tsgolint": "7.0.2001",
+    "typescript": "5.9.3"
   },
   "engines": {
     "bun": "^1.4.0"
+  },
+  "publishConfig": {
+    "registry": "https://npm.konstit.com.br"
   },
   "packageManager": "bun@1.4.0"
 }
