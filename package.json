@@ -4,7 +4,7 @@
   "type": "module",
   "module": "src/index.ts",
   "bin": {
-    "@konstit/dne": "src/index.ts"
+    "dne": "src/index.ts"
   },
   "files": [
     "src"
