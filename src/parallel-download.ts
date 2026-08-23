@@ -17,7 +17,12 @@ type ByteRange = {
   end: number;
 };
 
-class RangeNotSupportedError extends Error {}
+class RangeNotSupportedError extends Error {
+  // biome-ignore lint/complexity/noUselessConstructor: Bun cannot cover the synthesized constructor.
+  constructor(message: string) {
+    super(message);
+  }
+}
 
 export async function downloadRemoteFile(
   url: string,
@@ -86,7 +91,7 @@ async function fetchRange(
   const response = await fetch(url, {
     headers: {
       'accept-encoding': 'identity',
-      range: `bytes=${range.start}-${range.end}`,
+      'range': `bytes=${range.start}-${range.end}`,
     },
     signal,
     verbose: false,
