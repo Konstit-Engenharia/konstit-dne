@@ -1,6 +1,12 @@
 #!/usr/bin/env bun
 
-import * as b from '@drizzle-team/brocli';
+import {
+  command,
+  flag,
+  option,
+  parsers,
+  positional,
+} from '@konstit/cli';
 import { Database } from 'bun:sqlite';
 import {
   copyFile,
@@ -43,41 +49,57 @@ const ANSI_RESET = '\x1b[0m';
 const ANSI_BOLD = '\x1b[1m';
 const ANSI_CYAN = '\x1b[36m';
 
-await b.run([
-  b.command({
-    name: 'fetch',
-    options: {
-      path: b.positional().default(SQLITE_FILE_NAME).desc('Path to the SQLite database file.'),
-      source: b.string().default(EDNE_DOWNLOAD_URL).desc('Path, ZIP, or URL of the DNE data.'),
-      force: b.boolean().default(false).desc('Force fetch and rebuild even if the database is up-to-date'),
-    },
-    shortDesc: 'Build a SQLite database from DNE data',
-    handler: fetchDatabase,
-  }),
-  b.command({
-    name: 'lookup',
-    options: {
-      db: b.positional('database-path').required().desc('Path to the SQLite database file.'),
-      cep: b.positional('cep').required().desc('CEP to query'),
-    },
-    shortDesc: 'Lookup a CEP in the database',
-    handler: lookupCep,
-  }),
-  b.command({
-    name: 'schema',
-    options: {
-      path: b.positional().default(SQLITE_FILE_NAME).desc('Path to the SQLite database file.'),
-    },
-    shortDesc: 'Display the CEP table schema',
-    handler: showSchema,
-  }),
-], {
-  name: BINARY_NAME,
+const cli = command(BINARY_NAME, {
   version: '1.0.0',
-  // theme: async () => {
-  //   return true;
-  // },
+  subcommands: [
+    command('fetch', {
+      args: [
+        positional('path', parsers.string, {
+          default: SQLITE_FILE_NAME,
+          describe: 'Path to the SQLite database file.',
+        }),
+        option('source', parsers.string, {
+          default: EDNE_DOWNLOAD_URL,
+          describe: 'Path, ZIP, or URL of the DNE data.',
+        }),
+        flag('force', {
+          describe: 'Force fetch and rebuild even if the database is up-to-date',
+        }),
+      ],
+      about: 'Build a SQLite database from DNE data',
+      handler: fetchDatabase,
+    }),
+    command('lookup', {
+      args: [
+        positional('db', parsers.string, {
+          required: true,
+          valueName: 'DATABASE-PATH',
+          describe: 'Path to the SQLite database file.',
+        }),
+        positional('cep', parsers.string, {
+          required: true,
+          describe: 'CEP to query',
+        }),
+      ],
+      about: 'Lookup a CEP in the database',
+      handler: lookupCep,
+    }),
+    command('schema', {
+      args: [
+        positional('path', parsers.string, {
+          default: SQLITE_FILE_NAME,
+          describe: 'Path to the SQLite database file.',
+        }),
+      ],
+      about: 'Display the CEP table schema',
+      handler: showSchema,
+    }),
+  ],
+  subcommandRequired: true,
+  defaultToHelp: true,
 });
+
+process.exitCode = await cli.run();
 
 type FetchOptions = {
   path: string;
