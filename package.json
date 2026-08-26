@@ -22,7 +22,7 @@
     "tsc": "bunx --bun tsc --noEmit",
     "lint:biome": "bunx --bun @biomejs/biome check",
     "lint:oxlint": "bunx --bun oxlint --type-aware",
-    "lint": "bun tsc && bun lint:biome && bun lint:oxlint",
+    "lint": "bun run --parallel tsc lint:biome lint:oxlint",
     "fmt": "bunx --bun dprint fmt"
   },
   "dependencies": {
