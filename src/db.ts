@@ -2,6 +2,7 @@ import { Database } from 'bun:sqlite';
 import type { DneDataSource } from './dne-source.ts';
 import {
   getTableFilesGlob,
+  getUnifiedTable,
   type TableDefinition,
 } from './schema.ts';
 import {
@@ -13,6 +14,7 @@ import {
 
 type InsertStatement = ReturnType<Database['prepare']>;
 export type LoadMetadata = Record<string, string> & {
+  package_version?: string;
   source_content_length?: string;
   source_etag?: string;
   source_kind?: string;
@@ -197,10 +199,12 @@ class BatchedUnifiedInsert implements UnifiedInsert {
 export class DneDatabaseWriter {
   private db: Database;
   private tableByOriginalName: Map<string, TableDefinition>;
+  private unifiedTable: TableDefinition;
 
   constructor(databasePath: string, schema: TableDefinition[]) {
     this.db = new Database(databasePath);
     this.tableByOriginalName = new Map(schema.map((table) => [table.originalName, table]));
+    this.unifiedTable = getUnifiedTable(schema);
   }
 
   close() {
@@ -213,20 +217,20 @@ export class DneDatabaseWriter {
   }
 
   async loadFromSource(source: DneDataSource, metadata: LoadMetadata = {}, onProgress: LoadProgress = () => {}) {
-    const cepUnificado = this.originalTable('cep_unificado');
+    const cepTable = this.unifiedTable;
 
     this.configureBulkLoad();
     await this.transaction(async () => {
-      this.db.run(createTableSql(cepUnificado));
+      this.db.run(createTableSql(cepTable));
       this.createMetadataTable();
-      this.db.run(`DELETE FROM ${quoteIdent(cepUnificado.name)}`);
+      this.db.run(`DELETE FROM ${quoteIdent(cepTable.name)}`);
       this.db.run(`DELETE FROM ${quoteIdent(SQLITE_METADATA_TABLE_NAME)}`);
 
       onProgress('Reading municipalities');
       const localidades = await this.readLocalidades(source);
       onProgress('Reading districts');
       const bairros = await this.readBairros(source);
-      const insert = this.prepareUnifiedInsert(cepUnificado.name);
+      const insert = this.prepareUnifiedInsert(cepTable.name);
 
       onProgress('Loading streets');
       await this.insertLogradouros(source, insert, localidades, bairros);
@@ -242,7 +246,7 @@ export class DneDatabaseWriter {
       this.writeMetadata(metadata);
     });
 
-    return this.rowCount(cepUnificado.name);
+    return this.rowCount(cepTable.name);
   }
 
   private async readLocalidades(source: DneDataSource) {
@@ -278,8 +282,8 @@ export class DneDatabaseWriter {
     return bairros;
   }
 
-  private prepareUnifiedInsert(cepUnificado: string) {
-    return new BatchedUnifiedInsert(this.db, cepUnificado, SQLITE_INSERT_BATCH_SIZE);
+  private prepareUnifiedInsert(tableName: string) {
+    return new BatchedUnifiedInsert(this.db, tableName, SQLITE_INSERT_BATCH_SIZE);
   }
 
   private rowCount(tableName: string) {
@@ -502,13 +506,16 @@ function createTableSqlWithSeparator(table: TableDefinition, separator: string) 
     if (column.notNull || column.primaryKey) {
       parts.push('NOT NULL');
     }
+    if (column.comment) {
+      parts.push(`/* ${column.comment} */`);
+    }
     return parts.join(' ');
   });
 
   if (primaryKeys.length) {
     definitions.push(`PRIMARY KEY (${primaryKeys.join(', ')})`);
   }
-  const withoutRowid = table.originalName === 'cep_unificado' ? ' WITHOUT ROWID' : '';
+  const withoutRowid = table.unifiedTable ? ' WITHOUT ROWID' : '';
   if (separator.includes('\n')) {
     return `CREATE TABLE IF NOT EXISTS ${quoteIdent(table.name)} (\n  ${definitions.join(separator)}\n)${withoutRowid}`;
   }

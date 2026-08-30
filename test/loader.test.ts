@@ -6,15 +6,14 @@ import {
   test,
 } from 'bun:test';
 import {
+  existsSync,
   mkdtempSync,
   readdirSync,
   rmSync,
+  writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import {
-  basename,
-  join,
-} from 'node:path';
+import { join } from 'node:path';
 import { SQLITE_CEP_TABLE_NAME } from '../src/settings.ts';
 import {
   createFixture,
@@ -34,10 +33,11 @@ describe('loader', () => {
     const dbPath = join(workDir, 'dne.db');
 
     createFixture(dneDir, 40);
+    writeFileSync(join(workDir, '.dne.db.fetch.lock'), '');
     fetchDatabase(dbPath, dneDir);
 
-    const scratchPrefix = `.${basename(dbPath)}.`;
-    expect(readdirSync(workDir).filter((name) => name.startsWith(scratchPrefix))).toEqual([]);
+    expect(readdirSync(workDir).filter((name) => name.startsWith('.dne.db.'))).toEqual([]);
+    expect(existsSync(temporaryFetchLockPath(dbPath))).toBe(false);
 
     const db = new Database(dbPath, { readonly: true });
     try {
@@ -101,3 +101,8 @@ describe('loader', () => {
     }
   });
 });
+
+function temporaryFetchLockPath(target: string) {
+  const targetHash = new Bun.CryptoHasher('sha256').update(target).digest('hex');
+  return join(tmpdir(), `konstit-dne-${process.getuid?.() ?? 'unknown'}`, `fetch-${targetHash}.lock`);
+}

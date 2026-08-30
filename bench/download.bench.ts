@@ -12,7 +12,7 @@ const bunDb = join(workDir, 'bun.db');
 await rm(workDir, { recursive: true, force: true });
 await mkdir(workDir, { recursive: true });
 
-const bun = timed('bun', ['run', 'src/index.ts', 'fetch', bunDb]);
+const bun = timed('bun', ['run', 'src/index.ts', 'fetch', '--db', bunDb]);
 
 console.log(
   JSON.stringify(

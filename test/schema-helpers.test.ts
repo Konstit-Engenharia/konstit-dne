@@ -6,6 +6,7 @@ import {
 import {
   buildSchema,
   getTableFilesGlob,
+  getUnifiedTable,
 } from '../src/schema.ts';
 import {
   expectRejects,
@@ -14,26 +15,23 @@ import {
 
 describe('schema', () => {
   test('builds an independent schema with optional table names', () => {
-    const schema = buildSchema({ cep_unificado: 'custom_cep' });
-    const cepTable = schema.find((table) => table.originalName === 'cep_unificado');
+    const unifiedOriginalName = getUnifiedTable(buildSchema()).originalName;
+    const schema = buildSchema({ [unifiedOriginalName]: 'custom_cep' });
+    const cepTable = getUnifiedTable(schema);
 
-    expect(cepTable?.name).toBe('custom_cep');
+    expect(cepTable.name).toBe('custom_cep');
     expect(schema.find((table) => table.originalName === 'log_bairro')?.name).toBe('log_bairro');
 
-    if (!cepTable) {
-      throw new Error('Missing unified CEP table');
-    }
     const firstColumn = cepTable.columns[0];
     if (!firstColumn) {
       throw new Error('Missing unified CEP table columns');
     }
     firstColumn.name = 'changed';
-    expect(buildSchema().find((table) => table.originalName === 'cep_unificado')?.columns[0]?.name).toBe('cep');
+    expect(getUnifiedTable(buildSchema()).columns[0]?.name).toBe('cep');
   });
 
   test('returns null for a unified table', () => {
-    const table = buildSchema().find((candidate) => candidate.unifiedTable);
-    expect(table && getTableFilesGlob(table)).toBeNull();
+    expect(getTableFilesGlob(getUnifiedTable(buildSchema()))).toBeNull();
   });
 
   test('returns an explicit file glob', () => {

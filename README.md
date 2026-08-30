@@ -1,52 +1,50 @@
-# e-DNE Correios CLI
+# CLI para e-DNE dos Correios
 
-Build and query a local SQLite database with Brazilian postal code data from Correios e-DNE.
+Crie em segundos uma base SQLite local, compacta e pronta para consultar os CEPs do Brasil com dados do e-DNE dos Correios. Depois da carga, as consultas funcionam sem servidor e sem acesso à rede.
 
-The loader reads a directory, a local ZIP file, or the current public e-DNE archive. It streams the source into one indexed `dne` table without intermediate raw tables.
+O `@konstit/dne` recebe um diretório, um arquivo ZIP local ou o arquivo público mais recente do e-DNE. Os dados são processados em fluxo e gravados diretamente em uma única tabela `dne` indexada, sem tabelas brutas intermediárias.
 
-In a 10-run benchmark on 2026-08-30, full generation from the public archive averaged 5.73 seconds, including the download. The final database contained 1,605,136 rows and used 125.4 MiB without `VACUUM`.
+Principais vantagens:
 
-For comparison, `uvx edne-correios-loader load --database-url sqlite:///dne.db` averaged 30 seconds and produced a 394 MiB database without `VACUUM`. `@konstit/dne` was 5.2 times faster and used 68.2% less disk. After a manual `VACUUM`, the other database used 148.2 MiB, which was still 15.4% larger than this CLI's database.
+- **Rápido e compacto:** em um benchmark de 10 execuções realizado em 2026-08-30, a geração completa a partir do arquivo público levou 5,73 segundos em média, incluindo o download. A base final continha 1.605.136 registros e ocupava 125,4 MiB.
+- **Consultas locais simples:** procure um CEP, consulte vários CEPs em lote ou execute SQL somente leitura diretamente no arquivo SQLite.
+- **Atualizações seguras:** o modo WAL e uma única transação permitem atualizar a base sem expor dados parciais aos processos de leitura.
+- **Pronto para automação:** a CLI oferece saídas JSON e JSONL estáveis, códigos de saída documentados e separação entre dados e mensagens de progresso.
 
-This package exposes a CLI only. It has no public library API.
+Nas mesmas condições do benchmark, `uvx edne-correios-loader load --database-url sqlite:///dne.db` levou 30 segundos e gerou uma base de 394 MiB sem `VACUUM`. Nessa comparação, o `@konstit/dne` foi 5,2 vezes mais rápido e usou 68,2% menos espaço em disco.
 
-## Requirements
+Este pacote fornece somente uma CLI. Ele não expõe uma API pública de biblioteca.
 
-- Bun 1.4 or newer
-- macOS or Linux
+## Requisitos
 
-The CLI does not need authentication.
+- Bun 1.4 ou mais recente
+- macOS ou Linux
 
-## Quick start
+## Início rápido
 
 ```sh
 bunx @konstit/dne fetch --db ./dne.db
 bunx @konstit/dne lookup 01001-000 --db ./dne.db
 ```
 
-## Run
+## Execução
 
-Run the CLI without a global installation:
+Execute a CLI sem instalação global:
 
 ```sh
 bunx @konstit/dne --version
 bunx @konstit/dne --json doctor --offline
 ```
 
-`--db` is global. It works before or after a subcommand. The database path uses this precedence:
+`--db` é uma opção global. Ela pode aparecer antes ou depois de um subcomando. O caminho da base segue esta ordem de precedência:
 
 1. `--db PATH`
 2. `DNE_DB`
 3. `./dne.db`
 
-The old forms remain valid:
+Use `--color` para forçar cores e `--no-color` para desativá-las. Sem essas opções, a CLI detecta o terminal. A presença da variável `NO_COLOR` sempre desativa as cores.
 
-```sh
-bunx @konstit/dne fetch ./dne.db
-bunx @konstit/dne lookup ./dne.db 01001000
-```
-
-## Fetch and update
+## Baixar e atualizar
 
 ```sh
 bunx @konstit/dne fetch --db ./dne.db
@@ -57,32 +55,36 @@ bunx @konstit/dne fetch --db ./dne.db --force
 bunx @konstit/dne fetch --db ./dne.db --check --json
 ```
 
-`fetch` writes progress to stderr. Its final result goes to stdout. Add `--quiet` to hide progress. Add `--json` to get the database path, row count, byte size, source metadata, elapsed time, and update status.
+`fetch` grava cada etapa e sua duração em milissegundos em stderr. O resultado final é gravado em stdout. Use `--quiet` para ocultar o progresso. Use `--json` para receber o caminho da base, a quantidade de registros, o tamanho em bytes, os metadados da fonte, o tempo total e o estado da atualização.
 
-Remote builds store `Last-Modified`, ETag, content length, source URL, and load time in `edne_metadata`. A later fetch skips the rebuild when the source is unchanged. `--check` checks freshness without changing the database. `--force` ignores freshness metadata and rebuilds the database.
+Cada carga grava a versão do `@konstit/dne` em `edne_metadata`. Ao usar uma fonte remota, a CLI também grava `Last-Modified`, ETag, tamanho do conteúdo, URL da fonte e horário da carga. Uma execução posterior de `fetch` não recria a base se a fonte não mudou e mostra o `Last-Modified` remoto na saída textual. `--check` verifica se há uma atualização sem alterar a base e também mostra o `Last-Modified` remoto. `--force` ignora os metadados e recria a base.
 
-An HTTP or HTTPS source must support `HEAD`. The CLI uses it to read file size and freshness metadata before downloading the ZIP.
+Uma fonte HTTP ou HTTPS deve aceitar `HEAD`. A CLI usa essa requisição para obter o tamanho do arquivo e os metadados de atualização antes de baixar o ZIP.
 
-ZIP entries are checked against their CRC32 values while they are read. A mismatch stops the fetch before the database is committed.
+As entradas do ZIP são verificadas com seus valores CRC32 durante a leitura. Se houver divergência, a carga é interrompida antes da confirmação da base.
 
-## Concurrent access
+## Acesso simultâneo
 
-An existing database is updated in place with SQLite WAL mode and one transaction. Other processes can keep the database open for reading during the update. Readers do not see a partially updated table.
+Cada execução de `fetch` que pode alterar a base adquire um lock exclusivo antes de verificar a fonte. Outra instância do `@konstit/dne` aguarda por até 30 segundos, então verifica novamente os metadados e evita uma carga duplicada se a primeira instância já atualizou a base. `fetch --check` não adquire esse lock.
 
-A reader with an active transaction continues to see its previous snapshot until that transaction ends. Its next transaction sees the updated data.
+O lock fica no diretório temporário do sistema, dentro de `konstit-dne-<uid>`. Seu nome contém um hash do caminho absoluto da base, evitando conflitos entre bases com o mesmo nome. Ele é removido quando a execução termina e também ao receber `SIGHUP`, `SIGINT` ou `SIGTERM`. Se o processo for encerrado sem executar essa limpeza, a próxima execução identifica o PID inativo e remove o lock antes de continuar. Processos que coordenam a mesma base devem usar o mesmo host e usuário do sistema.
 
-SQLite permits one writer at a time. If another process holds a write transaction, the update waits for up to 30 seconds and then fails if the lock is still active.
+Uma base existente é atualizada no próprio arquivo com o modo WAL do SQLite e uma única transação. Outros processos podem manter a base aberta para leitura durante a atualização. Esses processos não veem uma tabela atualizada parcialmente.
 
-## Look up CEP values
+Um leitor com uma transação ativa continua vendo a versão anterior até o fim da transação. A próxima transação vê os dados atualizados.
 
-Single lookup:
+O SQLite permite um escritor por vez. Se outro processo mantiver uma transação de escrita, a atualização aguarda por até 30 segundos. Depois desse período, ela falha se o bloqueio continuar ativo.
+
+## Consultar CEPs
+
+Consulta individual:
 
 ```sh
 bunx @konstit/dne lookup 01001000
 bunx @konstit/dne lookup 01001-000 --json
 ```
 
-Bulk lookup:
+Consulta em lote:
 
 ```sh
 bunx @konstit/dne lookup 01001000 20040002 --json
@@ -90,11 +92,11 @@ bunx @konstit/dne lookup --file ./ceps.txt --jsonl
 printf '01001000\n20040002\n' | bunx @konstit/dne lookup --jsonl
 ```
 
-Accepted input formats are `01001000` and `01001-000`. File and stdin input can use whitespace, commas, or semicolons as separators.
+Os formatos aceitos são `01001000` e `01001-000`. A entrada por arquivo ou stdin pode usar espaços, vírgulas ou pontos e vírgulas como separadores.
 
-`lookup` opens SQLite in read-only mode. A missing database path does not create a file. JSONL writes one complete result per line and is suitable for large batches.
+`lookup` abre o SQLite em modo somente leitura. Se o caminho da base não existir, nenhum arquivo será criado. O formato JSONL grava um resultado completo por linha e é adequado para lotes grandes.
 
-## Inspect the database
+## Inspecionar a base
 
 ```sh
 bunx @konstit/dne status --json
@@ -104,20 +106,20 @@ bunx @konstit/dne doctor --json
 bunx @konstit/dne doctor --offline --json
 ```
 
-`status` reports file size, row count, actual schema, and load metadata. `schema` reads the real SQLite schema. `schema --expected` prints the schema declared by this CLI. `doctor` checks Bun, database setup, and remote source reachability. Offline mode skips the network check.
+`status` informa o tamanho do arquivo, a quantidade de registros, o esquema atual, a versão do pacote, o `Last-Modified` da fonte e os demais metadados da carga. A saída textual formata datas e números com a localidade `pt-BR`; a saída JSON mantém os valores originais. `schema` lê o esquema real do SQLite. `schema --expected` mostra o esquema definido pela CLI. `doctor` verifica o Bun, a configuração da base e o acesso à fonte remota. O modo offline não faz a verificação de rede.
 
-## Read-only SQL escape hatch
+## SQL somente leitura
 
 ```sh
 bunx @konstit/dne sql 'SELECT cep, municipio, uf FROM dne WHERE uf = "SP" LIMIT 10' --json
 bunx @konstit/dne sql 'PRAGMA page_size' --limit 20 --json
 ```
 
-The `sql` command opens the database in read-only mode. It accepts `SELECT`, `WITH`, `PRAGMA`, and `EXPLAIN`. `--limit` defaults to 100 and has a maximum of 10,000 rows.
+O comando `sql` abre a base em modo somente leitura. Ele aceita `SELECT`, `WITH`, `PRAGMA` e `EXPLAIN`. O valor padrão de `--limit` é 100, com limite máximo de 10.000 registros.
 
-## JSON contract
+## Contrato JSON
 
-`--json` writes one stable envelope to stdout:
+`--json` grava em stdout um envelope estável:
 
 ```json
 {
@@ -126,7 +128,7 @@ The `sql` command opens the database in read-only mode. It accepts `SELECT`, `WI
 }
 ```
 
-Runtime and argument errors use this shape on stderr:
+Erros de execução e de argumentos usam este formato em stderr:
 
 ```json
 {
@@ -138,20 +140,20 @@ Runtime and argument errors use this shape on stderr:
 }
 ```
 
-Progress and diagnostics go to stderr. JSON stdout does not include progress text.
+O progresso e os diagnósticos são gravados em stderr. A saída JSON em stdout não inclui mensagens de progresso.
 
-Exit codes:
+Códigos de saída:
 
-- `0`: command completed
-- `1`: database, source, network, or runtime failure
-- `2`: invalid arguments or invalid CEP input
-- `3`: one or more valid CEP values were not found
+- `0`: comando concluído
+- `1`: falha na base, na fonte, na rede ou na execução
+- `2`: argumentos inválidos ou CEP em formato inválido
+- `3`: um ou mais CEPs válidos não foram encontrados
 
-## SQLite schema
+## Esquema SQLite
 
 ```sql
 CREATE TABLE "dne" (
-  "cep" TEXT NOT NULL,
+  "cep" TEXT NOT NULL /* Contém somente os oito dígitos do CEP, sem separadores. */,
   "logradouro" TEXT,
   "complemento" TEXT,
   "bairro" TEXT,
@@ -163,11 +165,11 @@ CREATE TABLE "dne" (
 ) WITHOUT ROWID;
 ```
 
-`cep` is the primary key. The table uses `WITHOUT ROWID` and a 32 KiB page size for compact direct lookups.
+`cep` é a chave primária, sem digito separador. A tabela usa `WITHOUT ROWID` e páginas de 32 KiB para oferecer consultas diretas com menor uso de espaço.
 
-## Development
+## Desenvolvimento
 
-The `zip` command is required for fixture and nested-ZIP development tests.
+O comando `zip` é necessário para os testes de desenvolvimento que usam fixtures e arquivos ZIP aninhados.
 
 ```sh
 bun test
@@ -177,4 +179,4 @@ bun run benchmark
 bun run benchmark:download
 ```
 
-Other focused benchmark scripts are listed in `package.json`.
+Outros scripts de benchmark específicos estão listados em `package.json`.

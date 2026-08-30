@@ -1,4 +1,5 @@
 export type ColumnDefinition = {
+  comment?: string;
   name: string;
   type: 'TEXT' | 'INTEGER';
   primaryKey?: boolean;
@@ -53,7 +54,12 @@ const baseTables: TableDefinition[] = [
     fileGlob: null,
     unifiedTable: true,
     columns: [
-      { name: 'cep', type: 'TEXT', primaryKey: true },
+      {
+        name: 'cep',
+        type: 'TEXT',
+        primaryKey: true,
+        comment: 'Contém somente os oito dígitos do CEP, sem separadores.',
+      },
       { name: 'logradouro', type: 'TEXT' },
       { name: 'complemento', type: 'TEXT' },
       { name: 'bairro', type: 'TEXT' },
@@ -71,6 +77,14 @@ export function buildSchema(tableNames: TableNameMap = {}): TableDefinition[] {
     name: tableNames[table.originalName] ?? table.name,
     columns: table.columns.map((column) => ({ ...column })),
   }));
+}
+
+export function getUnifiedTable(schema: readonly TableDefinition[]): TableDefinition {
+  const table = schema.find((candidate) => candidate.unifiedTable);
+  if (!table) {
+    throw new Error('Unified schema table not found');
+  }
+  return table;
 }
 
 export function getTableFilesGlob(table: TableDefinition): string | null {

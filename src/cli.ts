@@ -1,4 +1,5 @@
 import {
+  colorFlag,
   command,
   flag,
   option,
@@ -8,12 +9,21 @@ import {
 } from '@konstit/cli';
 import { Database } from 'bun:sqlite';
 import {
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import {
   copyFile,
   mkdir,
   rename,
   rm,
   stat,
 } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import {
   basename,
   dirname,
@@ -37,7 +47,10 @@ import {
   inspectRemoteDneSource,
   type RemoteDneSourceInfo,
 } from './resolver.ts';
-import { buildSchema } from './schema.ts';
+import {
+  buildSchema,
+  getUnifiedTable,
+} from './schema.ts';
 import {
   BINARY_NAME,
   EDNE_DOWNLOAD_URL,
@@ -46,11 +59,23 @@ import {
   SQLITE_METADATA_TABLE_NAME,
 } from './settings.ts';
 
-const SQLITE_CEP_ORIGINAL_TABLE_NAME = 'cep_unificado';
 const REMOTE_LAST_MODIFIED_TOLERANCE_MS = 10 * 60 * 1000;
+const FETCH_LOCK_TIMEOUT_MS = 30_000;
+const FETCH_LOCK_RETRY_MS = 50;
+const FETCH_LOCK_SIGNALS = ['SIGHUP', 'SIGINT', 'SIGTERM'] as const;
+const CEP_PATTERN = /^(?:\d{8}|\d{5}-\d{3})$/;
 const ANSI_RESET = '\x1b[0m';
 const ANSI_BOLD = '\x1b[1m';
 const ANSI_CYAN = '\x1b[36m';
+const ANSI_GRAY = '\x1b[90m';
+const SQL_HIGHLIGHT_PATTERN =
+  /(--[^\r\n]*|\/\*[\s\S]*?(?:\*\/|$)|'(?:''|[^'])*'|"(?:""|[^"])*"|`(?:``|[^`])*`|\[(?:]]|[^\]])*]|\b(?:CREATE|TABLE|IF|NOT|EXISTS|TEXT|INTEGER|NULL|PRIMARY|KEY|WITHOUT|ROWID)\b)/gi;
+const DISPLAY_LOCALE = 'pt-BR';
+const INTEGER_FORMAT = new Intl.NumberFormat(DISPLAY_LOCALE);
+const DECIMAL_FORMAT = new Intl.NumberFormat(DISPLAY_LOCALE, {
+  maximumFractionDigits: 1,
+  minimumFractionDigits: 1,
+});
 const EXIT_FAILURE = 1;
 const EXIT_INVALID_INPUT = 2;
 const EXIT_NOT_FOUND = 3;
@@ -73,6 +98,7 @@ const quietArgument = flag('quiet', {
   global: true,
   short: 'q',
 });
+const colorArgument = colorFlag('color');
 
 export const cli = command(BINARY_NAME, {
   about: 'Build and query a local SQLite database of Brazilian postal codes.',
@@ -82,16 +108,11 @@ export const cli = command(BINARY_NAME, {
     '  bunx @konstit/dne lookup 01001-000 --db ./dne.db --json',
     '  bunx @konstit/dne status --db ./dne.db --json',
   ].join('\n'),
-  args: [databaseArgument, jsonArgument, quietArgument],
+  args: [databaseArgument, jsonArgument, quietArgument, colorArgument],
   version: VERSION,
   subcommands: [
     command('fetch', {
       args: [
-        positional('path', parsers.string, {
-          describe: 'Legacy positional database path.',
-          valueHint: 'file',
-          valueName: 'PATH',
-        }),
         option('source', parsers.string, {
           default: EDNE_DOWNLOAD_URL,
           describe: 'DNE directory, ZIP file, or URL.',
@@ -110,7 +131,7 @@ export const cli = command(BINARY_NAME, {
     }),
     command('lookup', {
       args: [
-        positional('input', parsers.string, {
+        positional('input', parsers.regex(CEP_PATTERN), {
           describe: 'One or more CEP values.',
           repeatable: true,
           valueName: 'CEP',
@@ -176,6 +197,7 @@ export const cli = command(BINARY_NAME, {
 });
 
 type GlobalOptions = {
+  color: boolean;
   database: string;
   json: boolean;
   quiet: boolean;
@@ -184,7 +206,6 @@ type GlobalOptions = {
 type FetchOptions = {
   check: boolean;
   force: boolean;
-  path: string | undefined;
   source: string;
 };
 
@@ -192,6 +213,11 @@ type LookupOptions = {
   file: string | undefined;
   input: readonly string[];
   jsonl: boolean;
+};
+
+type ProgressReporter = {
+  (message: string): void;
+  finish(): void;
 };
 
 type DatabaseInspection = {
@@ -247,6 +273,7 @@ export async function runCli(argv: readonly string[] = Bun.argv.slice(2)) {
 
 function globalOptions(context: HandlerContext): GlobalOptions {
   return {
+    color: context.global(colorArgument),
     database: context.global(databaseArgument),
     json: context.global(jsonArgument),
     quiet: context.global(quietArgument),
@@ -254,14 +281,47 @@ function globalOptions(context: HandlerContext): GlobalOptions {
 }
 
 async function fetchDatabase(options: FetchOptions, globals: GlobalOptions) {
+  const progress = createProgress(globals.quiet);
+  try {
+    return await fetchDatabaseWithProgress(options, globals, progress);
+  } finally {
+    progress.finish();
+  }
+}
+
+async function fetchDatabaseWithProgress(
+  options: FetchOptions,
+  globals: GlobalOptions,
+  progress: ProgressReporter,
+) {
   const startedAt = performance.now();
+  const target = databasePath(globals.database);
+
+  if (options.check || target === ':memory:') {
+    return executeFetch(options, globals, progress, startedAt, target);
+  }
+
+  const lock = await acquireFetchLock(target, progress);
+  try {
+    return await executeFetch(options, globals, progress, startedAt, target);
+  } finally {
+    lock.release();
+  }
+}
+
+async function executeFetch(
+  options: FetchOptions,
+  globals: GlobalOptions,
+  progress: ProgressReporter,
+  startedAt: number,
+  target: string,
+) {
   const schema = buildDneSchema();
   const sourceInput = options.source;
-  const target = databasePath(options.path ?? globals.database);
-  const progress = createProgress(globals.quiet);
   const remoteInfo = looksLikeUrl(sourceInput)
     ? await inspectRemoteSource(sourceInput, progress)
     : null;
+  progress.finish();
 
   if (options.check) {
     const inspection = await inspectDatabase(target);
@@ -320,6 +380,7 @@ async function fetchDatabase(options: FetchOptions, globals: GlobalOptions) {
     } else {
       await scratch.commit();
     }
+    progress.finish();
   } finally {
     if (!closed) {
       writer.close();
@@ -341,19 +402,242 @@ async function fetchDatabase(options: FetchOptions, globals: GlobalOptions) {
   return 0;
 }
 
+async function acquireFetchLock(target: string, progress: ProgressReporter) {
+  const path = temporaryFetchLockPath(target);
+  const obsoletePath = join(dirname(target), `.${basename(target)}.fetch.lock`);
+  const owner = { pid: process.pid, token: crypto.randomUUID() };
+  const deadline = performance.now() + FETCH_LOCK_TIMEOUT_MS;
+  let waiting = false;
+
+  mkdirSync(dirname(target), { recursive: true });
+  mkdirSync(dirname(path), { mode: 0o700, recursive: true });
+
+  while (pathExists(obsoletePath)) {
+    if (recoverStaleFetchLock(obsoletePath)) {
+      continue;
+    }
+    await waitForFetchLock();
+  }
+  while (!tryCreateFetchLock(path, owner)) {
+    if (recoverStaleFetchLock(path)) {
+      continue;
+    }
+    await waitForFetchLock();
+  }
+
+  if (waiting) {
+    progress.finish();
+  }
+
+  let released = false;
+  let removeProcessHandlers = () => {};
+  const release = () => {
+    if (released) {
+      return;
+    }
+    released = true;
+    removeProcessHandlers();
+    removeOwnedFetchLock(path, owner.token);
+  };
+  removeProcessHandlers = installFetchLockProcessHandlers(release);
+
+  return { release };
+
+  async function waitForFetchLock() {
+    if (!waiting) {
+      progress('Aguardando outra atualização da base');
+      waiting = true;
+    }
+    if (performance.now() >= deadline) {
+      throw new UserError(
+        'update-in-progress',
+        `Another fetch is already updating database '${target}'.`,
+      );
+    }
+    await Bun.sleep(FETCH_LOCK_RETRY_MS);
+  }
+}
+
+type FetchLockOwner = {
+  pid: number;
+  token: string;
+};
+
+function temporaryFetchLockPath(target: string) {
+  const targetHash = new Bun.CryptoHasher('sha256').update(target).digest('hex');
+  return join(tmpdir(), `konstit-dne-${process.getuid?.() ?? 'unknown'}`, `fetch-${targetHash}.lock`);
+}
+
+function pathExists(path: string) {
+  try {
+    statSync(path);
+    return true;
+  } catch (error) {
+    if (isMissingPath(error)) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+function tryCreateFetchLock(path: string, owner: FetchLockOwner) {
+  const candidate = `${path}.${owner.pid}.${owner.token}.tmp`;
+  mkdirSync(candidate);
+  try {
+    writeFileSync(join(candidate, 'owner.json'), JSON.stringify(owner), { flag: 'wx' });
+    renameSync(candidate, path);
+    return true;
+  } catch (error) {
+    if (isPathConflict(error)) {
+      return false;
+    }
+    throw error;
+  } finally {
+    rmSync(candidate, { force: true, recursive: true });
+  }
+}
+
+function recoverStaleFetchLock(path: string) {
+  let stats: ReturnType<typeof statSync>;
+  try {
+    stats = statSync(path);
+  } catch (error) {
+    if (isMissingPath(error)) {
+      return true;
+    }
+    throw error;
+  }
+
+  if (!stats.isDirectory()) {
+    return removeLegacyFetchLock(path);
+  }
+
+  const owner = readFetchLockOwner(path);
+  if (owner && processIsRunning(owner.pid)) {
+    return false;
+  }
+
+  try {
+    writeFileSync(
+      join(path, 'reaper.json'),
+      JSON.stringify({ pid: process.pid, token: crypto.randomUUID() }),
+      { flag: 'wx' },
+    );
+  } catch (error) {
+    if (isPathConflict(error)) {
+      return false;
+    }
+    if (isMissingPath(error)) {
+      return true;
+    }
+    throw error;
+  }
+
+  rmSync(path, { force: true, recursive: true });
+  return true;
+}
+
+function removeLegacyFetchLock(path: string) {
+  const database = new Database(path);
+  try {
+    database.run('PRAGMA busy_timeout = 0');
+    database.run('BEGIN IMMEDIATE');
+    database.run('ROLLBACK');
+  } catch (error) {
+    if (isSqliteLockConflict(error)) {
+      return false;
+    }
+    throw error;
+  } finally {
+    database.close();
+  }
+  try {
+    rmSync(path, { force: true });
+    return true;
+  } catch (error) {
+    if (isMissingPath(error)) {
+      return true;
+    }
+    if (isPathConflict(error)) {
+      return false;
+    }
+    try {
+      if (statSync(path).isDirectory()) {
+        return false;
+      }
+    } catch (statError) {
+      if (isMissingPath(statError)) {
+        return true;
+      }
+      throw statError;
+    }
+    throw error;
+  }
+}
+
+function readFetchLockOwner(path: string): FetchLockOwner | null {
+  try {
+    const value = JSON.parse(readFileSync(join(path, 'owner.json'), 'utf8')) as Partial<FetchLockOwner>;
+    return Number.isInteger(value.pid) && Number(value.pid) > 0 && typeof value.token === 'string'
+      ? { pid: Number(value.pid), token: value.token }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function processIsRunning(pid: number) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return !(
+      error
+      && typeof error === 'object'
+      && 'code' in error
+      && error.code === 'ESRCH'
+    );
+  }
+}
+
+function removeOwnedFetchLock(path: string, token: string) {
+  if (readFetchLockOwner(path)?.token === token) {
+    rmSync(path, { force: true, recursive: true });
+  }
+}
+
+function installFetchLockProcessHandlers(release: () => void) {
+  const exitHandler = () => release();
+  const signalHandlers = FETCH_LOCK_SIGNALS.map((signal) => {
+    const handler = () => {
+      release();
+      process.kill(process.pid, signal);
+    };
+    process.once(signal, handler);
+    return { handler, signal };
+  });
+  process.once('exit', exitHandler);
+
+  return () => {
+    process.off('exit', exitHandler);
+    for (const { handler, signal } of signalHandlers) {
+      process.off(signal, handler);
+    }
+  };
+}
+
 async function lookupCep(options: LookupOptions, globals: GlobalOptions) {
   if (globals.json && options.jsonl) {
     throw new UserError('output-conflict', '--json and --jsonl cannot be used together.', EXIT_INVALID_INPUT);
   }
 
-  const legacy = resolveLegacyLookup(options.input, globals.database);
-  const inputs = await collectCepInputs(legacy.inputs, options.file);
+  const inputs = await collectCepInputs(options.input, options.file);
   if (!inputs.length) {
     throw new UserError('missing-input', 'Provide a CEP, --file PATH, or stdin input.', EXIT_INVALID_INPUT);
   }
 
   const normalized = inputs.map((input) => ({ input, cep: normalizeCep(input) }));
-  const database = databasePath(legacy.database);
+  const database = databasePath(globals.database);
   const reader = await openReadyDatabase(database);
   const results: LookupResult[] = [];
 
@@ -400,10 +684,7 @@ async function showStatus(globals: GlobalOptions) {
 
 async function showSchema(options: { expected: boolean; }, globals: GlobalOptions) {
   const schema = buildDneSchema();
-  const cepTable = schema.find((table) => table.originalName === SQLITE_CEP_ORIGINAL_TABLE_NAME);
-  if (!cepTable) {
-    throw new Error(`Missing schema table '${SQLITE_CEP_ORIGINAL_TABLE_NAME}'`);
-  }
+  const cepTable = getUnifiedTable(schema);
 
   let database: string | null = null;
   let source: 'database' | 'declared' = 'declared';
@@ -417,6 +698,7 @@ async function showSchema(options: { expected: boolean; }, globals: GlobalOption
         ?? (() => {
           throw new UserError('schema-not-found', `Table '${SQLITE_CEP_TABLE_NAME}' has no stored schema.`);
         })();
+      sql = formatTableSql(sql);
       source = 'database';
     } finally {
       reader.close();
@@ -426,7 +708,7 @@ async function showSchema(options: { expected: boolean; }, globals: GlobalOption
   if (globals.json) {
     writeJson({ database, source, sql, table: SQLITE_CEP_TABLE_NAME });
   } else {
-    console.log(renderSqlMarkdown(sql));
+    console.log(renderSqlMarkdown(sql, globals.color));
   }
   return 0;
 }
@@ -515,17 +797,6 @@ async function querySql(options: { limit: number; query: string; }, globals: Glo
   return 0;
 }
 
-function resolveLegacyLookup(inputs: readonly string[], defaultDatabase: string) {
-  const first = inputs[0];
-  if (inputs.length >= 2 && first && looksLikeDatabasePath(first)) {
-    return {
-      database: first,
-      inputs: inputs.slice(1),
-    };
-  }
-  return { database: defaultDatabase, inputs };
-}
-
 async function collectCepInputs(inputs: readonly string[], file: string | undefined) {
   const values = [...inputs];
   if (file) {
@@ -555,7 +826,7 @@ function splitCepInput(content: string) {
 
 export function normalizeCep(value: string) {
   const trimmed = value.trim();
-  if (!/^(?:\d{8}|\d{5}-\d{3})$/.test(trimmed)) {
+  if (!CEP_PATTERN.test(trimmed)) {
     throw new UserError(
       'invalid-cep',
       `Invalid CEP '${value}'. Use 01001000 or 01001-000.`,
@@ -676,11 +947,24 @@ function remoteSourceData(source: string, info: RemoteDneSourceInfo | null) {
 }
 
 function createProgress(quiet: boolean) {
-  return (message: string) => {
-    if (!quiet) {
-      console.error(message);
+  let messageStartedAt: number | null = null;
+
+  const finish = () => {
+    if (messageStartedAt !== null) {
+      process.stderr.write(` (${formatInteger(elapsedMilliseconds(messageStartedAt))}ms)\n`);
+      messageStartedAt = null;
     }
   };
+
+  const progress = ((message: string) => {
+    finish();
+    if (!quiet) {
+      messageStartedAt = performance.now();
+      process.stderr.write(message);
+    }
+  }) as ProgressReporter;
+  progress.finish = finish;
+  return progress;
 }
 
 function writeJson(data: unknown) {
@@ -725,6 +1009,7 @@ function writeFetchCheck(result: {
   console.log(`Status: ${result.status}`);
   console.log(`Database: ${result.database.path}`);
   console.log(`Source: ${stringValue(result.source['url'] ?? result.source['input'])}`);
+  console.log(`Última modificação na fonte: ${formatDateTime(stringValue(result.source['last_modified']))}`);
 }
 
 function writeFetchResult(result: {
@@ -737,9 +1022,18 @@ function writeFetchResult(result: {
     writeJson(result);
     return;
   }
-  const rows = result.database.row_count === null ? 'unknown rows' : `${result.database.row_count.toLocaleString('en')} rows`;
+  const rows = result.database.row_count === null ? 'unknown rows' : `${formatInteger(result.database.row_count)} rows`;
   const size = result.database.size_bytes === null ? 'unknown size' : formatBytes(result.database.size_bytes);
-  console.log(`${capitalize(result.status)} ${result.database.path}: ${rows}, ${size}, ${result.elapsed_ms} ms.`);
+  if (result.status === 'unchanged') {
+    const records = result.database.row_count === null
+      ? 'quantidade desconhecida de registros'
+      : `${formatInteger(result.database.row_count)} registros`;
+    console.log(`A base DNE já está atualizada: ${result.database.path} (${records}, ${size}).`);
+    console.log(`Última modificação na fonte: ${formatDateTime(stringValue(result.source['last_modified']))}`);
+    console.log(`Verificação concluída em ${formatInteger(result.elapsed_ms)} ms.`);
+    return;
+  }
+  console.log(`${capitalize(result.status)} ${result.database.path}: ${rows}, ${size}, ${formatInteger(result.elapsed_ms)} ms.`);
 }
 
 function writeLookupText(results: LookupResult[]) {
@@ -749,9 +1043,7 @@ function writeLookupText(results: LookupResult[]) {
       console.error(`CEP not found: ${result?.cep ?? ''}`);
       return;
     }
-    for (const [key, value,] of Object.entries(result.address)) {
-      console.log(`${key}: ${value ?? ''}`);
-    }
+    console.log(result.address);
     return;
   }
 
@@ -772,10 +1064,12 @@ function writeStatusText(inspection: DatabaseInspection) {
   console.log(`Database: ${inspection.path}`);
   console.log(`Exists: ${inspection.exists}`);
   console.log(`Ready: ${inspection.ready}`);
-  console.log(`Rows: ${inspection.row_count?.toLocaleString('en') ?? '-'}`);
+  console.log(`Rows: ${inspection.row_count === null ? '-' : formatInteger(inspection.row_count)}`);
   console.log(`Size: ${inspection.size_bytes === null ? '-' : formatBytes(inspection.size_bytes)}`);
-  console.log(`Loaded at: ${inspection.metadata?.['loaded_at'] ?? '-'}`);
+  console.log(`Loaded at: ${formatDateTime(inspection.metadata?.['loaded_at'])}`);
+  console.log(`Package: @konstit/dne@${inspection.metadata?.['package_version'] ?? '-'}`);
   console.log(`Source: ${inspection.metadata?.['source_url'] ?? inspection.metadata?.['source_input'] ?? '-'}`);
+  console.log(`Source Last-Modified: ${formatDateTime(inspection.metadata?.['source_last_modified'])}`);
   if (inspection.error) {
     console.log(`Error: ${inspection.error}`);
   }
@@ -804,15 +1098,36 @@ function databasePath(value: string) {
   return path === ':memory:' ? path : resolve(path);
 }
 
-function looksLikeDatabasePath(value: string) {
-  return value.startsWith('sqlite:///')
-    || /\.(?:db|sqlite|sqlite3)$/i.test(value)
-    || value.includes('/')
-    || value.includes('\\');
-}
-
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isPathConflict(error: unknown) {
+  return errorHasCode(error, 'EEXIST', 'EISDIR', 'ENOTEMPTY');
+}
+
+function isMissingPath(error: unknown) {
+  return errorHasCode(error, 'ENOENT');
+}
+
+function errorHasCode(error: unknown, ...codes: string[]) {
+  return Boolean(
+    error
+      && typeof error === 'object'
+      && 'code' in error
+      && codes.includes(String(error.code)),
+  );
+}
+
+function isSqliteLockConflict(error: unknown) {
+  const code = error && typeof error === 'object' && 'code' in error
+    ? String(error.code)
+    : '';
+  return code === 'SQLITE_BUSY'
+    || code.startsWith('SQLITE_BUSY_')
+    || code === 'SQLITE_LOCKED'
+    || code.startsWith('SQLITE_LOCKED_')
+    || /database is (?:busy|locked)/i.test(errorMessage(error));
 }
 
 function stringValue(value: unknown) {
@@ -831,14 +1146,30 @@ function elapsedMilliseconds(startedAt: number) {
   return Math.max(0, Math.round(performance.now() - startedAt));
 }
 
+function formatInteger(value: number) {
+  return INTEGER_FORMAT.format(value);
+}
+
+function formatDecimal(value: number) {
+  return DECIMAL_FORMAT.format(value);
+}
+
+function formatDateTime(value: string | undefined) {
+  if (!value) {
+    return '-';
+  }
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString(DISPLAY_LOCALE);
+}
+
 function formatBytes(bytes: number) {
   if (bytes < 1024) {
-    return `${bytes} B`;
+    return `${formatInteger(bytes)} B`;
   }
   if (bytes < 1024 * 1024) {
-    return `${(bytes / 1024).toFixed(1)} KiB`;
+    return `${formatDecimal(bytes / 1024)} KiB`;
   }
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+  return `${formatDecimal(bytes / (1024 * 1024))} MiB`;
 }
 
 function capitalize(value: string) {
@@ -863,7 +1194,9 @@ async function readPackageVersion() {
 }
 
 function buildDneSchema() {
-  return buildSchema({ [SQLITE_CEP_ORIGINAL_TABLE_NAME]: SQLITE_CEP_TABLE_NAME });
+  const schema = buildSchema();
+  getUnifiedTable(schema).name = SQLITE_CEP_TABLE_NAME;
+  return schema;
 }
 
 async function replaceTargetFromScratch(
@@ -871,10 +1204,7 @@ async function replaceTargetFromScratch(
   scratchPath: string,
   schema: ReturnType<typeof buildDneSchema>,
 ) {
-  const cepTable = schema.find((table) => table.originalName === SQLITE_CEP_ORIGINAL_TABLE_NAME);
-  if (!cepTable) {
-    throw new Error(`Missing schema table '${SQLITE_CEP_ORIGINAL_TABLE_NAME}'`);
-  }
+  const cepTable = getUnifiedTable(schema);
 
   const columns = cepTable.columns.map((column) => quoteIdent(column.name)).join(', ');
   const attachPath = `${scratchPath}.attach`;
@@ -986,6 +1316,7 @@ function buildLoadMetadata(
 ) {
   const metadata: LoadMetadata = {
     loaded_at: new Date().toISOString(),
+    package_version: VERSION,
     source_input: source,
     source_kind: remoteInfo
       ? 'remote'
@@ -1017,27 +1348,107 @@ function quoteLiteral(value: string) {
   return `'${value.replaceAll('\'', '\'\'')}'`;
 }
 
-function renderSqlMarkdown(sql: string) {
-  return Bun.markdown.render(`\`\`\`sql\n${sql}\n\`\`\``, {
-    code: (children) => renderSqlCodeBlock(children),
-  }).trimEnd();
-}
-
-function renderSqlCodeBlock(sql: string) {
-  if (!shouldUseAnsi()) {
+function formatTableSql(sql: string) {
+  const openingParenthesis = sql.indexOf('(');
+  const closingParenthesis = sql.lastIndexOf(')');
+  if (openingParenthesis === -1 || closingParenthesis <= openingParenthesis) {
     return sql;
   }
 
-  return sql
-    .replaceAll(/"([^"]+)"/g, `${ANSI_CYAN}"$1"${ANSI_RESET}`)
-    .replaceAll(
-      /\b(CREATE|TABLE|IF|NOT|EXISTS|TEXT|INTEGER|NULL|PRIMARY|KEY|WITHOUT|ROWID)\b/g,
-      `${ANSI_BOLD}$1${ANSI_RESET}`,
-    );
+  const definitions = splitTopLevelSqlList(
+    sql.slice(openingParenthesis + 1, closingParenthesis),
+  );
+  if (!definitions.length) {
+    return sql;
+  }
+
+  const prefix = sql.slice(0, openingParenthesis + 1).trimEnd();
+  const suffix = sql.slice(closingParenthesis).trimStart();
+  return `${prefix}\n  ${definitions.join(',\n  ')}\n${suffix}`;
 }
 
-function shouldUseAnsi() {
-  return Boolean(process.stdout.isTTY) && Bun.env['NO_COLOR'] === undefined;
+function splitTopLevelSqlList(sql: string) {
+  const parts: string[] = [];
+  let start = 0;
+  let depth = 0;
+  let quote: '\'' | '"' | '`' | ']' | null = null;
+  let comment: 'block' | 'line' | null = null;
+
+  for (let index = 0; index < sql.length; index++) {
+    const character = sql[index];
+
+    if (comment === 'line') {
+      if (character === '\n' || character === '\r') {
+        comment = null;
+      }
+      continue;
+    }
+    if (comment === 'block') {
+      if (character === '*' && sql[index + 1] === '/') {
+        comment = null;
+        index++;
+      }
+      continue;
+    }
+
+    if (quote) {
+      if (character === quote) {
+        if (sql[index + 1] === quote) {
+          index++;
+        } else {
+          quote = null;
+        }
+      }
+      continue;
+    }
+
+    if (character === '-' && sql[index + 1] === '-') {
+      comment = 'line';
+      index++;
+    } else if (character === '/' && sql[index + 1] === '*') {
+      comment = 'block';
+      index++;
+    } else if (character === '\'' || character === '"' || character === '`') {
+      quote = character;
+    } else if (character === '[') {
+      quote = ']';
+    } else if (character === '(') {
+      depth++;
+    } else if (character === ')') {
+      depth--;
+    } else if (character === ',' && depth === 0) {
+      parts.push(sql.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+
+  parts.push(sql.slice(start).trim());
+  return parts.filter(Boolean);
+}
+
+function renderSqlMarkdown(sql: string, color: boolean) {
+  return Bun.markdown.render(`\`\`\`sql\n${sql}\n\`\`\``, {
+    code: (children) => renderSqlCodeBlock(children, color),
+  }).trimEnd();
+}
+
+export function renderSqlCodeBlock(sql: string, color: boolean) {
+  if (!color) {
+    return sql;
+  }
+
+  return sql.replaceAll(SQL_HIGHLIGHT_PATTERN, (token) => {
+    if (token.startsWith('--') || token.startsWith('/*')) {
+      return `${ANSI_GRAY}${token}${ANSI_RESET}`;
+    }
+    if (token.startsWith('"') || token.startsWith('`') || token.startsWith('[')) {
+      return `${ANSI_CYAN}${token}${ANSI_RESET}`;
+    }
+    if (token.startsWith('\'')) {
+      return token;
+    }
+    return `${ANSI_BOLD}${token}${ANSI_RESET}`;
+  });
 }
 
 async function createScratchTarget(target: string) {
