@@ -5,6 +5,7 @@ import {
 } from 'bun:test';
 import {
   buildSchema,
+  getSourceFieldIndexes,
   getTableFilesGlob,
   getUnifiedTable,
 } from '../src/schema.ts';
@@ -42,6 +43,14 @@ describe('schema', () => {
   test('derives the default file name from the original table name', () => {
     const table = buildSchema().find((candidate) => candidate.originalName === 'log_bairro');
     expect(table && getTableFilesGlob(table)).toBe('LOG_BAIRRO.TXT');
+  });
+
+  test('declares source field indexes used by the loader', () => {
+    const table = buildSchema().find((candidate) => candidate.originalName === 'log_localidade');
+    if (!table) {
+      throw new Error('Missing localidade table');
+    }
+    expect(getSourceFieldIndexes(table, ['locNu', 'uf', 'cep', 'munNu'])).toEqual([0, 1, 3, 8]);
   });
 });
 

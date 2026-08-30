@@ -28,7 +28,7 @@ jobs:
             bun-version: latest
           - name: macOS / Bun latest
             os: macos-latest
-            bun-version: lates
+            bun-version: latest
 
     steps:
       - name: Check out repository
@@ -63,6 +63,38 @@ jobs:
 
       - name: Check coverage
         run: bun run coverage
+
+  package:
+    name: Package smoke test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build and install npm tarball
+        run: |
+          bun run build
+          PACK_RESULT="$(npm pack --json)"
+          TARBALL="$(node -e "process.stdout.write(JSON.parse(process.argv[1])[0].filename)" "$PACK_RESULT")"
+          SMOKE_DIR="$(mktemp -d)"
+          trap 'rm -rf "$SMOKE_DIR"' EXIT
+          npm install --prefix "$SMOKE_DIR" "$GITHUB_WORKSPACE/$TARBALL" --ignore-scripts --no-audit --no-fund
+          "$SMOKE_DIR/node_modules/.bin/dne" --help
 
   lint:
     name: Lint

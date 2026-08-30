@@ -110,6 +110,7 @@ describe('CLI contract', () => {
       XDG_STATE_HOME: cronState,
     };
     const target = join(workDir, 'cron % friday\'s.db');
+    const scheduledSource = join(workDir, 'source % friday\'s.zip');
 
     const missing = runCliWithFakeCron(['cron', 'status', '--db', target, '--json'], cronEnvironment);
     expect(missing.status).toBe(0);
@@ -132,13 +133,17 @@ describe('CLI contract', () => {
     expect(existsSync(cronCalls)).toBe(false);
     expect(existsSync(cronState)).toBe(false);
 
-    const installed = runCliWithFakeCron(['cron', 'install', '--db', target, '--json'], cronEnvironment);
+    const installed = runCliWithFakeCron(
+      ['cron', 'install', '--db', target, '--source', scheduledSource, '--json'],
+      cronEnvironment,
+    );
     expect(installed.status).toBe(0);
     const installedData = parseJson(installed.stdout).data;
     expect(installedData).toMatchObject({
       database: target,
       expression: '0 0 * * 5',
       package_version: packageJson.version,
+      source: scheduledSource,
       status: 'installed',
     });
     expect(installedData.id).toMatch(/^konstit-dne-[a-f0-9]{32}$/);
@@ -148,6 +153,7 @@ describe('CLI contract', () => {
     expect(installedData.command).toContain('%');
     expect(installedData.command).toContain('\'\\\'\'');
     expect(readFileSync(installedData.runner, 'utf8')).toContain(JSON.stringify(target));
+    expect(readFileSync(installedData.runner, 'utf8')).toContain(JSON.stringify(scheduledSource));
     expect(readFileSync(installedData.runner, 'utf8')).toContain(`@konstit/dne@${packageJson.version}`);
     expect(readCronCalls(cronCalls)[0]).toMatchObject({
       action: 'install',
@@ -175,6 +181,7 @@ describe('CLI contract', () => {
       expression: '30 6 * * 5',
       installed: true,
       package_version: packageJson.version,
+      source: scheduledSource,
     });
 
     const otherTarget = join(workDir, 'other-cron.db');
@@ -236,18 +243,17 @@ describe('CLI contract', () => {
   test('distinguishes invalid CEP input from a valid missing CEP', () => {
     const invalid = runCli(['get', 'abc', '--db', databasePath, '--json']);
     expect(invalid.status).toBe(2);
-    expect(parseJson(invalid.stderr).error.code).toBe('invalid-arguments');
-    expect(parseJson(invalid.stderr).error.message).toContain('valor inválido');
+    expect(parseJson(invalid.stderr).error.code).toBe('invalid-cep');
+    expect(parseJson(invalid.stderr).error.message).toContain('CEP inválido');
 
     const invalidText = runCli(['get', 'abc']);
     expect(invalidText.status).toBe(2);
-    expect(invalidText.stderr).toContain('erro: valor inválido');
-    expect(invalidText.stderr).toContain('Uso: dne get');
+    expect(invalidText.stderr).toContain('erro: CEP inválido');
     expect(invalidText.stderr).not.toContain('Usage:');
 
     const legacyDatabase = runCli(['get', databasePath, '30000001', '--json']);
     expect(legacyDatabase.status).toBe(2);
-    expect(parseJson(legacyDatabase.stderr).error.code).toBe('invalid-arguments');
+    expect(parseJson(legacyDatabase.stderr).error.code).toBe('invalid-cep');
 
     const missing = runCli(['get', '99999999', '--db', databasePath, '--json']);
     expect(missing.status).toBe(3);
@@ -332,6 +338,19 @@ describe('CLI contract', () => {
     expect(doctorText.stdout).toContain('Base: pronta');
     expect(doctorText.stdout).toContain('Fonte: não verificada');
     expect(doctorText.stdout).toContain('Saudável: sim');
+
+    const missingDoctor = runCli([
+      'doctor',
+      '--offline',
+      '--db',
+      join(workDir, 'missing-doctor.db'),
+      '--json',
+    ]);
+    expect(missingDoctor.status).toBe(1);
+    expect(parseJson(missingDoctor.stdout).data).toMatchObject({
+      database: { ready: false },
+      healthy: false,
+    });
   });
 
   test('returns a JSON build summary and keeps progress on stderr', () => {
@@ -373,6 +392,18 @@ describe('CLI contract', () => {
     const checkOnly = runCli(['build', '--check', '--db', checkOnlyTarget, '--source', sourcePath, '--json']);
     expect(checkOnly.status).toBe(0);
     expect(existsSync(temporaryFetchLockPath(checkOnlyTarget))).toBe(false);
+
+    const missingSource = runCli([
+      'build',
+      '--check',
+      '--db',
+      checkOnlyTarget,
+      '--source',
+      join(workDir, 'missing-source'),
+      '--json',
+    ]);
+    expect(missingSource.status).toBe(1);
+    expect(parseJson(missingSource.stderr.slice(missingSource.stderr.indexOf('{'))).error.code).toBe('source-unavailable');
   });
 
   test('stores and reports the remote Last-Modified header and package version', async () => {

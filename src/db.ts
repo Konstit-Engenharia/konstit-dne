@@ -1,6 +1,7 @@
 import { Database } from 'bun:sqlite';
 import type { DneDataSource } from './dne-source.ts';
 import {
+  getSourceFieldIndexes,
   getTableFilesGlob,
   getUnifiedTable,
   type TableDefinition,
@@ -34,6 +35,13 @@ export type DneRow = {
 };
 
 export type LoadProgress = (message: string) => void;
+
+export class DneSourceQualityError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'DneSourceQualityError';
+  }
+}
 
 export class DneDatabaseReader {
   private db: Database;
@@ -108,7 +116,7 @@ type UnifiedInsertRow = [
   complemento: string | null,
   bairro: string | null,
   municipio: string,
-  municipioCodIbge: number | null,
+  municipioCodIbge: number,
   uf: string,
   nome: string | null,
 ];
@@ -120,6 +128,139 @@ type Localidade = {
   locNuSub: string | null;
   munNu: number | null;
 };
+
+type LocalidadeCandidate = Localidade & {
+  quality: LoadQualityCounter;
+};
+
+type Bairro = {
+  uf: string;
+  locNu: string;
+  nome: string;
+};
+
+export type LoadQualityCounts = {
+  read: number;
+  accepted: number;
+  rejected: number;
+};
+
+export type LoadQualityBreakdown = LoadQualityCounts & {
+  rejection_reasons: Record<string, number>;
+};
+
+export type LoadQualityStage = LoadQualityBreakdown & {
+  files: Record<string, LoadQualityBreakdown>;
+};
+
+export type LoadQualityReport = {
+  version: 1;
+  status: 'passed';
+  output_rows: number;
+  totals: LoadQualityCounts;
+  stages: Record<string, LoadQualityStage>;
+};
+
+type MutableQualityBreakdown = {
+  read: number;
+  accepted: number;
+  rejected: number;
+  rejectionReasons: Map<string, number>;
+};
+
+type MutableQualityStage = MutableQualityBreakdown & {
+  files: Map<string, MutableQualityBreakdown>;
+};
+
+type LoadQualityCounter = {
+  read(): void;
+  accept(): void;
+  reject(reason: string): void;
+};
+
+class LoadQualityTracker {
+  private stages = new Map<string, MutableQualityStage>();
+
+  counter(stageName: string, fileName: string): LoadQualityCounter {
+    const stage = this.stage(stageName);
+    const file = this.file(stageName, fileName);
+    return {
+      read() {
+        stage.read++;
+        file.read++;
+      },
+      accept() {
+        stage.accepted++;
+        file.accepted++;
+      },
+      reject(reason: string) {
+        stage.rejected++;
+        file.rejected++;
+        incrementReason(stage.rejectionReasons, reason);
+        incrementReason(file.rejectionReasons, reason);
+      },
+    };
+  }
+
+  assertValid() {
+    const rejected = Array.from(this.stages.values()).reduce((total, stage) => total + stage.rejected, 0);
+    if (!rejected) {
+      return;
+    }
+
+    const reasons = new Map<string, number>();
+    for (const stage of this.stages.values()) {
+      for (const [reason, count,] of stage.rejectionReasons) {
+        reasons.set(reason, (reasons.get(reason) ?? 0) + count);
+      }
+    }
+    const summary = Array.from(reasons).map(([reason, count,]) => `${reason}=${count}`).join(', ');
+    throw new DneSourceQualityError(`DNE source quality validation failed: ${rejected} rejected row(s) (${summary})`);
+  }
+
+  report(outputRows: number): LoadQualityReport {
+    const totals: LoadQualityCounts = { read: 0, accepted: 0, rejected: 0 };
+    const stages: Record<string, LoadQualityStage> = {};
+
+    for (const [name, stage,] of this.stages) {
+      totals.read += stage.read;
+      totals.accepted += stage.accepted;
+      totals.rejected += stage.rejected;
+      const files: Record<string, LoadQualityBreakdown> = {};
+      for (const [file, counts,] of stage.files) {
+        files[file] = qualityBreakdown(counts);
+      }
+      stages[name] = { ...qualityBreakdown(stage), files };
+    }
+
+    return {
+      version: 1,
+      status: 'passed',
+      output_rows: outputRows,
+      totals,
+      stages,
+    };
+  }
+
+  private stage(name: string): MutableQualityStage {
+    let stage = this.stages.get(name);
+    if (!stage) {
+      stage = { ...newQualityBreakdown(), files: new Map() };
+      this.stages.set(name, stage);
+    }
+    return stage;
+  }
+
+  private file(stageName: string, fileName: string): MutableQualityBreakdown {
+    const stage = this.stage(stageName);
+    let file = stage.files.get(fileName);
+    if (!file) {
+      file = newQualityBreakdown();
+      stage.files.set(fileName, file);
+    }
+    return file;
+  }
+}
 
 type UnifiedInsert = {
   run(...values: UnifiedInsertRow): void;
@@ -218,6 +359,7 @@ export class DneDatabaseWriter {
 
   async loadFromSource(source: DneDataSource, metadata: LoadMetadata = {}, onProgress: LoadProgress = () => {}) {
     const cepTable = this.unifiedTable;
+    const quality = new LoadQualityTracker();
 
     this.configureBulkLoad();
     await this.transaction(async () => {
@@ -227,57 +369,165 @@ export class DneDatabaseWriter {
       this.db.run(`DELETE FROM ${quoteIdent(SQLITE_METADATA_TABLE_NAME)}`);
 
       onProgress('Lendo municípios');
-      const localidades = await this.readLocalidades(source);
+      const localidades = await this.readLocalidades(source, quality);
       onProgress('Lendo bairros');
-      const bairros = await this.readBairros(source);
+      const bairros = await this.readBairros(source, localidades, quality);
       const insert = this.prepareUnifiedInsert(cepTable.name);
 
-      onProgress('Carregando logradouros');
-      await this.insertLogradouros(source, insert, localidades, bairros);
-      onProgress('Carregando municípios');
-      this.insertLocalidades(insert, localidades);
-      this.insertLocalidadesSubordinadas(insert, localidades);
-      onProgress('Carregando endereços especiais');
-      await this.insertCpcs(source, insert, localidades);
-      await this.insertGrandesUsuarios(source, insert, localidades, bairros);
-      await this.insertUnidadesOperacionais(source, insert, localidades, bairros);
-      insert.flush();
-      insert.finalize();
-      this.writeMetadata(metadata);
+      try {
+        onProgress('Carregando logradouros');
+        await this.insertLogradouros(source, insert, localidades, bairros, quality);
+        onProgress('Carregando municípios');
+        this.insertLocalidades(insert, localidades);
+        this.insertLocalidadesSubordinadas(insert, localidades);
+        onProgress('Carregando endereços especiais');
+        await this.insertCpcs(source, insert, localidades, quality);
+        await this.insertGrandesUsuarios(source, insert, localidades, bairros, quality);
+        await this.insertUnidadesOperacionais(source, insert, localidades, bairros, quality);
+        quality.assertValid();
+        if (!localidades.size) {
+          throw new DneSourceQualityError('DNE source quality validation failed: no accepted localidade rows');
+        }
+        insert.flush();
+
+        const outputRows = this.rowCount(cepTable.name);
+        if (!outputRows) {
+          throw new DneSourceQualityError('DNE source quality validation failed: no CEP rows produced');
+        }
+        const report = quality.report(outputRows);
+        this.writeMetadata({
+          ...metadata,
+          quality_report: JSON.stringify(report),
+          quality_rows_accepted: String(report.totals.accepted),
+          quality_rows_read: String(report.totals.read),
+          quality_rows_rejected: String(report.totals.rejected),
+        });
+      } finally {
+        insert.finalize();
+      }
     });
 
     return this.rowCount(cepTable.name);
   }
 
-  private async readLocalidades(source: DneDataSource) {
-    const localidades = new Map<string, Localidade>();
+  private async readLocalidades(source: DneDataSource, quality: LoadQualityTracker) {
+    const table = this.originalTable('log_localidade');
+    const candidates = new Map<string, LocalidadeCandidate>();
 
-    await this.forEachSelectedRow(this.originalTable('log_localidade'), source, [0, 1, 2, 3, 6, 8], (row) => {
-      const [locNu, uf, nome, cep, locNuSub, munNu,] = row;
-      if (!locNu || !uf || !nome) {
-        return;
+    await this.forEachSelectedRow(
+      table,
+      source,
+      getSourceFieldIndexes(table, ['locNu', 'uf', 'nome', 'cep', 'locNuSub', 'munNu']),
+      quality,
+      (row, _file, counter) => {
+        const [locNu = null, uf = null, nome = null, cep = null, locNuSub = null, munNuRaw = null,] = row;
+        const requiredProblem = missingRequiredField([
+          ['locNu', locNu],
+          ['uf', uf],
+          ['nome', nome],
+        ]);
+        if (requiredProblem || !locNu || !uf || !nome) {
+          counter.reject(requiredProblem ?? 'invalid_structure');
+          return;
+        }
+        if (!isBrazilianUf(uf)) {
+          counter.reject('invalid_uf');
+          return;
+        }
+        if (cep !== null && !isValidCep(cep)) {
+          counter.reject('invalid_cep');
+          return;
+        }
+        if (munNuRaw !== null && !isValidIbgeInteger(munNuRaw)) {
+          counter.reject('invalid_ibge');
+          return;
+        }
+        if (candidates.has(locNu)) {
+          counter.reject('duplicate_localidade');
+          return;
+        }
+
+        candidates.set(locNu, {
+          uf,
+          nome,
+          cep,
+          locNuSub,
+          munNu: munNuRaw === null ? null : Number(munNuRaw),
+          quality: counter,
+        });
+      },
+    );
+
+    const localidades = new Map<string, Localidade>();
+    for (const [locNu, candidate,] of candidates) {
+      const parent = candidate.locNuSub ? candidates.get(candidate.locNuSub) : undefined;
+      if (candidate.locNuSub && (!parent || parent.munNu === null)) {
+        candidate.quality.reject('missing_parent_localidade');
+        continue;
       }
-      localidades.set(locNu, {
-        uf,
-        nome,
-        cep: cep ?? null,
-        locNuSub: locNuSub ?? null,
-        munNu: munNu === null ? null : Number(munNu),
-      });
-    });
+      if (parent && parent.uf !== candidate.uf) {
+        candidate.quality.reject('localidade_uf_mismatch');
+        continue;
+      }
+      if (!candidate.locNuSub && candidate.munNu === null) {
+        candidate.quality.reject('missing_ibge');
+        continue;
+      }
+
+      localidades.set(locNu, candidate);
+      candidate.quality.accept();
+    }
 
     return localidades;
   }
 
-  private async readBairros(source: DneDataSource) {
-    const bairros = new Map<string, string>();
+  private async readBairros(
+    source: DneDataSource,
+    localidades: Map<string, Localidade>,
+    quality: LoadQualityTracker,
+  ) {
+    const table = this.originalTable('log_bairro');
+    const bairros = new Map<string, Bairro>();
 
-    await this.forEachSelectedRow(this.originalTable('log_bairro'), source, [0, 3], (row) => {
-      const [baiNu, bairro,] = row;
-      if (baiNu && bairro) {
-        bairros.set(baiNu, bairro);
-      }
-    });
+    await this.forEachSelectedRow(
+      table,
+      source,
+      getSourceFieldIndexes(table, ['baiNu', 'uf', 'locNu', 'bairro']),
+      quality,
+      (row, _file, counter) => {
+        const [baiNu = null, uf = null, locNu = null, bairro = null,] = row;
+        const requiredProblem = missingRequiredField([
+          ['baiNu', baiNu],
+          ['uf', uf],
+          ['locNu', locNu],
+          ['bairro', bairro],
+        ]);
+        if (requiredProblem || !baiNu || !uf || !locNu || !bairro) {
+          counter.reject(requiredProblem ?? 'invalid_structure');
+          return;
+        }
+        if (!isBrazilianUf(uf)) {
+          counter.reject('invalid_uf');
+          return;
+        }
+        const localidade = localidades.get(locNu);
+        if (!localidade) {
+          counter.reject('missing_localidade');
+          return;
+        }
+        if (localidade.uf !== uf) {
+          counter.reject('bairro_uf_mismatch');
+          return;
+        }
+        if (bairros.has(baiNu)) {
+          counter.reject('duplicate_bairro');
+          return;
+        }
+
+        bairros.set(baiNu, { uf, locNu, nome: bairro });
+        counter.accept();
+      },
+    );
 
     return bairros;
   }
@@ -295,27 +545,87 @@ export class DneDatabaseWriter {
     source: DneDataSource,
     insert: UnifiedInsert,
     localidades: Map<string, Localidade>,
-    bairros: Map<string, string>,
+    bairros: Map<string, Bairro>,
+    quality: LoadQualityTracker,
   ) {
-    await this.forEachSelectedRow(this.originalTable('log_logradouro'), source, [1, 2, 3, 5, 7, 8, 9], (row) => {
-      const [uf, locNu, baiNuIni, logNo, cep, tloTx, logStaTlo,] = row;
-      const localidade = locNu ? localidades.get(locNu) : undefined;
-      const bairro = baiNuIni ? bairros.get(baiNuIni) : undefined;
-      if (!cep || !uf || !logNo || !localidade || !bairro) {
-        return;
-      }
+    const table = this.originalTable('log_logradouro');
 
-      insert.run(
-        cep,
-        logStaTlo === 'S' ? `${tloTx} ${logNo}` : logNo,
-        null,
-        bairro,
-        localidade.nome,
-        localidade.munNu,
-        uf,
-        null,
-      );
-    });
+    await this.forEachSelectedRow(
+      table,
+      source,
+      getSourceFieldIndexes(table, ['uf', 'locNu', 'baiNuIni', 'logNo', 'cep', 'tloTx', 'logStaTlo']),
+      quality,
+      (row, _file, counter) => {
+        const [
+          uf = null,
+          locNu = null,
+          baiNuIni = null,
+          logNo = null,
+          cep = null,
+          tloTx = null,
+          logStaTlo = null,
+        ] = row;
+        const requiredProblem = missingRequiredField([
+          ['uf', uf],
+          ['locNu', locNu],
+          ['baiNuIni', baiNuIni],
+          ['logNo', logNo],
+          ['cep', cep],
+        ]);
+        if (requiredProblem || !uf || !locNu || !baiNuIni || !logNo || !cep) {
+          counter.reject(requiredProblem ?? 'invalid_structure');
+          return;
+        }
+        if (!isBrazilianUf(uf)) {
+          counter.reject('invalid_uf');
+          return;
+        }
+        if (!isValidCep(cep)) {
+          counter.reject('invalid_cep');
+          return;
+        }
+        if (logStaTlo === 'S' && !tloTx) {
+          counter.reject('missing_tloTx');
+          return;
+        }
+
+        const localidade = localidades.get(locNu);
+        if (!localidade) {
+          counter.reject('missing_localidade');
+          return;
+        }
+        const bairro = bairros.get(baiNuIni);
+        if (!bairro) {
+          counter.reject('missing_bairro');
+          return;
+        }
+        if (localidade.uf !== uf || bairro.uf !== uf) {
+          counter.reject('logradouro_uf_mismatch');
+          return;
+        }
+        if (bairro.locNu !== locNu) {
+          counter.reject('bairro_localidade_mismatch');
+          return;
+        }
+        const municipality = resolveMunicipality(localidade, localidades);
+        if (!municipality) {
+          counter.reject('missing_municipality');
+          return;
+        }
+
+        insert.run(
+          cep,
+          logStaTlo === 'S' ? `${tloTx} ${logNo}` : logNo,
+          null,
+          bairro.nome,
+          municipality.nome,
+          municipality.munNu,
+          uf,
+          null,
+        );
+        counter.accept();
+      },
+    );
   }
 
   private insertLocalidades(insert: UnifiedInsert, localidades: Map<string, Localidade>) {
@@ -335,103 +645,193 @@ export class DneDatabaseWriter {
     }
   }
 
-  private async insertCpcs(source: DneDataSource, insert: UnifiedInsert, localidades: Map<string, Localidade>) {
-    await this.forEachSelectedRow(this.originalTable('log_cpc'), source, [1, 2, 3, 4, 5], (row) => {
-      const [uf, locNu, nome, endereco, cep,] = row;
-      const localidade = locNu ? localidades.get(locNu) : undefined;
-      if (!cep || !uf || !nome || !endereco || !localidade) {
-        return;
-      }
+  private async insertCpcs(
+    source: DneDataSource,
+    insert: UnifiedInsert,
+    localidades: Map<string, Localidade>,
+    quality: LoadQualityTracker,
+  ) {
+    const table = this.originalTable('log_cpc');
 
-      const parent = localidade.locNuSub ? localidades.get(localidade.locNuSub) : undefined;
-      const [logradouro, complemento,] = splitAddress(endereco);
-      insert.run(
-        cep,
-        logradouro,
-        complemento,
-        null,
-        parent?.nome ?? localidade.nome,
-        parent?.munNu ?? localidade.munNu,
-        uf,
-        nome,
-      );
-    });
+    await this.forEachSelectedRow(
+      table,
+      source,
+      getSourceFieldIndexes(table, ['uf', 'locNu', 'nome', 'endereco', 'cep']),
+      quality,
+      (row, _file, counter) => {
+        const [uf = null, locNu = null, nome = null, endereco = null, cep = null,] = row;
+        const requiredProblem = missingRequiredField([
+          ['uf', uf],
+          ['locNu', locNu],
+          ['nome', nome],
+          ['endereco', endereco],
+          ['cep', cep],
+        ]);
+        if (requiredProblem || !uf || !locNu || !nome || !endereco || !cep) {
+          counter.reject(requiredProblem ?? 'invalid_structure');
+          return;
+        }
+        if (!isBrazilianUf(uf)) {
+          counter.reject('invalid_uf');
+          return;
+        }
+        if (!isValidCep(cep)) {
+          counter.reject('invalid_cep');
+          return;
+        }
+        const localidade = localidades.get(locNu);
+        if (!localidade) {
+          counter.reject('missing_localidade');
+          return;
+        }
+        if (localidade.uf !== uf) {
+          counter.reject('cpc_uf_mismatch');
+          return;
+        }
+        const municipality = resolveMunicipality(localidade, localidades);
+        if (!municipality) {
+          counter.reject('missing_municipality');
+          return;
+        }
+
+        const [logradouro, complemento,] = splitAddress(endereco);
+        insert.run(cep, logradouro, complemento, null, municipality.nome, municipality.munNu, uf, nome);
+        counter.accept();
+      },
+    );
   }
 
   private async insertGrandesUsuarios(
     source: DneDataSource,
     insert: UnifiedInsert,
     localidades: Map<string, Localidade>,
-    bairros: Map<string, string>,
+    bairros: Map<string, Bairro>,
+    quality: LoadQualityTracker,
   ) {
-    await this.forEachSelectedRow(this.originalTable('log_grande_usuario'), source, [1, 2, 3, 5, 6, 7], (row) => {
-      const [uf, locNu, baiNu, nome, endereco, cep,] = row;
-      const localidade = locNu ? localidades.get(locNu) : undefined;
-      const bairro = baiNu ? bairros.get(baiNu) : undefined;
-      if (!cep || !uf || !nome || !endereco || !localidade || !bairro) {
-        return;
-      }
-
-      const parent = localidade.locNuSub ? localidades.get(localidade.locNuSub) : undefined;
-      const [logradouro, complemento,] = splitAddress(endereco);
-      insert.run(
-        cep,
-        logradouro,
-        complemento,
-        bairro,
-        parent?.nome ?? localidade.nome,
-        parent?.munNu ?? localidade.munNu,
-        uf,
-        nome,
-      );
-    });
+    await this.insertNamedAddresses(
+      this.originalTable('log_grande_usuario'),
+      source,
+      insert,
+      localidades,
+      bairros,
+      quality,
+    );
   }
 
   private async insertUnidadesOperacionais(
     source: DneDataSource,
     insert: UnifiedInsert,
     localidades: Map<string, Localidade>,
-    bairros: Map<string, string>,
+    bairros: Map<string, Bairro>,
+    quality: LoadQualityTracker,
   ) {
-    await this.forEachSelectedRow(this.originalTable('log_unid_oper'), source, [1, 2, 3, 5, 6, 7], (row) => {
-      const [uf, locNu, baiNu, nome, endereco, cep,] = row;
-      const localidade = locNu ? localidades.get(locNu) : undefined;
-      const bairro = baiNu ? bairros.get(baiNu) : undefined;
-      if (!cep || !uf || !nome || !endereco || !localidade || !bairro) {
-        return;
-      }
+    await this.insertNamedAddresses(
+      this.originalTable('log_unid_oper'),
+      source,
+      insert,
+      localidades,
+      bairros,
+      quality,
+    );
+  }
 
-      const parent = localidade.locNuSub ? localidades.get(localidade.locNuSub) : undefined;
-      const munNu = parent?.munNu ?? localidade.munNu;
-      if (munNu === null) {
-        return;
-      }
+  private async insertNamedAddresses(
+    table: TableDefinition,
+    source: DneDataSource,
+    insert: UnifiedInsert,
+    localidades: Map<string, Localidade>,
+    bairros: Map<string, Bairro>,
+    quality: LoadQualityTracker,
+  ) {
+    await this.forEachSelectedRow(
+      table,
+      source,
+      getSourceFieldIndexes(table, ['uf', 'locNu', 'baiNu', 'nome', 'endereco', 'cep']),
+      quality,
+      (row, _file, counter) => {
+        const [uf = null, locNu = null, baiNu = null, nome = null, endereco = null, cep = null,] = row;
+        const requiredProblem = missingRequiredField([
+          ['uf', uf],
+          ['locNu', locNu],
+          ['baiNu', baiNu],
+          ['nome', nome],
+          ['endereco', endereco],
+          ['cep', cep],
+        ]);
+        if (requiredProblem || !uf || !locNu || !baiNu || !nome || !endereco || !cep) {
+          counter.reject(requiredProblem ?? 'invalid_structure');
+          return;
+        }
+        if (!isBrazilianUf(uf)) {
+          counter.reject('invalid_uf');
+          return;
+        }
+        if (!isValidCep(cep)) {
+          counter.reject('invalid_cep');
+          return;
+        }
+        const localidade = localidades.get(locNu);
+        if (!localidade) {
+          counter.reject('missing_localidade');
+          return;
+        }
+        const bairro = bairros.get(baiNu);
+        if (!bairro) {
+          counter.reject('missing_bairro');
+          return;
+        }
+        if (localidade.uf !== uf || bairro.uf !== uf) {
+          counter.reject('address_uf_mismatch');
+          return;
+        }
+        if (bairro.locNu !== locNu) {
+          counter.reject('bairro_localidade_mismatch');
+          return;
+        }
+        const municipality = resolveMunicipality(localidade, localidades);
+        if (!municipality) {
+          counter.reject('missing_municipality');
+          return;
+        }
 
-      const [logradouro, complemento,] = splitAddress(endereco);
-      insert.run(cep, logradouro, complemento, bairro, parent?.nome ?? localidade.nome, munNu, uf, nome);
-    });
+        const [logradouro, complemento,] = splitAddress(endereco);
+        insert.run(cep, logradouro, complemento, bairro.nome, municipality.nome, municipality.munNu, uf, nome);
+        counter.accept();
+      },
+    );
   }
 
   private async forEachSelectedRow(
     table: TableDefinition,
     source: DneDataSource,
     indexes: number[],
-    fn: (row: (string | null)[]) => void,
+    quality: LoadQualityTracker,
+    fn: (row: (string | null)[], file: string, counter: LoadQualityCounter) => void,
   ) {
     const glob = getTableFilesGlob(table);
     if (!glob) {
       return;
     }
 
-    for (const file of source.matchingFiles(glob)) {
+    const files = source.matchingFiles(glob);
+    if (!files.length) {
+      throw new Error(`DNE data file not found: ${glob}`);
+    }
+
+    for (const file of files) {
+      const counter = quality.counter(table.originalName, file);
       if (source.readText) {
         const content = await source.readText(file);
-        forEachLine(content, (start, end) => fn(selectDelimitedFieldsInRange(content, start, end, indexes)));
+        forEachLine(content, (start, end) => {
+          counter.read();
+          fn(selectDelimitedFieldsInRange(content, start, end, indexes), file, counter);
+        });
         continue;
       }
 
       for await (const line of source.readLines(file)) {
-        fn(selectDelimitedFields(line, indexes));
+        counter.read();
+        fn(selectDelimitedFields(line, indexes), file, counter);
       }
     }
   }
@@ -528,6 +928,90 @@ function splitAddress(value: string): [string, string | null] {
     return [value.trim(), null];
   }
   return [value.slice(0, comma).trim(), value.slice(comma + 1).trim()];
+}
+
+const BRAZILIAN_UFS = new Set([
+  'AC',
+  'AL',
+  'AM',
+  'AP',
+  'BA',
+  'CE',
+  'DF',
+  'ES',
+  'GO',
+  'MA',
+  'MG',
+  'MS',
+  'MT',
+  'PA',
+  'PB',
+  'PE',
+  'PI',
+  'PR',
+  'RJ',
+  'RN',
+  'RO',
+  'RR',
+  'RS',
+  'SC',
+  'SE',
+  'SP',
+  'TO',
+]);
+
+function isBrazilianUf(value: string | null): value is string {
+  return value !== null && BRAZILIAN_UFS.has(value);
+}
+
+function isValidCep(value: string | null): value is string {
+  return value !== null && /^\d{8}$/.test(value);
+}
+
+function isValidIbgeInteger(value: string) {
+  if (!/^\d{7}$/.test(value)) {
+    return false;
+  }
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0;
+}
+
+function missingRequiredField(fields: [name: string, value: string | null][]) {
+  const missing = fields.find(([, value,]) => value === null);
+  return missing ? `missing_${missing[0]}` : null;
+}
+
+function resolveMunicipality(
+  localidade: Localidade,
+  localidades: Map<string, Localidade>,
+): { nome: string; munNu: number; } | null {
+  const municipality = localidade.locNuSub ? localidades.get(localidade.locNuSub) : localidade;
+  if (!municipality || municipality.munNu === null) {
+    return null;
+  }
+  return { nome: municipality.nome, munNu: municipality.munNu };
+}
+
+function newQualityBreakdown(): MutableQualityBreakdown {
+  return {
+    read: 0,
+    accepted: 0,
+    rejected: 0,
+    rejectionReasons: new Map(),
+  };
+}
+
+function incrementReason(reasons: Map<string, number>, reason: string) {
+  reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
+}
+
+function qualityBreakdown(counts: MutableQualityBreakdown): LoadQualityBreakdown {
+  return {
+    read: counts.read,
+    accepted: counts.accepted,
+    rejected: counts.rejected,
+    rejection_reasons: Object.fromEntries(counts.rejectionReasons),
+  };
 }
 
 export function selectDelimitedFields(line: string, indexes: number[]) {

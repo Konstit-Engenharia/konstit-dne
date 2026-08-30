@@ -9,42 +9,44 @@ import {
 } from '@konstit/cli';
 import { Database } from 'bun:sqlite';
 import {
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
-import {
   copyFile,
   mkdir,
   rename,
   rm,
-  stat,
 } from 'node:fs/promises';
-import {
-  homedir,
-  tmpdir,
-} from 'node:os';
 import {
   basename,
   dirname,
   join,
-  resolve,
 } from 'node:path';
+import {
+  collectCepInputs,
+  normalizeCep,
+} from './cep.ts';
+import {
+  installCronSchedule,
+  removeCronSchedule,
+  showCronSchedule,
+} from './cron-service.ts';
+import {
+  databasePath,
+  inspectDatabase,
+  memoryDatabaseInspection,
+  openReadyDatabase,
+  type DatabaseInspection,
+} from './database-service.ts';
 import {
   createPrettyTableSql,
   createTableSql,
-  DneDatabaseReader,
   DneDatabaseWriter,
+  DneSourceQualityError,
   hasTable,
   quoteIdent,
   readDatabaseMetadata,
-  sqlitePathFromDatabaseUrl,
   type DneRow,
-  type LoadMetadata,
 } from './db.ts';
+import { UserError } from './errors.ts';
+import { acquireFetchLock } from './fetch-lock.ts';
 import {
   DneResolver,
   inspectRemoteDneSource,
@@ -61,13 +63,12 @@ import {
   SQLITE_FILE_NAME,
   SQLITE_METADATA_TABLE_NAME,
 } from './settings.ts';
+import {
+  buildLoadMetadata,
+  remoteMetadataMatches,
+} from './update-policy.ts';
 
-const REMOTE_LAST_MODIFIED_TOLERANCE_MS = 10 * 60 * 1000;
 const DEFAULT_CRON_EXPRESSION = '0 0 * * 5';
-const FETCH_LOCK_TIMEOUT_MS = 30_000;
-const FETCH_LOCK_RETRY_MS = 50;
-const FETCH_LOCK_SIGNALS = ['SIGHUP', 'SIGINT', 'SIGTERM'] as const;
-const CEP_PATTERN = /^(?:\d{8}|\d{5}-\d{3})$/;
 const ANSI_RESET = '\x1b[0m';
 const ANSI_BOLD = '\x1b[1m';
 const ANSI_CYAN = '\x1b[36m';
@@ -138,7 +139,7 @@ export const cli = command(BINARY_NAME, {
     }),
     command('get', {
       args: [
-        positional('input', parsers.regex(CEP_PATTERN), {
+        positional('input', parsers.string, {
           describe: 'Um ou mais CEPs.',
           repeatable: true,
           valueName: 'CEP',
@@ -211,6 +212,10 @@ export const cli = command(BINARY_NAME, {
             flag('dry-run', {
               describe: 'Exibir o agendamento sem alterar o sistema.',
             }),
+            option('source', parsers.string, {
+              describe: 'Diretório DNE, arquivo ZIP ou URL usado pelo agendamento.',
+              valueName: 'CAMINHO|URL',
+            }),
           ],
           about: 'Instalar ou substituir o agendamento desta base',
           handler: (args, context) => installCron(args, globalOptions(context)),
@@ -251,30 +256,9 @@ type LookupOptions = {
   jsonl: boolean;
 };
 
-type CronEntry = {
-  command: string;
-  database: string;
-  expression: string;
-  id: string;
-  package_version: string;
-  runner: string;
-  title: string;
-};
-
 type ProgressReporter = {
   (message: string): void;
   finish(): void;
-};
-
-type DatabaseInspection = {
-  error?: string;
-  exists: boolean;
-  metadata: LoadMetadata | null;
-  path: string;
-  ready: boolean;
-  row_count: number | null;
-  schema: string | null;
-  size_bytes: number | null;
 };
 
 type LookupResult = {
@@ -283,18 +267,6 @@ type LookupResult = {
   found: boolean;
   input: string;
 };
-
-class UserError extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-    readonly exitCode = EXIT_FAILURE,
-    readonly details?: Record<string, unknown>,
-  ) {
-    super(message);
-    this.name = 'UserError';
-  }
-}
 
 export async function runCli(argv: readonly string[] = Bun.argv.slice(2)) {
   const jsonRequested = argv.includes('--json') || argv.includes('--jsonl');
@@ -336,282 +308,61 @@ function globalOptions(context: HandlerContext): GlobalOptions {
 }
 
 async function installCron(
-  options: { 'dry-run': boolean; 'expression': string; },
+  options: { 'dry-run': boolean; 'expression': string; 'source': string | undefined; },
   globals: GlobalOptions,
 ) {
-  const database = cronDatabasePath(globals.database);
-  const entry = createCronEntry(options.expression, database);
-  const previous = readCronEntry(database);
-  const status = options['dry-run'] ? 'preview' : previous ? 'updated' : 'installed';
-
-  if (!options['dry-run']) {
-    await registerCronEntry(entry, previous);
-  }
-
-  const result = { ...entry, next_run: nextCronRun(entry.expression), status };
+  const result = await installCronSchedule({
+    database: globals.database,
+    dryRun: options['dry-run'],
+    expression: options.expression,
+    packageVersion: VERSION,
+    source: options.source,
+  });
   if (globals.json) {
     writeJson(result);
   } else {
-    const action = status === 'preview'
+    const action = result.status === 'preview'
       ? 'Agendamento que seria instalado'
-      : status === 'updated'
+      : result.status === 'updated'
       ? 'Agendamento atualizado'
       : 'Agendamento instalado';
-    console.log(`${action}: ${entry.expression}`);
+    console.log(`${action}: ${result.expression}`);
     console.log(`Próxima execução: ${formatDateTime(result.next_run ?? undefined)}`);
-    console.log(`Base: ${entry.database}`);
-    console.log(`Comando: ${entry.command}`);
+    console.log(`Base: ${result.database}`);
+    console.log(`Fonte: ${result.source}`);
+    console.log(`Comando: ${result.command}`);
   }
   return 0;
 }
 
 function showCronStatus(globals: GlobalOptions) {
-  const database = cronDatabasePath(globals.database);
-  const title = cronTitle(database);
-  const entry = readCronEntry(database);
-  const result = {
-    command: entry?.command ?? null,
-    database,
-    expression: entry?.expression ?? null,
-    id: title,
-    installed: entry !== null,
-    next_run: entry ? nextCronRun(entry.expression) : null,
-    package_version: entry?.package_version ?? null,
-    runner: entry?.runner ?? null,
-    title,
-  };
+  const result = showCronSchedule(globals.database);
 
   if (globals.json) {
     writeJson(result);
-  } else if (entry) {
-    console.log(`Agendamento instalado: ${entry.expression}`);
+  } else if (result.installed) {
+    console.log(`Agendamento instalado: ${result.expression}`);
     console.log(`Próxima execução: ${formatDateTime(result.next_run ?? undefined)}`);
-    console.log(`Base: ${entry.database}`);
-    console.log(`Pacote: @konstit/dne@${entry.package_version}`);
-    console.log(`Comando: ${entry.command}`);
+    console.log(`Base: ${result.database}`);
+    console.log(`Fonte: ${result.source}`);
+    console.log(`Pacote: @konstit/dne@${result.package_version}`);
+    console.log(`Comando: ${result.command}`);
   } else {
-    console.log(`Nenhum agendamento instalado para a base: ${database}`);
+    console.log(`Nenhum agendamento instalado para a base: ${result.database}`);
   }
   return 0;
 }
 
 async function removeCron(globals: GlobalOptions) {
-  const database = cronDatabasePath(globals.database);
-  const paths = cronEntryPaths(database);
-  const removed = pathExists(paths.metadata) || pathExists(paths.runner);
-  try {
-    await Bun.cron.remove(paths.title);
-  } catch (error) {
-    throw new UserError(
-      'cron-remove-failed',
-      `Não foi possível remover o agendamento: ${humanErrorMessage(error)}`,
-    );
-  }
-  rmSync(paths.metadata, { force: true });
-  rmSync(paths.runner, { force: true });
-
-  const output = { database, id: paths.title, removed, title: paths.title };
+  const output = await removeCronSchedule(globals.database);
   if (globals.json) {
     writeJson(output);
-  } else if (removed) {
-    console.log(`Agendamento removido para a base: ${database}`);
+  } else if (output.removed) {
+    console.log(`Agendamento removido para a base: ${output.database}`);
   } else {
-    console.log(`Nenhum agendamento instalado para a base: ${database}`);
+    console.log(`Nenhum agendamento instalado para a base: ${output.database}`);
   }
   return 0;
-}
-
-function createCronEntry(expression: string, database: string): CronEntry {
-  const bunx = Bun.which('bunx');
-  if (!bunx) {
-    throw new UserError(
-      'bunx-not-found',
-      'O executável bunx não foi encontrado. Instale o Bun antes de criar o agendamento.',
-    );
-  }
-  if (/[\r\n\0]/.test(expression) || /[\r\n\0]/.test(bunx)) {
-    throw new UserError(
-      'invalid-cron-value',
-      'A expressão cron e o caminho do bunx não podem conter quebras de linha ou bytes nulos.',
-      EXIT_INVALID_INPUT,
-    );
-  }
-
-  const paths = cronEntryPaths(database);
-  const bunxPath = resolve(bunx);
-  const packageSpec = `@konstit/dne@${VERSION}`;
-  return {
-    command: [
-      shellQuote(bunxPath),
-      shellQuote(packageSpec),
-      'build',
-      '--db',
-      shellQuote(database),
-      '--quiet',
-    ].join(' '),
-    database,
-    expression,
-    id: paths.title,
-    package_version: VERSION,
-    runner: paths.runner,
-    title: paths.title,
-  };
-}
-
-async function registerCronEntry(entry: CronEntry, previous: CronEntry | null) {
-  const paths = cronEntryPaths(entry.database);
-  mkdirSync(paths.directory, { mode: 0o700, recursive: true });
-  const previousRunner = readOptionalFile(paths.runner);
-  const previousMetadata = readOptionalFile(paths.metadata);
-  try {
-    writePrivateFile(paths.runner, createCronRunnerSource(entry));
-    await Bun.cron(paths.runner, entry.expression, entry.title);
-    writePrivateFile(paths.metadata, `${JSON.stringify(entry, null, 2)}\n`);
-  } catch (error) {
-    restoreOptionalFile(paths.runner, previousRunner);
-    restoreOptionalFile(paths.metadata, previousMetadata);
-    try {
-      if (previous) {
-        await Bun.cron(previous.runner, previous.expression, previous.title);
-      } else {
-        await Bun.cron.remove(entry.title);
-      }
-    } catch {
-      // Preserve the original registration error.
-    }
-    throw new UserError(
-      'cron-install-failed',
-      `Não foi possível instalar o agendamento: ${humanErrorMessage(error)}`,
-    );
-  }
-}
-
-function createCronRunnerSource(entry: CronEntry) {
-  const command = [
-    Bun.which('bunx'),
-    `@konstit/dne@${entry.package_version}`,
-    'build',
-    '--db',
-    entry.database,
-    '--quiet',
-  ];
-  if (command[0] === null) {
-    throw new UserError('bunx-not-found', 'O executável bunx não foi encontrado.');
-  }
-  return [
-    `const command = ${JSON.stringify(command)};`,
-    '',
-    'export default {',
-    '  async scheduled() {',
-    '    const child = Bun.spawn(command, { stderr: \'inherit\', stdout: \'ignore\' });',
-    '    const exitCode = await child.exited;',
-    '    if (exitCode !== 0) {',
-    '      throw new Error(\'@konstit/dne build failed with exit code \' + exitCode);',
-    '    }',
-    '  },',
-    '};',
-    '',
-  ].join('\n');
-}
-
-function cronDatabasePath(value: string) {
-  const database = databasePath(value);
-  if (database === ':memory:') {
-    throw new UserError(
-      'invalid-cron-database',
-      'O agendamento exige um caminho persistente para a base.',
-      EXIT_INVALID_INPUT,
-    );
-  }
-  if (/[\r\n\0]/.test(database)) {
-    throw new UserError(
-      'invalid-cron-database',
-      'O caminho da base não pode conter quebras de linha ou bytes nulos.',
-      EXIT_INVALID_INPUT,
-    );
-  }
-  return database;
-}
-
-function cronTitle(database: string) {
-  const hash = new Bun.CryptoHasher('sha256').update(database).digest('hex').slice(0, 32);
-  return `konstit-dne-${hash}`;
-}
-
-function cronEntryPaths(database: string) {
-  const title = cronTitle(database);
-  const stateHome = Bun.env['XDG_STATE_HOME']
-    ? resolve(Bun.env['XDG_STATE_HOME'])
-    : process.platform === 'darwin'
-    ? join(homedir(), 'Library', 'Application Support')
-    : join(homedir(), '.local', 'state');
-  const directory = join(stateHome, 'konstit-dne', 'cron');
-  return {
-    directory,
-    metadata: join(directory, `${title}.json`),
-    runner: join(directory, `${title}.mjs`),
-    title,
-  };
-}
-
-function readCronEntry(database: string): CronEntry | null {
-  const paths = cronEntryPaths(database);
-  if (!pathExists(paths.metadata) && !pathExists(paths.runner)) {
-    return null;
-  }
-  if (!pathExists(paths.metadata) || !pathExists(paths.runner)) {
-    throw new UserError(
-      'cron-config-invalid',
-      `A configuração do agendamento '${paths.title}' está incompleta.`,
-    );
-  }
-  try {
-    const value = JSON.parse(readFileSync(paths.metadata, 'utf8')) as Partial<CronEntry>;
-    if (
-      value.database !== database
-      || value.id !== paths.title
-      || value.title !== paths.title
-      || value.runner !== paths.runner
-      || typeof value.command !== 'string'
-      || typeof value.expression !== 'string'
-      || typeof value.package_version !== 'string'
-    ) {
-      throw new Error('invalid cron metadata');
-    }
-    Bun.cron.parse(value.expression);
-    return value as CronEntry;
-  } catch {
-    throw new UserError(
-      'cron-config-invalid',
-      `A configuração do agendamento '${paths.title}' é inválida.`,
-    );
-  }
-}
-
-function nextCronRun(expression: string) {
-  return Bun.cron.parse(expression)?.toISOString() ?? null;
-}
-
-function writePrivateFile(path: string, content: string) {
-  const temporary = `${path}.${process.pid}.${crypto.randomUUID()}.tmp`;
-  try {
-    writeFileSync(temporary, content, { mode: 0o600 });
-    renameSync(temporary, path);
-  } finally {
-    rmSync(temporary, { force: true });
-  }
-}
-
-function readOptionalFile(path: string) {
-  return pathExists(path) ? readFileSync(path, 'utf8') : null;
-}
-
-function restoreOptionalFile(path: string, content: string | null) {
-  if (content === null) {
-    rmSync(path, { force: true });
-  } else {
-    writePrivateFile(path, content);
-  }
 }
 
 async function fetchDatabase(options: FetchOptions, globals: GlobalOptions) {
@@ -658,6 +409,17 @@ async function executeFetch(
   progress.finish();
 
   if (options.check) {
+    if (!remoteInfo) {
+      const resolver = new DneResolver(sourceInput, { onProgress: progress });
+      try {
+        await resolver.resolve(schema);
+      } catch (error) {
+        throw new UserError('source-unavailable', humanErrorMessage(error));
+      } finally {
+        await resolver.cleanup();
+        progress.finish();
+      }
+    }
     const inspection = await inspectDatabase(target);
     const upToDate = remoteInfo && inspection.ready
       ? await databaseIsCurrent(target, SQLITE_CEP_TABLE_NAME, remoteInfo)
@@ -703,7 +465,7 @@ async function executeFetch(
     progress('Carregando a base SQLite');
     rowCount = await writer.loadFromSource(
       source,
-      buildLoadMetadata(sourceInput, remoteInfo),
+      buildLoadMetadata(sourceInput, remoteInfo, VERSION),
       progress,
     );
     writer.close();
@@ -736,274 +498,66 @@ async function executeFetch(
   return 0;
 }
 
-async function acquireFetchLock(target: string, progress: ProgressReporter) {
-  const path = temporaryFetchLockPath(target);
-  const obsoletePath = join(dirname(target), `.${basename(target)}.fetch.lock`);
-  const owner = { pid: process.pid, token: crypto.randomUUID() };
-  const deadline = performance.now() + FETCH_LOCK_TIMEOUT_MS;
-  let waiting = false;
-
-  mkdirSync(dirname(target), { recursive: true });
-  mkdirSync(dirname(path), { mode: 0o700, recursive: true });
-
-  while (pathExists(obsoletePath)) {
-    if (recoverStaleFetchLock(obsoletePath)) {
-      continue;
-    }
-    await waitForFetchLock();
-  }
-  while (!tryCreateFetchLock(path, owner)) {
-    if (recoverStaleFetchLock(path)) {
-      continue;
-    }
-    await waitForFetchLock();
-  }
-
-  if (waiting) {
-    progress.finish();
-  }
-
-  let released = false;
-  let removeProcessHandlers = () => {};
-  const release = () => {
-    if (released) {
-      return;
-    }
-    released = true;
-    removeProcessHandlers();
-    removeOwnedFetchLock(path, owner.token);
-  };
-  removeProcessHandlers = installFetchLockProcessHandlers(release);
-
-  return { release };
-
-  async function waitForFetchLock() {
-    if (!waiting) {
-      progress('Aguardando outra atualização da base');
-      waiting = true;
-    }
-    if (performance.now() >= deadline) {
-      throw new UserError(
-        'update-in-progress',
-        `Outra execução de build já está atualizando a base '${target}'.`,
-      );
-    }
-    await Bun.sleep(FETCH_LOCK_RETRY_MS);
-  }
-}
-
-type FetchLockOwner = {
-  pid: number;
-  token: string;
-};
-
-function temporaryFetchLockPath(target: string) {
-  const targetHash = new Bun.CryptoHasher('sha256').update(target).digest('hex');
-  return join(tmpdir(), `konstit-dne-${process.getuid?.() ?? 'unknown'}`, `fetch-${targetHash}.lock`);
-}
-
-function pathExists(path: string) {
-  try {
-    statSync(path);
-    return true;
-  } catch (error) {
-    if (isMissingPath(error)) {
-      return false;
-    }
-    throw error;
-  }
-}
-
-function tryCreateFetchLock(path: string, owner: FetchLockOwner) {
-  const candidate = `${path}.${owner.pid}.${owner.token}.tmp`;
-  mkdirSync(candidate);
-  try {
-    writeFileSync(join(candidate, 'owner.json'), JSON.stringify(owner), { flag: 'wx' });
-    renameSync(candidate, path);
-    return true;
-  } catch (error) {
-    if (isPathConflict(error)) {
-      return false;
-    }
-    throw error;
-  } finally {
-    rmSync(candidate, { force: true, recursive: true });
-  }
-}
-
-function recoverStaleFetchLock(path: string) {
-  let stats: ReturnType<typeof statSync>;
-  try {
-    stats = statSync(path);
-  } catch (error) {
-    if (isMissingPath(error)) {
-      return true;
-    }
-    throw error;
-  }
-
-  if (!stats.isDirectory()) {
-    return removeLegacyFetchLock(path);
-  }
-
-  const owner = readFetchLockOwner(path);
-  if (owner && processIsRunning(owner.pid)) {
-    return false;
-  }
-
-  try {
-    writeFileSync(
-      join(path, 'reaper.json'),
-      JSON.stringify({ pid: process.pid, token: crypto.randomUUID() }),
-      { flag: 'wx' },
-    );
-  } catch (error) {
-    if (isPathConflict(error)) {
-      return false;
-    }
-    if (isMissingPath(error)) {
-      return true;
-    }
-    throw error;
-  }
-
-  rmSync(path, { force: true, recursive: true });
-  return true;
-}
-
-function removeLegacyFetchLock(path: string) {
-  const database = new Database(path);
-  try {
-    database.run('PRAGMA busy_timeout = 0');
-    database.run('BEGIN IMMEDIATE');
-    database.run('ROLLBACK');
-  } catch (error) {
-    if (isSqliteLockConflict(error)) {
-      return false;
-    }
-    throw error;
-  } finally {
-    database.close();
-  }
-  try {
-    rmSync(path, { force: true });
-    return true;
-  } catch (error) {
-    if (isMissingPath(error)) {
-      return true;
-    }
-    if (isPathConflict(error)) {
-      return false;
-    }
-    try {
-      if (statSync(path).isDirectory()) {
-        return false;
-      }
-    } catch (statError) {
-      if (isMissingPath(statError)) {
-        return true;
-      }
-      throw statError;
-    }
-    throw error;
-  }
-}
-
-function readFetchLockOwner(path: string): FetchLockOwner | null {
-  try {
-    const value = JSON.parse(readFileSync(join(path, 'owner.json'), 'utf8')) as Partial<FetchLockOwner>;
-    return Number.isInteger(value.pid) && Number(value.pid) > 0 && typeof value.token === 'string'
-      ? { pid: Number(value.pid), token: value.token }
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function processIsRunning(pid: number) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return !(
-      error
-      && typeof error === 'object'
-      && 'code' in error
-      && error.code === 'ESRCH'
-    );
-  }
-}
-
-function removeOwnedFetchLock(path: string, token: string) {
-  if (readFetchLockOwner(path)?.token === token) {
-    rmSync(path, { force: true, recursive: true });
-  }
-}
-
-function installFetchLockProcessHandlers(release: () => void) {
-  const exitHandler = () => release();
-  const signalHandlers = FETCH_LOCK_SIGNALS.map((signal) => {
-    const handler = () => {
-      release();
-      process.kill(process.pid, signal);
-    };
-    process.once(signal, handler);
-    return { handler, signal };
-  });
-  process.once('exit', exitHandler);
-
-  return () => {
-    process.off('exit', exitHandler);
-    for (const { handler, signal } of signalHandlers) {
-      process.off(signal, handler);
-    }
-  };
-}
-
 async function lookupCep(options: LookupOptions, globals: GlobalOptions) {
   if (globals.json && options.jsonl) {
     throw new UserError('output-conflict', '--json e --jsonl não podem ser usados juntos.', EXIT_INVALID_INPUT);
   }
 
-  const inputs = await collectCepInputs(options.input, options.file);
-  if (!inputs.length) {
+  const inputs = collectCepInputs(options.input, options.file);
+  const iterator = inputs[Symbol.asyncIterator]();
+  const first = await iterator.next();
+  if (first.done) {
     throw new UserError('missing-input', 'Informe um CEP, --file CAMINHO ou uma entrada em stdin.', EXIT_INVALID_INPUT);
   }
 
-  const normalized = inputs.map((input) => ({ input, cep: normalizeCep(input) }));
+  const firstInput = { input: first.value, cep: normalizeCep(first.value) };
   const database = databasePath(globals.database);
   const reader = await openReadyDatabase(database);
   const results: LookupResult[] = [];
+  let count = 0;
+  let hasMissing = false;
 
   try {
-    for (const value of normalized) {
-      const address = reader.queryCep(SQLITE_CEP_TABLE_NAME, value.cep);
-      results.push({
-        address,
-        cep: value.cep,
-        found: address !== null,
-        input: value.input,
-      });
+    processInput(firstInput);
+    while (true) {
+      const next = await iterator.next();
+      if (next.done) {
+        break;
+      }
+      processInput({ input: next.value, cep: normalizeCep(next.value) });
     }
   } finally {
     reader.close();
   }
 
-  if (options.jsonl) {
-    for (const result of results) {
-      process.stdout.write(`${JSON.stringify({ ok: true, data: { database, result } })}\n`);
-    }
-  } else if (globals.json) {
+  if (globals.json) {
     writeJson({
-      count: results.length,
+      count,
       database,
       results,
     });
-  } else {
+  } else if (!options.jsonl) {
     writeLookupText(results);
   }
 
-  return results.some((result) => !result.found) ? EXIT_NOT_FOUND : 0;
+  return hasMissing ? EXIT_NOT_FOUND : 0;
+
+  function processInput(value: { cep: string; input: string; }) {
+    const address = reader.queryCep(SQLITE_CEP_TABLE_NAME, value.cep);
+    const result = {
+      address,
+      cep: value.cep,
+      found: address !== null,
+      input: value.input,
+    } satisfies LookupResult;
+    count++;
+    hasMissing ||= !result.found;
+    if (options.jsonl) {
+      process.stdout.write(`${JSON.stringify({ ok: true, data: { database, result } })}\n`);
+      return;
+    }
+    results.push(result);
+  }
 }
 
 async function showStatus(globals: GlobalOptions) {
@@ -1074,7 +628,7 @@ async function doctor(options: { offline: boolean; source: string; }, globals: G
     }
   }
 
-  const healthy = runtimeCompatible && source['reachable'] !== false;
+  const healthy = runtimeCompatible && inspection.ready && source['reachable'] !== false;
   const result = {
     auth: {
       required: false,
@@ -1129,130 +683,6 @@ async function querySql(options: { limit: number; query: string; }, globals: Glo
     reader.close();
   }
   return 0;
-}
-
-async function collectCepInputs(inputs: readonly string[], file: string | undefined) {
-  const values = [...inputs];
-  if (file) {
-    const content = file === '-'
-      ? await Bun.stdin.text()
-      : await readInputFile(file);
-    values.push(...splitCepInput(content));
-  } else if (!values.length && !process.stdin.isTTY) {
-    values.push(...splitCepInput(await Bun.stdin.text()));
-  }
-  return values;
-}
-
-async function readInputFile(path: string) {
-  if (!(await Bun.file(path).exists())) {
-    throw new UserError('input-file-not-found', `Arquivo de entrada com CEPs não encontrado: ${path}`);
-  }
-  return await Bun.file(path).text();
-}
-
-function splitCepInput(content: string) {
-  return content
-    .split(/[\s,;]+/)
-    .map((value) => value.trim())
-    .filter(Boolean);
-}
-
-export function normalizeCep(value: string) {
-  const trimmed = value.trim();
-  if (!CEP_PATTERN.test(trimmed)) {
-    throw new UserError(
-      'invalid-cep',
-      `CEP inválido '${value}'. Use 01001000 ou 01001-000.`,
-      EXIT_INVALID_INPUT,
-      { input: value },
-    );
-  }
-  return trimmed.replace('-', '');
-}
-
-async function openReadyDatabase(path: string) {
-  if (path === ':memory:' || !(await Bun.file(path).exists())) {
-    throw new UserError('database-not-found', `Base não encontrada: ${path}`);
-  }
-
-  let reader: DneDatabaseReader;
-  try {
-    reader = new DneDatabaseReader(path);
-  } catch (error) {
-    throw new UserError('database-invalid', `Não foi possível abrir a base '${path}': ${humanErrorMessage(error)}`);
-  }
-
-  if (!reader.hasTable(SQLITE_CEP_TABLE_NAME)) {
-    reader.close();
-    throw new UserError(
-      'database-not-ready',
-      `A base '${path}' não contém a tabela '${SQLITE_CEP_TABLE_NAME}'. Execute bunx @konstit/dne build primeiro.`,
-    );
-  }
-  return reader;
-}
-
-async function inspectDatabase(path: string): Promise<DatabaseInspection> {
-  if (path === ':memory:' || !(await Bun.file(path).exists())) {
-    return {
-      exists: false,
-      metadata: null,
-      path,
-      ready: false,
-      row_count: null,
-      schema: null,
-      size_bytes: null,
-    };
-  }
-
-  let size: number | null = null;
-  try {
-    size = (await stat(path)).size;
-  } catch {
-    // SQLite will provide the useful open error below.
-  }
-
-  try {
-    const reader = new DneDatabaseReader(path);
-    try {
-      const ready = reader.hasTable(SQLITE_CEP_TABLE_NAME);
-      return {
-        exists: true,
-        metadata: reader.metadata(),
-        path,
-        ready,
-        row_count: ready ? reader.rowCount(SQLITE_CEP_TABLE_NAME) : null,
-        schema: ready ? reader.tableSchema(SQLITE_CEP_TABLE_NAME) : null,
-        size_bytes: size,
-      };
-    } finally {
-      reader.close();
-    }
-  } catch (error) {
-    return {
-      error: humanErrorMessage(error),
-      exists: true,
-      metadata: null,
-      path,
-      ready: false,
-      row_count: null,
-      schema: null,
-      size_bytes: size,
-    };
-  }
-}
-
-function memoryDatabaseInspection(rowCount: number): DatabaseInspection {
-  return {
-    exists: false,
-    metadata: null,
-    path: ':memory:',
-    ready: false,
-    row_count: rowCount,
-    schema: null,
-    size_bytes: null,
-  };
 }
 
 async function inspectRemoteSource(source: string, progress: (message: string) => void) {
@@ -1325,6 +755,8 @@ function writeError(error: UserError, json: boolean) {
 function reportFailure(error: unknown, json: boolean) {
   const failure = error instanceof UserError
     ? error
+    : error instanceof DneSourceQualityError
+    ? new UserError('source-quality-failed', humanErrorMessage(error))
     : new UserError('internal-error', humanErrorMessage(error));
   writeError(failure, json);
   return failure.exitCode;
@@ -1434,11 +866,6 @@ function writeDoctorText(result: {
   }
 }
 
-function databasePath(value: string) {
-  const path = sqlitePathFromDatabaseUrl(value);
-  return path === ':memory:' ? path : resolve(path);
-}
-
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
@@ -1469,6 +896,7 @@ function localizeRuntimeError(message: string) {
     .replace(/^Failed to stream (.+): empty response body$/, 'Falha ao transmitir $1: corpo da resposta vazio')
     .replace(/^Failed to inspect DNE from (.+): (\d+)$/, 'Falha ao inspecionar o DNE em $1: $2')
     .replace(/^DNE source not found: (.+)$/, 'Fonte DNE não encontrada: $1')
+    .replace(/^DNE source quality validation failed: (.+)$/, 'A validação de qualidade da fonte DNE falhou: $1')
     .replace(/^DNE data file not found: (.+)$/, 'Arquivo de dados DNE não encontrado: $1')
     .replace(/^Invalid ZIP local header for (.+)$/, 'Cabeçalho local ZIP inválido para $1')
     .replace(/^Invalid ZIP data range for (.+)$/, 'Intervalo de dados ZIP inválido para $1')
@@ -1520,34 +948,6 @@ function localizeCliText(output: string) {
       'os seguintes argumentos obrigatórios não foram informados:',
     )
     .replace(/a similar argument exists:/g, 'existe um argumento semelhante:');
-}
-
-function isPathConflict(error: unknown) {
-  return errorHasCode(error, 'EEXIST', 'EISDIR', 'ENOTEMPTY');
-}
-
-function isMissingPath(error: unknown) {
-  return errorHasCode(error, 'ENOENT');
-}
-
-function errorHasCode(error: unknown, ...codes: string[]) {
-  return Boolean(
-    error
-      && typeof error === 'object'
-      && 'code' in error
-      && codes.includes(String(error.code)),
-  );
-}
-
-function isSqliteLockConflict(error: unknown) {
-  const code = error && typeof error === 'object' && 'code' in error
-    ? String(error.code)
-    : '';
-  return code === 'SQLITE_BUSY'
-    || code.startsWith('SQLITE_BUSY_')
-    || code === 'SQLITE_LOCKED'
-    || code.startsWith('SQLITE_LOCKED_')
-    || /database is (?:busy|locked)/i.test(errorMessage(error));
 }
 
 function stringValue(value: unknown) {
@@ -1716,74 +1116,7 @@ async function databaseIsCurrent(
     return false;
   }
 
-  return (
-    metadata.source_kind === 'remote'
-    && metadata.source_url === remoteInfo.url
-    && metadata.source_content_length === (remoteInfo.contentLength ?? '')
-    && remoteLastModifiedMatches(
-      metadata.source_last_modified,
-      remoteInfo.lastModified,
-    )
-    && remoteEtagMatchesWhenNeeded(metadata.source_etag, remoteInfo)
-  );
-}
-
-function remoteLastModifiedMatches(
-  previous: string | undefined,
-  current: string | null,
-) {
-  if (!previous && !current) {
-    return true;
-  }
-  if (!previous || !current) {
-    return false;
-  }
-  if (previous === current) {
-    return true;
-  }
-
-  const previousTime = Date.parse(previous);
-  const currentTime = Date.parse(current);
-  if (!Number.isFinite(previousTime) || !Number.isFinite(currentTime)) {
-    return false;
-  }
-
-  return Math.abs(previousTime - currentTime) <= REMOTE_LAST_MODIFIED_TOLERANCE_MS;
-}
-
-function remoteEtagMatchesWhenNeeded(
-  previous: string | undefined,
-  current: RemoteDneSourceInfo,
-) {
-  if (current.lastModified) {
-    return true;
-  }
-  return (previous ?? '') === (current.etag ?? '');
-}
-
-function buildLoadMetadata(
-  source: string,
-  remoteInfo: RemoteDneSourceInfo | null,
-) {
-  const metadata: LoadMetadata = {
-    loaded_at: new Date().toISOString(),
-    package_version: VERSION,
-    source_input: source,
-    source_kind: remoteInfo
-      ? 'remote'
-      : looksLikeUrl(source)
-      ? 'remote'
-      : 'local',
-  };
-
-  if (remoteInfo) {
-    metadata.source_url = remoteInfo.url;
-    metadata.source_last_modified = remoteInfo.lastModified ?? '';
-    metadata.source_etag = remoteInfo.etag ?? '';
-    metadata.source_content_length = remoteInfo.contentLength ?? '';
-  }
-
-  return metadata;
+  return remoteMetadataMatches(metadata, remoteInfo);
 }
 
 function looksLikeUrl(value: string) {

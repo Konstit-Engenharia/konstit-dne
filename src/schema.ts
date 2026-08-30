@@ -11,6 +11,7 @@ export type TableDefinition = {
   originalName: string;
   columns: ColumnDefinition[];
   fileGlob?: string | null;
+  sourceFields?: Readonly<Record<string, number>>;
   unifiedTable?: boolean;
 };
 
@@ -20,32 +21,78 @@ const baseTables: TableDefinition[] = [
   {
     name: 'log_localidade',
     originalName: 'log_localidade',
+    sourceFields: {
+      locNu: 0,
+      uf: 1,
+      nome: 2,
+      cep: 3,
+      locNuSub: 6,
+      munNu: 8,
+    },
     columns: [],
   },
   {
     name: 'log_bairro',
     originalName: 'log_bairro',
+    sourceFields: {
+      baiNu: 0,
+      uf: 1,
+      locNu: 2,
+      bairro: 3,
+    },
     columns: [],
   },
   {
     name: 'log_cpc',
     originalName: 'log_cpc',
+    sourceFields: {
+      uf: 1,
+      locNu: 2,
+      nome: 3,
+      endereco: 4,
+      cep: 5,
+    },
     columns: [],
   },
   {
     name: 'log_logradouro',
     originalName: 'log_logradouro',
     fileGlob: 'LOG_LOGRADOURO_*.TXT',
+    sourceFields: {
+      uf: 1,
+      locNu: 2,
+      baiNuIni: 3,
+      logNo: 5,
+      cep: 7,
+      tloTx: 8,
+      logStaTlo: 9,
+    },
     columns: [],
   },
   {
     name: 'log_grande_usuario',
     originalName: 'log_grande_usuario',
+    sourceFields: {
+      uf: 1,
+      locNu: 2,
+      baiNu: 3,
+      nome: 5,
+      endereco: 6,
+      cep: 7,
+    },
     columns: [],
   },
   {
     name: 'log_unid_oper',
     originalName: 'log_unid_oper',
+    sourceFields: {
+      uf: 1,
+      locNu: 2,
+      baiNu: 3,
+      nome: 5,
+      endereco: 6,
+      cep: 7,
+    },
     columns: [],
   },
   {
@@ -76,6 +123,7 @@ export function buildSchema(tableNames: TableNameMap = {}): TableDefinition[] {
     ...table,
     name: tableNames[table.originalName] ?? table.name,
     columns: table.columns.map((column) => ({ ...column })),
+    sourceFields: table.sourceFields ? { ...table.sourceFields } : undefined,
   }));
 }
 
@@ -92,4 +140,18 @@ export function getTableFilesGlob(table: TableDefinition): string | null {
     return null;
   }
   return table.fileGlob ?? `${table.originalName.toUpperCase()}.TXT`;
+}
+
+export function getSourceFieldIndexes(table: TableDefinition, fields: readonly string[]): number[] {
+  if (!table.sourceFields) {
+    throw new Error(`Source fields for table '${table.originalName}' not found`);
+  }
+
+  return fields.map((field) => {
+    const index = table.sourceFields?.[field];
+    if (index === undefined) {
+      throw new Error(`Source field '${field}' for table '${table.originalName}' not found`);
+    }
+    return index;
+  });
 }

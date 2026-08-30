@@ -9,7 +9,11 @@ import {
   resolveZipDneSource,
   type DneDataSource,
 } from './dne-source.ts';
-import { downloadRemoteFile } from './parallel-download.ts';
+import {
+  downloadRemoteFile,
+  requestWithRetry,
+  type HttpRequestOptions,
+} from './parallel-download.ts';
 import type { TableDefinition } from './schema.ts';
 import { EDNE_DOWNLOAD_URL } from './settings.ts';
 
@@ -103,18 +107,57 @@ export class DneResolver {
 
 export async function inspectRemoteDneSource(
   url: string,
+  options: HttpRequestOptions = {},
 ): Promise<RemoteDneSourceInfo> {
-  const response = await fetch(url, { method: 'HEAD', verbose: false });
-  if (!response.ok) {
-    throw new Error(`Failed to inspect DNE from ${url}: ${response.status}`);
+  try {
+    return await requestWithRetry(url, { method: 'HEAD' }, async (response) => {
+      if (!response.ok) {
+        throw new Error(`Failed to inspect DNE from ${url}: ${response.status}`);
+      }
+      return remoteInfoFromHeaders(url, response.headers);
+    }, options);
+  } catch {
+    return await requestWithRetry(
+      url,
+      {
+        headers: {
+          'accept-encoding': 'identity',
+          'range': 'bytes=0-0',
+        },
+      },
+      async (response) => {
+        const info = remoteInfoFromRangeResponse(url, response);
+        await response.body?.cancel();
+        if (!response.ok) {
+          throw new Error(`Failed to inspect DNE from ${url}: ${response.status}`);
+        }
+        return info;
+      },
+      options,
+    );
   }
+}
 
+function remoteInfoFromHeaders(url: string, headers: Headers): RemoteDneSourceInfo {
   return {
     url,
-    lastModified: response.headers.get('last-modified'),
-    etag: response.headers.get('etag'),
-    contentLength: response.headers.get('content-length'),
-    acceptRanges: response.headers.get('accept-ranges'),
+    lastModified: headers.get('last-modified'),
+    etag: headers.get('etag'),
+    contentLength: headers.get('content-length'),
+    acceptRanges: headers.get('accept-ranges'),
+  };
+}
+
+function remoteInfoFromRangeResponse(url: string, response: Response): RemoteDneSourceInfo {
+  const info = remoteInfoFromHeaders(url, response.headers);
+  if (response.status !== 206) {
+    return info;
+  }
+  const match = /^bytes 0-0\/(\d+)$/i.exec(response.headers.get('content-range') ?? '');
+  return {
+    ...info,
+    contentLength: match?.[1] ?? null,
+    acceptRanges: info.acceptRanges ?? 'bytes',
   };
 }
 

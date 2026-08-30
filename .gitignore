@@ -1,7 +1,11 @@
 node_modules/
 .zed/
 dist/
+coverage/
 .*.fetch.lock
+
+.codegraph/
+.codegraph/**
 
 *.db
 

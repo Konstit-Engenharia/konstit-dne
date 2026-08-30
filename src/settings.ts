@@ -11,3 +11,8 @@ export const EDNE_DOWNLOAD_URL = 'https://www2.correios.com.br/sistemas/edne/dow
 
 export const HTTP_FETCH_CONCURRENCY = 8;
 export const HTTP_FETCH_CHUNK_SIZE = 2 * 1024 * 1024; // 2MB
+export const HTTP_FETCH_TIMEOUT_MS = 30_000;
+export const HTTP_FETCH_MAX_RETRIES = 2;
+export const HTTP_FETCH_RETRY_BASE_DELAY_MS = 100;
+export const HTTP_FETCH_RETRY_MAX_DELAY_MS = 1_000;
+export const HTTP_FETCH_RETRY_AFTER_MAX_MS = 2_000;

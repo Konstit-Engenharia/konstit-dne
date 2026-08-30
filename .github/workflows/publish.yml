@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: npm-publish
-      url: https://www.npmjs.com/package/@konstit/cli
+      url: https://www.npmjs.com/package/@konstit/dne
 
     steps:
       - name: Check out release
@@ -73,6 +73,15 @@ jobs:
           TARBALL="$(node -e "process.stdout.write(JSON.parse(process.argv[1])[0].filename)" "$PACK_RESULT")"
           test -f "$TARBALL"
           echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test npm tarball
+        env:
+          TARBALL: ${{ steps.package.outputs.tarball }}
+        run: |
+          SMOKE_DIR="$(mktemp -d)"
+          trap 'rm -rf "$SMOKE_DIR"' EXIT
+          npm install --prefix "$SMOKE_DIR" "$GITHUB_WORKSPACE/$TARBALL" --ignore-scripts --no-audit --no-fund
+          "$SMOKE_DIR/node_modules/.bin/dne" --help
 
       - name: Add tarball to GitHub Release
         env:

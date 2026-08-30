@@ -16,6 +16,7 @@ const bun = timed('bun', [
   'run',
   'src/index.ts',
   'build',
+  '--db',
   bunDb,
   '--source',
   dneDir,

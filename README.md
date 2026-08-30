@@ -59,11 +59,11 @@ bunx @konstit/dne build --db ./dne.db --check --json
 
 `build` grava cada etapa e sua duração em formato compacto (`ms`, `s`, `min` ou `h`) em stderr. O resultado final é gravado em stdout. Use `--quiet` para ocultar o progresso. Use `--json` para receber o caminho da base, a quantidade de registros, o tamanho em bytes, os metadados da fonte, o tempo total em `elapsed_ms` e o estado da atualização.
 
-Cada carga grava a versão do `@konstit/dne` em `edne_metadata`. Ao usar uma fonte remota, a CLI também grava `Last-Modified`, ETag, tamanho do conteúdo, URL da fonte e horário da carga. Uma execução posterior de `build` não recria a base se a fonte não mudou e mostra o `Last-Modified` remoto na saída textual. `--check` verifica se há uma atualização sem alterar a base e também mostra o `Last-Modified` remoto. `--force` ignora os metadados e recria a base.
+Cada carga grava a versão do `@konstit/dne` em `edne_metadata`. Ao usar uma fonte remota, a CLI também grava `Last-Modified`, ETag, tamanho do conteúdo, URL da fonte e horário da carga. Todos os validadores disponíveis devem continuar iguais para a base ser considerada atual. Uma execução posterior de `build` não recria a base se a fonte não mudou e mostra o `Last-Modified` remoto na saída textual. `--check` valida a estrutura de uma fonte local ou verifica se há uma atualização remota, sem alterar a base. `--force` ignora os metadados e recria a base.
 
-Uma fonte HTTP ou HTTPS deve aceitar `HEAD`. A CLI usa essa requisição para obter o tamanho do arquivo e os metadados de atualização antes de baixar o ZIP.
+Para fontes HTTP ou HTTPS, a CLI tenta obter os metadados com `HEAD`. Se o servidor não aceitar esse método, ela usa uma requisição `GET` limitada ao primeiro byte. Requisições têm timeout de 30 segundos e até duas novas tentativas para falhas transitórias, respostas 408, 425, 429 e 5xx.
 
-As entradas do ZIP são verificadas com seus valores CRC32 durante a leitura. Se houver divergência, a carga é interrompida antes da confirmação da base.
+As entradas do ZIP são verificadas com seus valores CRC32 durante a leitura. A carga também valida CEP, UF, código IBGE, campos obrigatórios e referências entre os arquivos. Qualquer rejeição interrompe a transação. Uma carga válida grava em `quality_report` as linhas lidas, aceitas e rejeitadas por etapa e arquivo.
 
 ## Acesso simultâneo
 
@@ -89,6 +89,7 @@ O padrão `0 0 * * 5` executa à meia-noite de sexta-feira, no fuso local do cro
 
 ```sh
 bunx @konstit/dne cron install '30 6 * * 5' --db ./dne.db
+bunx @konstit/dne cron install --db ./dne.db --source https://example.com/eDNE_Basico.zip
 bunx @konstit/dne cron install '@weekly' --db ./dne.db --dry-run
 bunx @konstit/dne cron status --db ./dne.db --json
 bunx @konstit/dne cron remove --db ./dne.db
@@ -96,7 +97,7 @@ bunx @konstit/dne cron remove --db ./dne.db
 
 `cron install` usa `Bun.cron` para registrar o job no agendador do sistema operacional: `crontab` no Linux e `launchd` no macOS. O título contém um hash do caminho absoluto da base. Uma nova instalação para a mesma base substitui o job existente, enquanto bases diferentes mantêm agendamentos independentes. `cron remove` usa `Bun.cron.remove`.
 
-Cada job recebe um módulo persistente e metadados no diretório de estado do usuário. O módulo executa os caminhos absolutos do `bunx` e da base. A versão atual do `@konstit/dne` fica fixada no comando. Execute `cron install` novamente depois de atualizar o pacote para usar a nova versão. A execução usa `--quiet`, descarta a saída normal e mantém erros em stderr para o agendador do sistema. `cron status` também calcula a próxima execução com `Bun.cron.parse`.
+Cada job recebe um módulo persistente e metadados no diretório de estado do usuário. O módulo executa os caminhos absolutos do `bunx`, da base e de fontes locais. A versão atual do `@konstit/dne` e a fonte ficam fixadas no comando. Alterar somente a expressão preserva a fonte já instalada. Execute `cron install` novamente depois de atualizar o pacote para usar a nova versão. A execução usa `--quiet`, descarta a saída normal e mantém erros em stderr para o agendador do sistema. `cron status` mostra a fonte e também calcula a próxima execução com `Bun.cron.parse`.
 
 ## Consultar CEPs
 
@@ -117,7 +118,7 @@ printf '01001000\n20040002\n' | bunx @konstit/dne get --jsonl
 
 Os formatos aceitos são `01001000` e `01001-000`. A entrada por arquivo ou stdin pode usar espaços, vírgulas ou pontos e vírgulas como separadores.
 
-`get` abre o SQLite em modo somente leitura. Se o caminho da base não existir, nenhum arquivo será criado. O formato JSONL grava um resultado completo por linha e é adequado para lotes grandes.
+`get` abre o SQLite em modo somente leitura. Se o caminho da base não existir, nenhum arquivo será criado. O formato JSONL lê a entrada e grava cada resultado de forma incremental, sem manter o lote completo na memória.
 
 ## Inspecionar a base
 
@@ -193,9 +194,9 @@ CREATE TABLE "dne" (
 ### Drizzle ORM schema
 
 ```typescript
-import { sqliteTable } from "drizzle-orm/sqlite-core";
+import { sqliteTable } from 'drizzle-orm/sqlite-core';
 
-export const dneTable = sqliteTable("dne", (t) => ({
+export const dneTable = sqliteTable('dne', (t) => ({
   cep: t.text().primaryKey(),
   logradouro: t.text(),
   complemento: t.text(),

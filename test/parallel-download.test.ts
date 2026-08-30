@@ -17,6 +17,11 @@ import {
   HTTP_FETCH_CONCURRENCY,
 } from '../src/settings.ts';
 
+const noRetryDelay = {
+  retryBaseDelayMs: 0,
+  retryMaxDelayMs: 0,
+};
+
 const workDir = mkdtempSync(join(tmpdir(), 'edne-parallel-download-test-'));
 
 afterAll(() => {
@@ -146,18 +151,23 @@ describe('parallel download', () => {
 
   test('rejects when a range request fails', async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async (_input) => new Response(null, { status: 503 })) as typeof fetch;
+    let requestCount = 0;
+    globalThis.fetch = (async (_input) => {
+      requestCount++;
+      return new Response(null, { status: 503 });
+    }) as typeof fetch;
 
     const path = join(workDir, 'failed-range.bin');
     try {
       const error = await getRejection(downloadRemoteFile('https://example.test/failed-range.bin', path, {
         acceptRanges: 'bytes',
         contentLength: '1',
-      }));
+      }, noRetryDelay));
       expect(error.message).toBe('Failed to download https://example.test/failed-range.bin: 503');
     } finally {
       globalThis.fetch = originalFetch;
     }
+    expect(requestCount).toBe(3);
   });
 
   test('falls back when Content-Range is invalid', async () => {
@@ -244,18 +254,23 @@ describe('parallel download', () => {
 
   test('rejects when a serial request fails', async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async (_input) => new Response(null, { status: 404 })) as typeof fetch;
+    let requestCount = 0;
+    globalThis.fetch = (async (_input) => {
+      requestCount++;
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
 
     const path = join(workDir, 'failed-serial.bin');
     try {
       const error = await getRejection(downloadRemoteFile('https://example.test/failed-serial.bin', path, {
         acceptRanges: null,
         contentLength: null,
-      }));
+      }, noRetryDelay));
       expect(error.message).toBe('Failed to download https://example.test/failed-serial.bin: 404');
     } finally {
       globalThis.fetch = originalFetch;
     }
+    expect(requestCount).toBe(1);
   });
 
   test('rejects a serial response without a body', async () => {
@@ -340,5 +355,170 @@ describe('parallel download', () => {
       globalThis.fetch = originalFetch;
     }
     expect(writeCount).toBe(2);
+  });
+
+  test('retries transient serial failures and replaces partial output', async () => {
+    const originalFetch = globalThis.fetch;
+    const content = Buffer.from('complete response');
+    let requestCount = 0;
+
+    globalThis.fetch = (async (_input) => {
+      requestCount++;
+      if (requestCount === 1) {
+        let readCount = 0;
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers(),
+          body: {
+            getReader: () => ({
+              read: async () => {
+                if (readCount++ === 0) {
+                  return { done: false, value: new Uint8Array([1, 2, 3]) };
+                }
+                throw new TypeError('connection reset');
+              },
+              cancel: async () => {},
+              releaseLock: () => {},
+            }),
+          },
+        } as unknown as Response;
+      }
+      return new Response(content);
+    }) as typeof fetch;
+
+    const path = join(workDir, 'retry-partial-serial.bin');
+    try {
+      await downloadRemoteFile('https://example.test/retry-partial.bin', path, {
+        acceptRanges: null,
+        contentLength: null,
+      }, noRetryDelay);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(requestCount).toBe(2);
+    expect(Buffer.from(await Bun.file(path).arrayBuffer()).equals(content)).toBe(true);
+  });
+
+  test('limits retries for retryable HTTP statuses', async () => {
+    const originalFetch = globalThis.fetch;
+    let requestCount = 0;
+
+    globalThis.fetch = (async (_input) => {
+      requestCount++;
+      return new Response(null, { status: 425 });
+    }) as typeof fetch;
+
+    const path = join(workDir, 'limited-retries.bin');
+    try {
+      const error = await getRejection(downloadRemoteFile('https://example.test/limited-retries.bin', path, {
+        acceptRanges: null,
+        contentLength: null,
+      }, {
+        ...noRetryDelay,
+        maxRetries: 2,
+      }));
+      expect(error.message).toBe('Failed to download https://example.test/limited-retries.bin: 425');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(requestCount).toBe(3);
+  });
+
+  test('caps Retry-After before retrying', async () => {
+    const originalFetch = globalThis.fetch;
+    let requestCount = 0;
+
+    globalThis.fetch = (async (_input) => {
+      requestCount++;
+      if (requestCount === 1) {
+        return new Response(null, {
+          status: 429,
+          headers: { 'retry-after': '60' },
+        });
+      }
+      return new Response('retried');
+    }) as typeof fetch;
+
+    const path = join(workDir, 'retry-after.bin');
+    const startedAt = performance.now();
+    try {
+      await downloadRemoteFile('https://example.test/retry-after.bin', path, {
+        acceptRanges: null,
+        contentLength: null,
+      }, {
+        maxRetries: 1,
+        retryAfterMaxMs: 5,
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    const elapsedMs = performance.now() - startedAt;
+    expect(requestCount).toBe(2);
+    expect(elapsedMs).toBeGreaterThanOrEqual(4);
+    expect(elapsedMs).toBeLessThan(1_000);
+  });
+
+  test('times out a stalled serial response body and retries', async () => {
+    const originalFetch = globalThis.fetch;
+    let requestCount = 0;
+
+    globalThis.fetch = (async (_input, init) => {
+      requestCount++;
+      const body = new ReadableStream({
+        start(controller) {
+          init?.signal?.addEventListener('abort', () => controller.error(init.signal?.reason), { once: true });
+        },
+      });
+      return new Response(body);
+    }) as typeof fetch;
+
+    const path = join(workDir, 'timeout-serial.bin');
+    try {
+      const error = await getRejection(downloadRemoteFile('https://example.test/timeout-serial.bin', path, {
+        acceptRanges: null,
+        contentLength: null,
+      }, {
+        ...noRetryDelay,
+        maxRetries: 1,
+        timeoutMs: 5,
+      }));
+      expect(error.name).toBe('TimeoutError');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(requestCount).toBe(2);
+  });
+
+  test('preserves external cancellation during retry backoff', async () => {
+    const originalFetch = globalThis.fetch;
+    const controller = new AbortController();
+    const cancellation = new Error('cancelled by caller');
+    let requestCount = 0;
+
+    globalThis.fetch = (async (_input) => {
+      requestCount++;
+      return new Response(null, {
+        status: 503,
+        headers: { 'retry-after': '60' },
+      });
+    }) as typeof fetch;
+
+    const path = join(workDir, 'cancelled-backoff.bin');
+    setTimeout(() => controller.abort(cancellation), 5);
+    try {
+      const error = await getRejection(downloadRemoteFile('https://example.test/cancelled-backoff.bin', path, {
+        acceptRanges: null,
+        contentLength: null,
+      }, {
+        retryAfterMaxMs: 1_000,
+        signal: controller.signal,
+      }));
+      expect(error).toBe(cancellation);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(requestCount).toBe(1);
   });
 });

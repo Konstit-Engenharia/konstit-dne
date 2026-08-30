@@ -48,7 +48,7 @@
     "lint:oxlint": "bunx --bun oxlint --type-aware",
     "lint": "bun run --parallel tsc lint:biome lint:oxlint",
     "fmt": "bunx --bun dprint fmt",
-    "coverage": "bun test --dots --coverage",
+    "coverage": "bun test --dots --coverage && bun run scripts/check-coverage.ts",
     "audit": "bun audit",
     "check": "bun run coverage && bun run --parallel tsc lint:biome lint:oxlint build audit",
     "build": "bun run build:artifacts",
