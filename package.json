@@ -1,6 +1,6 @@
 {
   "name": "@konstit/dne",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Build, update and query a local SQLite database of Brazilian postal codes.",
   "repository": {
     "type": "git",
