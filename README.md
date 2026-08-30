@@ -9,6 +9,7 @@ Principais vantagens:
 - **Rápido e compacto:** em um benchmark de 10 execuções realizado em 2026-08-30, a geração completa a partir do arquivo público levou 5,73 segundos em média, incluindo o download. A base final continha 1.605.136 registros e ocupava 125,4 MiB.
 - **Consultas locais simples:** procure um CEP, consulte vários CEPs em lote ou execute SQL somente leitura diretamente no arquivo SQLite.
 - **Atualizações seguras:** o modo WAL e uma única transação permitem atualizar a base sem expor dados parciais aos processos de leitura.
+- **Atualizações automáticas:** registre uma agenda com `Bun.cron` para manter a base atualizada no Linux ou macOS. Cada job usa uma versão fixada do pacote, e o lock exclusivo evita cargas simultâneas.
 - **Pronto para automação:** a CLI oferece saídas JSON e JSONL estáveis, códigos de saída documentados e separação entre dados e mensagens de progresso.
 
 Nas mesmas condições do benchmark, `uvx edne-correios-loader load --database-url sqlite:///dne.db` levou 30 segundos e gerou uma base de 394 MiB sem `VACUUM`. Nessa comparação, o `@konstit/dne` foi 5,2 vezes mais rápido e usou 68,2% menos espaço em disco.
@@ -171,7 +172,7 @@ Códigos de saída:
 - `2`: argumentos inválidos ou CEP em formato inválido
 - `3`: um ou mais CEPs válidos não foram encontrados
 
-## Esquema SQLite
+## Schema SQLite
 
 ```sql
 CREATE TABLE "dne" (
@@ -188,6 +189,23 @@ CREATE TABLE "dne" (
 ```
 
 `cep` é a chave primária, sem digito separador. A tabela usa `WITHOUT ROWID` e páginas de 32 KiB para oferecer consultas diretas com menor uso de espaço.
+
+### Drizzle ORM schema
+
+```typescript
+import { sqliteTable } from "drizzle-orm/sqlite-core";
+
+export const dneTable = sqliteTable("dne", (t) => ({
+  cep: t.text().primaryKey(),
+  logradouro: t.text(),
+  complemento: t.text(),
+  bairro: t.text(),
+  municipio: t.text().notNull(),
+  municipio_cod_ibge: t.integer().notNull(),
+  uf: t.text().notNull(),
+  nome: t.text(),
+}));
+```
 
 ## Desenvolvimento
 
