@@ -21,6 +21,7 @@ const LATIN1_DECODER = new TextDecoder(LATIN1_ENCODING);
 const CENTRAL_DIR_COMMENT_LEN_OFFSET = 32;
 const CENTRAL_DIR_COMPRESSED_SIZE_OFFSET = 20;
 const CENTRAL_DIR_COMPRESSION_OFFSET = 10;
+const CENTRAL_DIR_CRC32_OFFSET = 16;
 const CENTRAL_DIR_EXTRA_LEN_OFFSET = 30;
 const CENTRAL_DIR_FILENAME_LEN_OFFSET = 28;
 const CENTRAL_DIR_FIXED_SIZE = 46;
@@ -49,6 +50,7 @@ export type DneDataSource = {
 type ZipEntry = {
   name: string;
   compression: number;
+  crc32: number;
   compressedSize: number;
   uncompressedSize: number;
   localHeaderOffset: number;
@@ -335,6 +337,7 @@ function parseCentralDirectory(directory: Buffer): ZipEntry[] {
     }
 
     const compression = directory.readUInt16LE(offset + CENTRAL_DIR_COMPRESSION_OFFSET);
+    const crc32 = directory.readUInt32LE(offset + CENTRAL_DIR_CRC32_OFFSET);
     const compressedSize = directory.readUInt32LE(offset + CENTRAL_DIR_COMPRESSED_SIZE_OFFSET);
     const uncompressedSize = directory.readUInt32LE(offset + CENTRAL_DIR_UNCOMPRESSED_SIZE_OFFSET);
     const filenameLength = directory.readUInt16LE(offset + CENTRAL_DIR_FILENAME_LEN_OFFSET);
@@ -357,6 +360,7 @@ function parseCentralDirectory(directory: Buffer): ZipEntry[] {
       entries.push({
         name,
         compression,
+        crc32,
         compressedSize,
         uncompressedSize,
         localHeaderOffset,
@@ -417,14 +421,17 @@ async function* streamZipEntry(path: string, entry: ZipEntry): AsyncIterable<Uin
   }
 
   let uncompressedSize = 0;
+  let crc32 = 0;
   for await (const chunk of stream) {
     uncompressedSize += chunk.byteLength;
+    crc32 = Bun.hash.crc32(chunk, crc32);
     yield chunk;
   }
 
   if (entry.uncompressedSize && uncompressedSize !== entry.uncompressedSize) {
     throw new Error(`Invalid decompressed size for ${entry.name}`);
   }
+  validateCrc32(entry, crc32);
 }
 
 async function materializeZipEntry(
@@ -527,6 +534,7 @@ function extractBufferedZipEntry(
   const compressed = buffer.subarray(dataStart, dataStart + entry.compressedSize);
 
   if (entry.compression === COMPRESSION_ALGO_STORE) {
+    validateCrc32(entry, Bun.hash.crc32(compressed));
     return compressed;
   }
 
@@ -535,10 +543,17 @@ function extractBufferedZipEntry(
     if (entry.uncompressedSize && inflated.length !== entry.uncompressedSize) {
       throw new Error(`Invalid decompressed size for ${entry.name}`);
     }
+    validateCrc32(entry, Bun.hash.crc32(inflated));
     return inflated;
   }
 
   throw new Error(
     `Unsupported ZIP compression method ${entry.compression} for ${entry.name}`,
   );
+}
+
+function validateCrc32(entry: ZipEntry, actual: number) {
+  if (actual !== entry.crc32) {
+    throw new Error(`CRC32 mismatch for ${entry.name}`);
+  }
 }

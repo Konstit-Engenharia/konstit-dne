@@ -1,16 +1,9 @@
 import {
-  mkdir,
   mkdtemp,
   rm,
 } from 'node:fs/promises';
-import {
-  homedir,
-  tmpdir,
-} from 'node:os';
-import {
-  dirname,
-  join,
-} from 'node:path';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   resolveDirectoryDneSource,
   resolveZipDneSource,
@@ -18,10 +11,7 @@ import {
 } from './dne-source.ts';
 import { downloadRemoteFile } from './parallel-download.ts';
 import type { TableDefinition } from './schema.ts';
-import {
-  CACHE_LAST_MODIFIED_BUCKET_MS,
-  EDNE_DOWNLOAD_URL,
-} from './settings.ts';
+import { EDNE_DOWNLOAD_URL } from './settings.ts';
 
 export type RemoteDneSourceInfo = {
   url: string;
@@ -31,13 +21,17 @@ export type RemoteDneSourceInfo = {
   acceptRanges: string | null;
 };
 
+export type DneResolverOptions = {
+  onProgress?: (message: string) => void;
+  remoteInfo?: RemoteDneSourceInfo;
+};
+
 export class DneResolver {
   private tempDir?: string;
-  private nestedZipPath?: string;
 
   constructor(
     private source?: string,
-    private options: { skipCache?: boolean; } = {},
+    private options: DneResolverOptions = {},
   ) {}
 
   async resolve(schema: TableDefinition[]): Promise<DneDataSource> {
@@ -75,13 +69,17 @@ export class DneResolver {
     }
 
     if (await Bun.file(path).exists()) {
-      const nestedZipPath = this.nestedZipPath
-        ?? join(await this.getTempDir(), 'edne-inner.zip');
-      return await resolveZipDneSource(path, schema, nestedZipPath);
+      this.progress('Preparing ZIP source');
+      const nestedZipPath = join(await this.getTempDir(), 'edne-inner.zip');
+      const resolved = await resolveZipDneSource(path, schema, nestedZipPath);
+      this.progress('ZIP source is ready');
+      return resolved;
     }
 
+    this.progress('Reading directory source');
     const directorySource = resolveDirectoryDneSource(path, schema);
     if (directorySource) {
+      this.progress('Directory source is ready');
       return directorySource;
     }
 
@@ -89,26 +87,17 @@ export class DneResolver {
   }
 
   private async download(url: string) {
-    const info = await inspectRemoteDneSource(url);
-    const cachedPath = this.options.skipCache ? null : await cachedDownloadPath(info);
-    const cachedInnerPath = cachedPath ? `${cachedPath}.inner.zip` : null;
-    if (cachedInnerPath && (await Bun.file(cachedInnerPath).exists())) {
-      return cachedInnerPath;
-    }
-    if (cachedPath && (await Bun.file(cachedPath).exists())) {
-      this.nestedZipPath = cachedInnerPath ?? undefined;
-      return cachedPath;
-    }
-
+    const info = this.options.remoteInfo ?? await inspectRemoteDneSource(url);
     const tempDir = await this.getTempDir();
     const path = join(tempDir, 'edne-download.zip');
 
+    this.progress('Downloading the DNE archive');
     await downloadRemoteFile(url, path, info);
-    if (cachedPath) {
-      await cacheDownloadedFile(path, cachedPath);
-      this.nestedZipPath = cachedInnerPath ?? undefined;
-    }
     return path;
+  }
+
+  private progress(message: string) {
+    this.options.onProgress?.(message);
   }
 }
 
@@ -136,48 +125,4 @@ function looksLikeUrl(value: string | URL) {
   } catch {
     return false;
   }
-}
-
-async function cachedDownloadPath(info: RemoteDneSourceInfo) {
-  if (process.env['EDNE_DISABLE_DOWNLOAD_CACHE'] === '1') {
-    return null;
-  }
-  if (!info.contentLength) {
-    return null;
-  }
-
-  const cacheDir = join(
-    homedir() || tmpdir(),
-    '.cache',
-    'edne',
-  );
-  const key = new Bun.CryptoHasher('sha1')
-    .update(`${info.url}\0${info.contentLength}\0${cacheVersionToken(info)}`)
-    .digest('hex');
-  return join(cacheDir, `${key}.zip`);
-}
-
-function cacheVersionToken(info: RemoteDneSourceInfo) {
-  if (info.lastModified) {
-    const time = Date.parse(info.lastModified);
-    if (Number.isFinite(time)) {
-      return String(Math.floor(time / CACHE_LAST_MODIFIED_BUCKET_MS));
-    }
-    return info.lastModified;
-  }
-
-  return info.etag ?? '';
-}
-
-async function cacheDownloadedFile(source: string, target: string): Promise<void> {
-  const partial = `${target}.${process.pid}.tmp`;
-  await mkdir(dirname(target), { recursive: true });
-  await Bun.write(partial, Bun.file(source));
-  await Bun.file(target)
-    .delete()
-    .catch(() => {});
-  await Bun.write(target, Bun.file(partial));
-  await Bun.file(partial)
-    .delete()
-    .catch(() => {});
 }

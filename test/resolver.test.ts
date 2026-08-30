@@ -7,43 +7,35 @@ import { DneResolver } from '../src/resolver.ts';
 import { buildSchema } from '../src/schema.ts';
 import { expectRejects } from './helpers.ts';
 
-describe('resolver cache', () => {
-  test('force skips remote download cache', async () => {
+describe('remote resolver', () => {
+  test('downloads the source for each resolution', async () => {
     const originalFetch = globalThis.fetch;
-    const url = `https://example.test/edne-${Date.now()}.zip`;
-    let getCount = 0;
+    const url = `https://example.test/edne-${crypto.randomUUID()}.zip`;
+    let downloadCount = 0;
 
     globalThis.fetch = (async (_input, init) => {
       if (init?.method === 'HEAD') {
         return new Response(null, {
-          headers: {
-            'content-length': '3',
-            'last-modified': 'Wed, 01 Jul 2026 12:00:00 GMT',
-          },
+          headers: { 'content-length': '3' },
         });
       }
 
-      getCount++;
+      downloadCount++;
       return new Response(new Uint8Array([1, 2, 3]));
     }) as typeof fetch;
 
     try {
       await expectRejects(resolveInvalidRemote(url));
-      expect(getCount).toBe(1);
-
       await expectRejects(resolveInvalidRemote(url));
-      expect(getCount).toBe(1);
-
-      await expectRejects(resolveInvalidRemote(url, { skipCache: true }));
-      expect(getCount).toBe(2);
+      expect(downloadCount).toBe(2);
     } finally {
       globalThis.fetch = originalFetch;
     }
   });
 });
 
-async function resolveInvalidRemote(url: string, options: { skipCache?: boolean; } = {}) {
-  const resolver = new DneResolver(url, options);
+async function resolveInvalidRemote(url: string) {
+  const resolver = new DneResolver(url);
   try {
     await resolver.resolve(buildSchema());
   } finally {

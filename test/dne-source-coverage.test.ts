@@ -201,6 +201,22 @@ describe('buffered ZIP DNE source', () => {
       'Invalid decompressed size for Delimitado/EXACT.TXT',
     );
   });
+
+  test('rejects stored and deflated entries with a CRC32 mismatch', async () => {
+    for (const compression of [0, 8]) {
+      const invalidCrc = createZip([
+        zipEntry('Delimitado/EXACT.TXT', 'corrupt', {
+          compression,
+          crc32: 0,
+        }),
+      ]);
+      const source = resolveBufferedZipDneSource(invalidCrc, [exactTable]);
+      await expectRejects(
+        readText(source, 'EXACT.TXT'),
+        'CRC32 mismatch for Delimitado/EXACT.TXT',
+      );
+    }
+  });
 });
 
 describe('streamed ZIP DNE source', () => {
@@ -362,6 +378,34 @@ describe('streamed ZIP DNE source', () => {
       'Invalid decompressed size for Delimitado/EXACT.TXT',
     );
   });
+
+  test('rejects DNE and nested ZIP entries with a CRC32 mismatch', async () => {
+    const invalidDnePath = writeZip('stream-invalid-crc.zip', [
+      zipEntry('Delimitado/EXACT.TXT', 'corrupt', { crc32: 0 }),
+    ]);
+    const invalidDne = await resolveZipDneSource(
+      invalidDnePath,
+      [exactTable],
+      'unused',
+    );
+    await expectRejects(
+      lines(invalidDne, 'EXACT.TXT'),
+      'CRC32 mismatch for Delimitado/EXACT.TXT',
+    );
+
+    const inner = createZip([zipEntry('Delimitado/EXACT.TXT', 'nested')]);
+    const invalidNestedPath = writeZip('stream-invalid-nested-crc.zip', [
+      zipEntry('eDNE_Basico_2026.zip', inner, { crc32: 0 }),
+    ]);
+    await expectRejects(
+      resolveZipDneSource(
+        invalidNestedPath,
+        [exactTable],
+        join(workDir, 'invalid-crc-inner.zip'),
+      ),
+      'CRC32 mismatch for eDNE_Basico_2026.zip',
+    );
+  });
 });
 
 async function lines(source: DneDataSource, file: string) {
@@ -394,6 +438,7 @@ async function expectRejects(promise: Promise<unknown>, message: string) {
 type EntryOptions = {
   compression?: number;
   compressedSize?: number;
+  crc32?: number;
   uncompressedSize?: number;
 };
 
@@ -402,6 +447,7 @@ type TestZipEntry = {
   content: Buffer;
   compression: number;
   compressedSize?: number;
+  crc32?: number;
   uncompressedSize?: number;
 };
 
@@ -415,6 +461,7 @@ function zipEntry(
     content: typeof content === 'string' ? Buffer.from(content, 'latin1') : content,
     compression: options.compression ?? 0,
     compressedSize: options.compressedSize,
+    crc32: options.crc32,
     uncompressedSize: options.uncompressedSize,
   };
 }
@@ -437,10 +484,12 @@ function createZip(entries: TestZipEntry[], comment = '') {
       : entry.content;
     const compressedSize = entry.compressedSize ?? compressed.length;
     const uncompressedSize = entry.uncompressedSize ?? entry.content.length;
+    const crc32 = entry.crc32 ?? Bun.hash.crc32(entry.content);
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
     local.writeUInt16LE(20, 4);
     local.writeUInt16LE(entry.compression, 8);
+    local.writeUInt32LE(crc32, 14);
     local.writeUInt32LE(compressedSize, 18);
     local.writeUInt32LE(uncompressedSize, 22);
     local.writeUInt16LE(name.length, 26);
@@ -451,6 +500,7 @@ function createZip(entries: TestZipEntry[], comment = '') {
     central.writeUInt16LE(20, 4);
     central.writeUInt16LE(20, 6);
     central.writeUInt16LE(entry.compression, 10);
+    central.writeUInt32LE(crc32, 16);
     central.writeUInt32LE(compressedSize, 20);
     central.writeUInt32LE(uncompressedSize, 24);
     central.writeUInt16LE(name.length, 28);

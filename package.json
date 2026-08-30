@@ -1,8 +1,8 @@
 {
   "name": "@konstit/dne",
-  "version": "1.0.0",
+  "version": "0.0.1",
+  "description": "Build and query a local SQLite database of Brazilian postal codes.",
   "type": "module",
-  "module": "src/index.ts",
   "bin": {
     "dne": "src/index.ts"
   },
@@ -12,6 +12,7 @@
   "scripts": {
     "fetch": "bun run src/index.ts fetch",
     "lookup": "bun run src/index.ts lookup",
+    "test": "bun test --dots",
     "benchmark": "bun run bench/benchmark.ts",
     "benchmark:download": "bun run bench/download.bench.ts",
     "benchmark:micro": "bun run bench/micro.bench.ts",

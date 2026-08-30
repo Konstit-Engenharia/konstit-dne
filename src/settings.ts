@@ -8,7 +8,6 @@ export const SQLITE_CACHE_SIZE = -200000; // ~195 MiB; negative means cache size
 export const SQLITE_INSERT_BATCH_SIZE = 1000;
 
 export const EDNE_DOWNLOAD_URL = 'https://www2.correios.com.br/sistemas/edne/download/eDNE_Basico.zip';
-export const CACHE_LAST_MODIFIED_BUCKET_MS = 10 * 60 * 1000; // 10 minutes
 
 export const HTTP_FETCH_CONCURRENCY = 8;
 export const HTTP_FETCH_CHUNK_SIZE = 2 * 1024 * 1024; // 2MB

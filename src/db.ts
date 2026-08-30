@@ -20,6 +20,85 @@ export type LoadMetadata = Record<string, string> & {
   source_url?: string;
 };
 
+export type DneRow = {
+  bairro: string | null;
+  cep: string;
+  complemento: string | null;
+  logradouro: string | null;
+  municipio: string;
+  municipio_cod_ibge: number;
+  nome: string | null;
+  uf: string;
+};
+
+export type LoadProgress = (message: string) => void;
+
+export class DneDatabaseReader {
+  private db: Database;
+
+  constructor(databasePath: string) {
+    this.db = new Database(databasePath, { readonly: true });
+    this.db.run('PRAGMA busy_timeout = 30000');
+  }
+
+  close() {
+    this.db.close();
+  }
+
+  hasTable(tableName: string) {
+    return Boolean(this.db.query('SELECT 1 FROM sqlite_master WHERE type = \'table\' AND name = ?').get(tableName));
+  }
+
+  metadata(): LoadMetadata | null {
+    if (!this.hasTable(SQLITE_METADATA_TABLE_NAME)) {
+      return null;
+    }
+
+    const rows = this.db.query(`SELECT key, value FROM ${quoteIdent(SQLITE_METADATA_TABLE_NAME)}`).all() as {
+      key: string;
+      value: string;
+    }[];
+    return Object.fromEntries(rows.map((row) => [row.key, row.value]));
+  }
+
+  queryCep(cepTableName: string, cep: string): DneRow | null {
+    return this.db.query(`SELECT * FROM ${quoteIdent(cepTableName)} WHERE cep = ?`).get(cep) as DneRow | null;
+  }
+
+  rowCount(tableName: string) {
+    const row = this.db.query(`SELECT count(*) AS count FROM ${quoteIdent(tableName)}`).get() as { count: number; };
+    return row.count;
+  }
+
+  tableSchema(tableName: string) {
+    const row = this.db.query('SELECT sql FROM sqlite_master WHERE type = \'table\' AND name = ?').get(tableName) as {
+      sql: string | null;
+    } | null;
+    return row?.sql ?? null;
+  }
+
+  querySql(sql: string, limit: number) {
+    const rows: Record<string, unknown>[] = [];
+    const statement = this.db.query(sql);
+
+    try {
+      for (const value of statement.iterate()) {
+        rows.push(value as Record<string, unknown>);
+        if (rows.length > limit) {
+          break;
+        }
+      }
+    } finally {
+      statement.finalize();
+    }
+
+    return {
+      rows: rows.slice(0, limit),
+      truncated: rows.length > limit,
+    };
+  }
+}
+
 type UnifiedInsertValue = string | number | null;
 type UnifiedInsertRow = [
   cep: string,
@@ -133,7 +212,7 @@ export class DneDatabaseWriter {
     this.db.close();
   }
 
-  async loadFromSource(source: DneDataSource, metadata: LoadMetadata = {}) {
+  async loadFromSource(source: DneDataSource, metadata: LoadMetadata = {}, onProgress: LoadProgress = () => {}) {
     const cepUnificado = this.originalTable('cep_unificado');
 
     this.configureBulkLoad();
@@ -143,13 +222,18 @@ export class DneDatabaseWriter {
       this.db.run(`DELETE FROM ${quoteIdent(cepUnificado.name)}`);
       this.db.run(`DELETE FROM ${quoteIdent(SQLITE_METADATA_TABLE_NAME)}`);
 
+      onProgress('Reading municipalities');
       const localidades = await this.readLocalidades(source);
+      onProgress('Reading districts');
       const bairros = await this.readBairros(source);
       const insert = this.prepareUnifiedInsert(cepUnificado.name);
 
+      onProgress('Loading streets');
       await this.insertLogradouros(source, insert, localidades, bairros);
+      onProgress('Loading municipalities');
       this.insertLocalidades(insert, localidades);
       this.insertLocalidadesSubordinadas(insert, localidades);
+      onProgress('Loading special addresses');
       await this.insertCpcs(source, insert, localidades);
       await this.insertGrandesUsuarios(source, insert, localidades, bairros);
       await this.insertUnidadesOperacionais(source, insert, localidades, bairros);
@@ -157,10 +241,8 @@ export class DneDatabaseWriter {
       insert.finalize();
       this.writeMetadata(metadata);
     });
-  }
 
-  queryCep(cepTableName: string, cep: string) {
-    return this.db.query(`SELECT * FROM ${quoteIdent(cepTableName)} WHERE cep = ?`).get(cep.replaceAll('-', '').trim());
+    return this.rowCount(cepUnificado.name);
   }
 
   private async readLocalidades(source: DneDataSource) {
@@ -198,6 +280,11 @@ export class DneDatabaseWriter {
 
   private prepareUnifiedInsert(cepUnificado: string) {
     return new BatchedUnifiedInsert(this.db, cepUnificado, SQLITE_INSERT_BATCH_SIZE);
+  }
+
+  private rowCount(tableName: string) {
+    const row = this.db.query(`SELECT count(*) AS count FROM ${quoteIdent(tableName)}`).get() as { count: number; };
+    return row.count;
   }
 
   private async insertLogradouros(
@@ -379,8 +466,12 @@ export class DneDatabaseWriter {
 
   private writeMetadata(metadata: LoadMetadata) {
     const insert = this.db.prepare(`INSERT INTO ${quoteIdent(SQLITE_METADATA_TABLE_NAME)} (key, value) VALUES (?, ?)`);
-    for (const [key, value,] of Object.entries(metadata)) {
-      insert.run(key, value);
+    try {
+      for (const [key, value,] of Object.entries(metadata)) {
+        insert.run(key, value);
+      }
+    } finally {
+      insert.finalize();
     }
   }
 
