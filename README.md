@@ -207,6 +207,8 @@ export const dneTable = sqliteTable("dne", (t) => ({
 }));
 ```
 
+Este schema serve para consultar um banco criado pelo `@konstit/dne`. O Drizzle não representa `WITHOUT ROWID`; portanto, usar o Drizzle Kit para gerar ou migrar essa tabela cria uma estrutura física diferente.
+
 ## Desenvolvimento
 
 O comando `zip` é necessário para os testes de desenvolvimento que usam fixtures e arquivos ZIP aninhados.
