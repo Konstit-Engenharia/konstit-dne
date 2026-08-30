@@ -226,18 +226,18 @@ export class DneDatabaseWriter {
       this.db.run(`DELETE FROM ${quoteIdent(cepTable.name)}`);
       this.db.run(`DELETE FROM ${quoteIdent(SQLITE_METADATA_TABLE_NAME)}`);
 
-      onProgress('Reading municipalities');
+      onProgress('Lendo municípios');
       const localidades = await this.readLocalidades(source);
-      onProgress('Reading districts');
+      onProgress('Lendo bairros');
       const bairros = await this.readBairros(source);
       const insert = this.prepareUnifiedInsert(cepTable.name);
 
-      onProgress('Loading streets');
+      onProgress('Carregando logradouros');
       await this.insertLogradouros(source, insert, localidades, bairros);
-      onProgress('Loading municipalities');
+      onProgress('Carregando municípios');
       this.insertLocalidades(insert, localidades);
       this.insertLocalidadesSubordinadas(insert, localidades);
-      onProgress('Loading special addresses');
+      onProgress('Carregando endereços especiais');
       await this.insertCpcs(source, insert, localidades);
       await this.insertGrandesUsuarios(source, insert, localidades, bairros);
       await this.insertUnidadesOperacionais(source, insert, localidades, bairros);

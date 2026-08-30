@@ -23,7 +23,10 @@ import {
   rm,
   stat,
 } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import {
+  homedir,
+  tmpdir,
+} from 'node:os';
 import {
   basename,
   dirname,
@@ -60,6 +63,7 @@ import {
 } from './settings.ts';
 
 const REMOTE_LAST_MODIFIED_TOLERANCE_MS = 10 * 60 * 1000;
+const DEFAULT_CRON_EXPRESSION = '0 0 * * 5';
 const FETCH_LOCK_TIMEOUT_MS = 30_000;
 const FETCH_LOCK_RETRY_MS = 50;
 const FETCH_LOCK_SIGNALS = ['SIGHUP', 'SIGINT', 'SIGTERM'] as const;
@@ -76,6 +80,9 @@ const DECIMAL_FORMAT = new Intl.NumberFormat(DISPLAY_LOCALE, {
   maximumFractionDigits: 1,
   minimumFractionDigits: 1,
 });
+const DURATION_SECONDS_FORMAT = new Intl.NumberFormat(DISPLAY_LOCALE, {
+  maximumFractionDigits: 1,
+});
 const EXIT_FAILURE = 1;
 const EXIT_INVALID_INPUT = 2;
 const EXIT_NOT_FOUND = 3;
@@ -83,113 +90,142 @@ const EXIT_NOT_FOUND = 3;
 const VERSION = await readPackageVersion();
 const databaseArgument = option('db', parsers.string, {
   default: SQLITE_FILE_NAME,
-  describe: 'SQLite database path.',
-  env: 'DNE_DB',
+  describe: 'Caminho da base SQLite.',
   global: true,
   valueHint: 'file',
-  valueName: 'PATH',
+  valueName: 'CAMINHO',
 });
 const jsonArgument = flag('json', {
-  describe: 'Write a stable JSON envelope to stdout.',
+  describe: 'Gravar um envelope JSON estável em stdout.',
   global: true,
 });
 const quietArgument = flag('quiet', {
-  describe: 'Hide progress messages.',
+  describe: 'Ocultar mensagens de progresso.',
   global: true,
   short: 'q',
 });
 const colorArgument = colorFlag('color');
 
 export const cli = command(BINARY_NAME, {
-  about: 'Build and query a local SQLite database of Brazilian postal codes.',
+  about: 'Criar e consultar uma base SQLite local com os CEPs do Brasil.',
   afterHelp: [
-    'Examples:',
-    '  bunx @konstit/dne fetch --db ./dne.db',
-    '  bunx @konstit/dne lookup 01001-000 --db ./dne.db --json',
-    '  bunx @konstit/dne status --db ./dne.db --json',
+    'Exemplos:',
+    '  bunx @konstit/dne build --db ./dne.db',
+    '  bunx @konstit/dne get 01001-000 --db ./dne.db',
+    '  bunx @konstit/dne status --db ./dne.db',
+    '  bunx @konstit/dne cron install --db ./dne.db',
   ].join('\n'),
   args: [databaseArgument, jsonArgument, quietArgument, colorArgument],
   version: VERSION,
   subcommands: [
-    command('fetch', {
+    command('build', {
       args: [
         option('source', parsers.string, {
           default: EDNE_DOWNLOAD_URL,
-          describe: 'DNE directory, ZIP file, or URL.',
-          valueName: 'PATH|URL',
+          describe: 'Diretório DNE, arquivo ZIP ou URL.',
+          valueName: 'CAMINHO|URL',
         }),
         flag('force', {
-          describe: 'Ignore freshness metadata and rebuild the database.',
+          describe: 'Ignorar metadados de atualização e recriar a base.',
         }),
         flag('check', {
-          describe: 'Check source freshness without changing the database.',
+          describe: 'Verificar a atualização da fonte sem alterar a base.',
         }),
       ],
-      about: 'Build or update the SQLite database',
+      about: 'Criar ou atualizar a base SQLite',
       conflicts: [['force', 'check']],
       handler: (args, context) => fetchDatabase(args, globalOptions(context)),
     }),
-    command('lookup', {
+    command('get', {
       args: [
         positional('input', parsers.regex(CEP_PATTERN), {
-          describe: 'One or more CEP values.',
+          describe: 'Um ou mais CEPs.',
           repeatable: true,
           valueName: 'CEP',
         }),
         option('file', parsers.string, {
-          describe: 'Read CEP values from a file. Use - for stdin.',
+          describe: 'Ler CEPs de um arquivo. Use - para stdin.',
           valueHint: 'file',
-          valueName: 'PATH',
+          valueName: 'CAMINHO',
         }),
         flag('jsonl', {
-          describe: 'Write one JSON result per line.',
+          describe: 'Gravar um resultado JSON por linha.',
         }),
       ],
-      about: 'Look up one or more CEP values',
+      about: 'Consultar um ou mais CEPs',
       handler: (args, context) => lookupCep(args, globalOptions(context)),
     }),
     command('status', {
-      about: 'Show database size, row count, schema state, and source metadata',
+      about: 'Exibir tamanho, registros, estado do esquema e metadados da fonte',
       handler: (_args, context) => showStatus(globalOptions(context)),
     }),
     command('schema', {
       args: [
         flag('expected', {
-          describe: 'Show the schema declared by this CLI instead of the database schema.',
+          describe: 'Exibir o esquema declarado pela CLI em vez do esquema da base.',
         }),
       ],
-      about: 'Show the actual or expected CEP table schema',
+      about: 'Exibir o esquema atual ou esperado da tabela de CEPs',
       handler: (args, context) => showSchema(args, globalOptions(context)),
     }),
     command('doctor', {
       args: [
         flag('offline', {
-          describe: 'Skip the remote endpoint check.',
+          describe: 'Não verificar a fonte remota.',
         }),
         option('source', parsers.string, {
           default: EDNE_DOWNLOAD_URL,
-          describe: 'Remote source URL to check.',
+          describe: 'URL da fonte remota que será verificada.',
           valueName: 'URL',
         }),
       ],
-      about: 'Check Bun, database setup, and source reachability',
+      about: 'Verificar Bun, configuração da base e acesso à fonte',
       handler: (args, context) => doctor(args, globalOptions(context)),
     }),
     command('sql', {
       args: [
         positional('query', parsers.string, {
-          describe: 'A quoted read-only SELECT, WITH, PRAGMA, or EXPLAIN statement.',
+          describe: 'Instrução SELECT, WITH, PRAGMA ou EXPLAIN somente leitura.',
           required: true,
-          valueName: 'QUERY',
+          valueName: 'CONSULTA',
         }),
         option('limit', parsers.range(1, 10_000), {
           default: 100,
-          describe: 'Maximum rows to return.',
-          valueName: 'ROWS',
+          describe: 'Quantidade máxima de registros retornados.',
+          valueName: 'REGISTROS',
         }),
       ],
-      about: 'Run a bounded read-only SQL query',
+      about: 'Executar uma consulta SQL somente leitura com limite',
       handler: (args, context) => querySql(args, globalOptions(context)),
+    }),
+    command('cron', {
+      about: 'Gerenciar a atualização automática da base no sistema operacional',
+      subcommands: [
+        command('install', {
+          args: [
+            positional('expression', parsers.cron, {
+              default: DEFAULT_CRON_EXPRESSION,
+              describe: 'Expressão cron. O padrão executa à meia-noite de sexta-feira.',
+              valueName: 'EXPRESSÃO',
+            }),
+            flag('dry-run', {
+              describe: 'Exibir o agendamento sem alterar o sistema.',
+            }),
+          ],
+          about: 'Instalar ou substituir o agendamento desta base',
+          handler: (args, context) => installCron(args, globalOptions(context)),
+        }),
+        command('status', {
+          about: 'Exibir o agendamento desta base',
+          handler: (_args, context) => showCronStatus(globalOptions(context)),
+        }),
+        command('remove', {
+          about: 'Remover o agendamento desta base',
+          handler: (_args, context) => removeCron(globalOptions(context)),
+        }),
+      ],
+      subcommandRequired: true,
+      defaultToHelp: true,
     }),
   ],
   subcommandRequired: true,
@@ -213,6 +249,16 @@ type LookupOptions = {
   file: string | undefined;
   input: readonly string[];
   jsonl: boolean;
+};
+
+type CronEntry = {
+  command: string;
+  database: string;
+  expression: string;
+  id: string;
+  package_version: string;
+  runner: string;
+  title: string;
 };
 
 type ProgressReporter = {
@@ -252,19 +298,28 @@ class UserError extends Error {
 
 export async function runCli(argv: readonly string[] = Bun.argv.slice(2)) {
   const jsonRequested = argv.includes('--json') || argv.includes('--jsonl');
+  const stdoutUsesColor = process.stdout.isTTY === true && Bun.env['TERM'] !== 'dumb';
 
   try {
     return await cli.run({
       argv,
+      color: stdoutUsesColor,
+      stdout: (output: string) => console.log(localizeCliText(output).trimEnd()),
       ...(jsonRequested
         ? {
           stderr: (output: string) =>
             writeError(
-              new UserError('invalid-arguments', firstErrorLine(output), EXIT_INVALID_INPUT),
+              new UserError(
+                'invalid-arguments',
+                localizeCliText(firstErrorLine(Bun.stripANSI(output))),
+                EXIT_INVALID_INPUT,
+              ),
               true,
             ),
         }
-        : {}),
+        : {
+          stderr: (output: string) => console.error(localizeCliText(output).trimEnd()),
+        }),
     });
   } catch (error) {
     return reportFailure(error, jsonRequested);
@@ -278,6 +333,285 @@ function globalOptions(context: HandlerContext): GlobalOptions {
     json: context.global(jsonArgument),
     quiet: context.global(quietArgument),
   };
+}
+
+async function installCron(
+  options: { 'dry-run': boolean; 'expression': string; },
+  globals: GlobalOptions,
+) {
+  const database = cronDatabasePath(globals.database);
+  const entry = createCronEntry(options.expression, database);
+  const previous = readCronEntry(database);
+  const status = options['dry-run'] ? 'preview' : previous ? 'updated' : 'installed';
+
+  if (!options['dry-run']) {
+    await registerCronEntry(entry, previous);
+  }
+
+  const result = { ...entry, next_run: nextCronRun(entry.expression), status };
+  if (globals.json) {
+    writeJson(result);
+  } else {
+    const action = status === 'preview'
+      ? 'Agendamento que seria instalado'
+      : status === 'updated'
+      ? 'Agendamento atualizado'
+      : 'Agendamento instalado';
+    console.log(`${action}: ${entry.expression}`);
+    console.log(`Próxima execução: ${formatDateTime(result.next_run ?? undefined)}`);
+    console.log(`Base: ${entry.database}`);
+    console.log(`Comando: ${entry.command}`);
+  }
+  return 0;
+}
+
+function showCronStatus(globals: GlobalOptions) {
+  const database = cronDatabasePath(globals.database);
+  const title = cronTitle(database);
+  const entry = readCronEntry(database);
+  const result = {
+    command: entry?.command ?? null,
+    database,
+    expression: entry?.expression ?? null,
+    id: title,
+    installed: entry !== null,
+    next_run: entry ? nextCronRun(entry.expression) : null,
+    package_version: entry?.package_version ?? null,
+    runner: entry?.runner ?? null,
+    title,
+  };
+
+  if (globals.json) {
+    writeJson(result);
+  } else if (entry) {
+    console.log(`Agendamento instalado: ${entry.expression}`);
+    console.log(`Próxima execução: ${formatDateTime(result.next_run ?? undefined)}`);
+    console.log(`Base: ${entry.database}`);
+    console.log(`Pacote: @konstit/dne@${entry.package_version}`);
+    console.log(`Comando: ${entry.command}`);
+  } else {
+    console.log(`Nenhum agendamento instalado para a base: ${database}`);
+  }
+  return 0;
+}
+
+async function removeCron(globals: GlobalOptions) {
+  const database = cronDatabasePath(globals.database);
+  const paths = cronEntryPaths(database);
+  const removed = pathExists(paths.metadata) || pathExists(paths.runner);
+  try {
+    await Bun.cron.remove(paths.title);
+  } catch (error) {
+    throw new UserError(
+      'cron-remove-failed',
+      `Não foi possível remover o agendamento: ${humanErrorMessage(error)}`,
+    );
+  }
+  rmSync(paths.metadata, { force: true });
+  rmSync(paths.runner, { force: true });
+
+  const output = { database, id: paths.title, removed, title: paths.title };
+  if (globals.json) {
+    writeJson(output);
+  } else if (removed) {
+    console.log(`Agendamento removido para a base: ${database}`);
+  } else {
+    console.log(`Nenhum agendamento instalado para a base: ${database}`);
+  }
+  return 0;
+}
+
+function createCronEntry(expression: string, database: string): CronEntry {
+  const bunx = Bun.which('bunx');
+  if (!bunx) {
+    throw new UserError(
+      'bunx-not-found',
+      'O executável bunx não foi encontrado. Instale o Bun antes de criar o agendamento.',
+    );
+  }
+  if (/[\r\n\0]/.test(expression) || /[\r\n\0]/.test(bunx)) {
+    throw new UserError(
+      'invalid-cron-value',
+      'A expressão cron e o caminho do bunx não podem conter quebras de linha ou bytes nulos.',
+      EXIT_INVALID_INPUT,
+    );
+  }
+
+  const paths = cronEntryPaths(database);
+  const bunxPath = resolve(bunx);
+  const packageSpec = `@konstit/dne@${VERSION}`;
+  return {
+    command: [
+      shellQuote(bunxPath),
+      shellQuote(packageSpec),
+      'build',
+      '--db',
+      shellQuote(database),
+      '--quiet',
+    ].join(' '),
+    database,
+    expression,
+    id: paths.title,
+    package_version: VERSION,
+    runner: paths.runner,
+    title: paths.title,
+  };
+}
+
+async function registerCronEntry(entry: CronEntry, previous: CronEntry | null) {
+  const paths = cronEntryPaths(entry.database);
+  mkdirSync(paths.directory, { mode: 0o700, recursive: true });
+  const previousRunner = readOptionalFile(paths.runner);
+  const previousMetadata = readOptionalFile(paths.metadata);
+  try {
+    writePrivateFile(paths.runner, createCronRunnerSource(entry));
+    await Bun.cron(paths.runner, entry.expression, entry.title);
+    writePrivateFile(paths.metadata, `${JSON.stringify(entry, null, 2)}\n`);
+  } catch (error) {
+    restoreOptionalFile(paths.runner, previousRunner);
+    restoreOptionalFile(paths.metadata, previousMetadata);
+    try {
+      if (previous) {
+        await Bun.cron(previous.runner, previous.expression, previous.title);
+      } else {
+        await Bun.cron.remove(entry.title);
+      }
+    } catch {
+      // Preserve the original registration error.
+    }
+    throw new UserError(
+      'cron-install-failed',
+      `Não foi possível instalar o agendamento: ${humanErrorMessage(error)}`,
+    );
+  }
+}
+
+function createCronRunnerSource(entry: CronEntry) {
+  const command = [
+    Bun.which('bunx'),
+    `@konstit/dne@${entry.package_version}`,
+    'build',
+    '--db',
+    entry.database,
+    '--quiet',
+  ];
+  if (command[0] === null) {
+    throw new UserError('bunx-not-found', 'O executável bunx não foi encontrado.');
+  }
+  return [
+    `const command = ${JSON.stringify(command)};`,
+    '',
+    'export default {',
+    '  async scheduled() {',
+    '    const child = Bun.spawn(command, { stderr: \'inherit\', stdout: \'ignore\' });',
+    '    const exitCode = await child.exited;',
+    '    if (exitCode !== 0) {',
+    '      throw new Error(\'@konstit/dne build failed with exit code \' + exitCode);',
+    '    }',
+    '  },',
+    '};',
+    '',
+  ].join('\n');
+}
+
+function cronDatabasePath(value: string) {
+  const database = databasePath(value);
+  if (database === ':memory:') {
+    throw new UserError(
+      'invalid-cron-database',
+      'O agendamento exige um caminho persistente para a base.',
+      EXIT_INVALID_INPUT,
+    );
+  }
+  if (/[\r\n\0]/.test(database)) {
+    throw new UserError(
+      'invalid-cron-database',
+      'O caminho da base não pode conter quebras de linha ou bytes nulos.',
+      EXIT_INVALID_INPUT,
+    );
+  }
+  return database;
+}
+
+function cronTitle(database: string) {
+  const hash = new Bun.CryptoHasher('sha256').update(database).digest('hex').slice(0, 32);
+  return `konstit-dne-${hash}`;
+}
+
+function cronEntryPaths(database: string) {
+  const title = cronTitle(database);
+  const stateHome = Bun.env['XDG_STATE_HOME']
+    ? resolve(Bun.env['XDG_STATE_HOME'])
+    : process.platform === 'darwin'
+    ? join(homedir(), 'Library', 'Application Support')
+    : join(homedir(), '.local', 'state');
+  const directory = join(stateHome, 'konstit-dne', 'cron');
+  return {
+    directory,
+    metadata: join(directory, `${title}.json`),
+    runner: join(directory, `${title}.mjs`),
+    title,
+  };
+}
+
+function readCronEntry(database: string): CronEntry | null {
+  const paths = cronEntryPaths(database);
+  if (!pathExists(paths.metadata) && !pathExists(paths.runner)) {
+    return null;
+  }
+  if (!pathExists(paths.metadata) || !pathExists(paths.runner)) {
+    throw new UserError(
+      'cron-config-invalid',
+      `A configuração do agendamento '${paths.title}' está incompleta.`,
+    );
+  }
+  try {
+    const value = JSON.parse(readFileSync(paths.metadata, 'utf8')) as Partial<CronEntry>;
+    if (
+      value.database !== database
+      || value.id !== paths.title
+      || value.title !== paths.title
+      || value.runner !== paths.runner
+      || typeof value.command !== 'string'
+      || typeof value.expression !== 'string'
+      || typeof value.package_version !== 'string'
+    ) {
+      throw new Error('invalid cron metadata');
+    }
+    Bun.cron.parse(value.expression);
+    return value as CronEntry;
+  } catch {
+    throw new UserError(
+      'cron-config-invalid',
+      `A configuração do agendamento '${paths.title}' é inválida.`,
+    );
+  }
+}
+
+function nextCronRun(expression: string) {
+  return Bun.cron.parse(expression)?.toISOString() ?? null;
+}
+
+function writePrivateFile(path: string, content: string) {
+  const temporary = `${path}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  try {
+    writeFileSync(temporary, content, { mode: 0o600 });
+    renameSync(temporary, path);
+  } finally {
+    rmSync(temporary, { force: true });
+  }
+}
+
+function readOptionalFile(path: string) {
+  return pathExists(path) ? readFileSync(path, 'utf8') : null;
+}
+
+function restoreOptionalFile(path: string, content: string | null) {
+  if (content === null) {
+    rmSync(path, { force: true });
+  } else {
+    writePrivateFile(path, content);
+  }
 }
 
 async function fetchDatabase(options: FetchOptions, globals: GlobalOptions) {
@@ -366,7 +700,7 @@ async function executeFetch(
 
   try {
     const source = await resolver.resolve(schema);
-    progress('Loading the SQLite database');
+    progress('Carregando a base SQLite');
     rowCount = await writer.loadFromSource(
       source,
       buildLoadMetadata(sourceInput, remoteInfo),
@@ -374,7 +708,7 @@ async function executeFetch(
     );
     writer.close();
     closed = true;
-    progress('Committing the database');
+    progress('Confirmando a base SQLite');
     if (shouldUpdateInPlace) {
       await replaceTargetFromScratch(target, scratch.path, schema);
     } else {
@@ -451,7 +785,7 @@ async function acquireFetchLock(target: string, progress: ProgressReporter) {
     if (performance.now() >= deadline) {
       throw new UserError(
         'update-in-progress',
-        `Another fetch is already updating database '${target}'.`,
+        `Outra execução de build já está atualizando a base '${target}'.`,
       );
     }
     await Bun.sleep(FETCH_LOCK_RETRY_MS);
@@ -628,12 +962,12 @@ function installFetchLockProcessHandlers(release: () => void) {
 
 async function lookupCep(options: LookupOptions, globals: GlobalOptions) {
   if (globals.json && options.jsonl) {
-    throw new UserError('output-conflict', '--json and --jsonl cannot be used together.', EXIT_INVALID_INPUT);
+    throw new UserError('output-conflict', '--json e --jsonl não podem ser usados juntos.', EXIT_INVALID_INPUT);
   }
 
   const inputs = await collectCepInputs(options.input, options.file);
   if (!inputs.length) {
-    throw new UserError('missing-input', 'Provide a CEP, --file PATH, or stdin input.', EXIT_INVALID_INPUT);
+    throw new UserError('missing-input', 'Informe um CEP, --file CAMINHO ou uma entrada em stdin.', EXIT_INVALID_INPUT);
   }
 
   const normalized = inputs.map((input) => ({ input, cep: normalizeCep(input) }));
@@ -696,7 +1030,7 @@ async function showSchema(options: { expected: boolean; }, globals: GlobalOption
     try {
       sql = reader.tableSchema(SQLITE_CEP_TABLE_NAME)
         ?? (() => {
-          throw new UserError('schema-not-found', `Table '${SQLITE_CEP_TABLE_NAME}' has no stored schema.`);
+          throw new UserError('schema-not-found', `A tabela '${SQLITE_CEP_TABLE_NAME}' não possui um esquema armazenado.`);
         })();
       sql = formatTableSql(sql);
       source = 'database';
@@ -733,7 +1067,7 @@ async function doctor(options: { offline: boolean; source: string; }, globals: G
     } catch (error) {
       source = {
         checked: true,
-        error: errorMessage(error),
+        error: humanErrorMessage(error),
         reachable: false,
         url: options.source,
       };
@@ -754,7 +1088,7 @@ async function doctor(options: { offline: boolean; source: string; }, globals: G
       name: 'bun',
       version: Bun.version,
     },
-    setup: inspection.ready ? null : `Run bunx @konstit/dne fetch --db ${shellQuote(inspection.path)}`,
+    setup: inspection.ready ? null : `Execute bunx @konstit/dne build --db ${shellQuote(inspection.path)}`,
     source,
     version: VERSION,
   };
@@ -771,7 +1105,7 @@ async function querySql(options: { limit: number; query: string; }, globals: Glo
   if (!/^\s*(?:SELECT|WITH|PRAGMA|EXPLAIN)\b/i.test(options.query)) {
     throw new UserError(
       'write-query-denied',
-      'The sql command permits SELECT, WITH, PRAGMA, and EXPLAIN statements only.',
+      'O comando sql permite somente instruções SELECT, WITH, PRAGMA e EXPLAIN.',
       EXIT_INVALID_INPUT,
     );
   }
@@ -812,7 +1146,7 @@ async function collectCepInputs(inputs: readonly string[], file: string | undefi
 
 async function readInputFile(path: string) {
   if (!(await Bun.file(path).exists())) {
-    throw new UserError('input-file-not-found', `CEP input file not found: ${path}`);
+    throw new UserError('input-file-not-found', `Arquivo de entrada com CEPs não encontrado: ${path}`);
   }
   return await Bun.file(path).text();
 }
@@ -829,7 +1163,7 @@ export function normalizeCep(value: string) {
   if (!CEP_PATTERN.test(trimmed)) {
     throw new UserError(
       'invalid-cep',
-      `Invalid CEP '${value}'. Use 01001000 or 01001-000.`,
+      `CEP inválido '${value}'. Use 01001000 ou 01001-000.`,
       EXIT_INVALID_INPUT,
       { input: value },
     );
@@ -839,21 +1173,21 @@ export function normalizeCep(value: string) {
 
 async function openReadyDatabase(path: string) {
   if (path === ':memory:' || !(await Bun.file(path).exists())) {
-    throw new UserError('database-not-found', `Database not found: ${path}`);
+    throw new UserError('database-not-found', `Base não encontrada: ${path}`);
   }
 
   let reader: DneDatabaseReader;
   try {
     reader = new DneDatabaseReader(path);
   } catch (error) {
-    throw new UserError('database-invalid', `Cannot open database '${path}': ${errorMessage(error)}`);
+    throw new UserError('database-invalid', `Não foi possível abrir a base '${path}': ${humanErrorMessage(error)}`);
   }
 
   if (!reader.hasTable(SQLITE_CEP_TABLE_NAME)) {
     reader.close();
     throw new UserError(
       'database-not-ready',
-      `Database '${path}' does not contain table '${SQLITE_CEP_TABLE_NAME}'. Run bunx @konstit/dne fetch first.`,
+      `A base '${path}' não contém a tabela '${SQLITE_CEP_TABLE_NAME}'. Execute bunx @konstit/dne build primeiro.`,
     );
   }
   return reader;
@@ -897,7 +1231,7 @@ async function inspectDatabase(path: string): Promise<DatabaseInspection> {
     }
   } catch (error) {
     return {
-      error: errorMessage(error),
+      error: humanErrorMessage(error),
       exists: true,
       metadata: null,
       path,
@@ -922,11 +1256,11 @@ function memoryDatabaseInspection(rowCount: number): DatabaseInspection {
 }
 
 async function inspectRemoteSource(source: string, progress: (message: string) => void) {
-  progress('Inspecting the remote DNE source');
+  progress('Inspecionando a fonte DNE remota');
   try {
     return await inspectRemoteDneSource(source);
   } catch (error) {
-    throw new UserError('source-unavailable', errorMessage(error));
+    throw new UserError('source-unavailable', humanErrorMessage(error));
   }
 }
 
@@ -951,7 +1285,7 @@ function createProgress(quiet: boolean) {
 
   const finish = () => {
     if (messageStartedAt !== null) {
-      process.stderr.write(` (${formatInteger(elapsedMilliseconds(messageStartedAt))}ms)\n`);
+      process.stderr.write(` (${formatDuration(elapsedMilliseconds(messageStartedAt))})\n`);
       messageStartedAt = null;
     }
   };
@@ -985,13 +1319,13 @@ function writeError(error: UserError, json: boolean) {
     }\n`);
     return;
   }
-  console.error(`error: ${error.message}`);
+  console.error(`erro: ${error.message}`);
 }
 
 function reportFailure(error: unknown, json: boolean) {
   const failure = error instanceof UserError
     ? error
-    : new UserError('internal-error', errorMessage(error));
+    : new UserError('internal-error', humanErrorMessage(error));
   writeError(failure, json);
   return failure.exitCode;
 }
@@ -1006,9 +1340,9 @@ function writeFetchCheck(result: {
     writeJson(result);
     return;
   }
-  console.log(`Status: ${result.status}`);
-  console.log(`Database: ${result.database.path}`);
-  console.log(`Source: ${stringValue(result.source['url'] ?? result.source['input'])}`);
+  console.log(`Estado: ${fetchStatusText(result.status)}`);
+  console.log(`Base: ${result.database.path}`);
+  console.log(`Fonte: ${stringValue(result.source['url'] ?? result.source['input'])}`);
   console.log(`Última modificação na fonte: ${formatDateTime(stringValue(result.source['last_modified']))}`);
 }
 
@@ -1022,36 +1356,39 @@ function writeFetchResult(result: {
     writeJson(result);
     return;
   }
-  const rows = result.database.row_count === null ? 'unknown rows' : `${formatInteger(result.database.row_count)} rows`;
-  const size = result.database.size_bytes === null ? 'unknown size' : formatBytes(result.database.size_bytes);
+  const rows = result.database.row_count === null
+    ? 'quantidade desconhecida de registros'
+    : `${formatInteger(result.database.row_count)} registros`;
+  const size = result.database.size_bytes === null ? 'tamanho desconhecido' : formatBytes(result.database.size_bytes);
   if (result.status === 'unchanged') {
     const records = result.database.row_count === null
       ? 'quantidade desconhecida de registros'
       : `${formatInteger(result.database.row_count)} registros`;
     console.log(`A base DNE já está atualizada: ${result.database.path} (${records}, ${size}).`);
     console.log(`Última modificação na fonte: ${formatDateTime(stringValue(result.source['last_modified']))}`);
-    console.log(`Verificação concluída em ${formatInteger(result.elapsed_ms)} ms.`);
+    console.log(`Verificação concluída em ${formatDuration(result.elapsed_ms)}.`);
     return;
   }
-  console.log(`${capitalize(result.status)} ${result.database.path}: ${rows}, ${size}, ${formatInteger(result.elapsed_ms)} ms.`);
+  const action = result.status === 'updated' ? 'Base atualizada' : 'Base criada';
+  console.log(`${action}: ${result.database.path} (${rows}, ${size}, ${formatDuration(result.elapsed_ms)}).`);
 }
 
 function writeLookupText(results: LookupResult[]) {
   if (results.length === 1) {
     const result = results[0];
     if (!result?.address) {
-      console.error(`CEP not found: ${result?.cep ?? ''}`);
+      console.error(`CEP não encontrado: ${result?.cep ?? ''}`);
       return;
     }
     console.log(result.address);
     return;
   }
 
-  console.log('cep\tfound\tlogradouro\tbairro\tmunicipio\tuf');
+  console.log('cep\tencontrado\tlogradouro\tbairro\tmunicípio\tuf');
   for (const result of results) {
     console.log([
       result.cep,
-      String(result.found),
+      formatBoolean(result.found),
       result.address?.logradouro ?? '',
       result.address?.bairro ?? '',
       result.address?.municipio ?? '',
@@ -1061,17 +1398,17 @@ function writeLookupText(results: LookupResult[]) {
 }
 
 function writeStatusText(inspection: DatabaseInspection) {
-  console.log(`Database: ${inspection.path}`);
-  console.log(`Exists: ${inspection.exists}`);
-  console.log(`Ready: ${inspection.ready}`);
-  console.log(`Rows: ${inspection.row_count === null ? '-' : formatInteger(inspection.row_count)}`);
-  console.log(`Size: ${inspection.size_bytes === null ? '-' : formatBytes(inspection.size_bytes)}`);
-  console.log(`Loaded at: ${formatDateTime(inspection.metadata?.['loaded_at'])}`);
-  console.log(`Package: @konstit/dne@${inspection.metadata?.['package_version'] ?? '-'}`);
-  console.log(`Source: ${inspection.metadata?.['source_url'] ?? inspection.metadata?.['source_input'] ?? '-'}`);
-  console.log(`Source Last-Modified: ${formatDateTime(inspection.metadata?.['source_last_modified'])}`);
+  console.log(`Base: ${inspection.path}`);
+  console.log(`Existe: ${formatBoolean(inspection.exists)}`);
+  console.log(`Pronta: ${formatBoolean(inspection.ready)}`);
+  console.log(`Registros: ${inspection.row_count === null ? '-' : formatInteger(inspection.row_count)}`);
+  console.log(`Tamanho: ${inspection.size_bytes === null ? '-' : formatBytes(inspection.size_bytes)}`);
+  console.log(`Carregada em: ${formatDateTime(inspection.metadata?.['loaded_at'])}`);
+  console.log(`Pacote: @konstit/dne@${inspection.metadata?.['package_version'] ?? '-'}`);
+  console.log(`Fonte: ${inspection.metadata?.['source_url'] ?? inspection.metadata?.['source_input'] ?? '-'}`);
+  console.log(`Última modificação da fonte: ${formatDateTime(inspection.metadata?.['source_last_modified'])}`);
   if (inspection.error) {
-    console.log(`Error: ${inspection.error}`);
+    console.log(`Erro: ${inspection.error}`);
   }
 }
 
@@ -1084,12 +1421,16 @@ function writeDoctorText(result: {
   version: string;
 }) {
   console.log(`CLI: dne ${result.version}`);
-  console.log(`Runtime: ${result.runtime.name} ${result.runtime.version} (${result.runtime.compatible ? 'compatible' : 'unsupported'})`);
-  console.log(`Database: ${result.database.ready ? 'ready' : 'setup required'} (${result.database.path})`);
-  console.log(`Source: ${result.source['reachable'] === null ? 'not checked' : result.source['reachable'] ? 'reachable' : 'unreachable'}`);
-  console.log(`Healthy: ${result.healthy}`);
+  console.log(
+    `Ambiente: ${result.runtime.name} ${result.runtime.version} (${result.runtime.compatible ? 'compatível' : 'não compatível'})`,
+  );
+  console.log(`Base: ${result.database.ready ? 'pronta' : 'configuração necessária'} (${result.database.path})`);
+  console.log(
+    `Fonte: ${result.source['reachable'] === null ? 'não verificada' : result.source['reachable'] ? 'acessível' : 'inacessível'}`,
+  );
+  console.log(`Saudável: ${formatBoolean(result.healthy)}`);
   if (result.setup) {
-    console.log(`Setup: ${result.setup}`);
+    console.log(`Configuração: ${result.setup}`);
   }
 }
 
@@ -1100,6 +1441,85 @@ function databasePath(value: string) {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function humanErrorMessage(error: unknown) {
+  return localizeRuntimeError(errorMessage(error));
+}
+
+function localizeRuntimeError(message: string) {
+  const exactMessages: Record<string, string> = {
+    'Failed to write downloaded content': 'Falha ao gravar o conteúdo baixado',
+    'Invalid ZIP central directory entry': 'Entrada inválida no diretório central do ZIP',
+    'Invalid ZIP central directory entry size': 'Tamanho inválido de entrada no diretório central do ZIP',
+    'Invalid ZIP central directory range': 'Intervalo inválido do diretório central do ZIP',
+    'Only sqlite:/// database URLs are supported': 'Somente URLs de base no formato sqlite:/// são aceitas',
+    'package.json has no valid version': 'package.json não contém uma versão válida',
+    'Source is not a valid ZIP file': 'A fonte não é um arquivo ZIP válido',
+    'Unified schema table not found': 'Tabela unificada não encontrada no schema',
+    'ZIP file does not contain DNE Basico files': 'O arquivo ZIP não contém arquivos do DNE Básico',
+  };
+  const exact = exactMessages[message];
+  if (exact) {
+    return exact;
+  }
+
+  return message
+    .replace(/^Failed to download (.+): (\d+)$/, 'Falha ao baixar $1: $2')
+    .replace(/^Failed to stream (.+): empty response body$/, 'Falha ao transmitir $1: corpo da resposta vazio')
+    .replace(/^Failed to inspect DNE from (.+): (\d+)$/, 'Falha ao inspecionar o DNE em $1: $2')
+    .replace(/^DNE source not found: (.+)$/, 'Fonte DNE não encontrada: $1')
+    .replace(/^DNE data file not found: (.+)$/, 'Arquivo de dados DNE não encontrado: $1')
+    .replace(/^Invalid ZIP local header for (.+)$/, 'Cabeçalho local ZIP inválido para $1')
+    .replace(/^Invalid ZIP data range for (.+)$/, 'Intervalo de dados ZIP inválido para $1')
+    .replace(/^Invalid decompressed size for (.+)$/, 'Tamanho descompactado inválido para $1')
+    .replace(/^Unsupported ZIP compression method (\d+) for (.+)$/, 'Método de compactação ZIP $1 não aceito para $2')
+    .replace(/^CRC32 mismatch for (.+)$/, 'CRC32 divergente para $1')
+    .replace(/^Server ignored byte range (.+)$/, 'O servidor ignorou o intervalo de bytes $1')
+    .replace(/^Server returned an invalid Content-Range for (.+)$/, 'O servidor retornou um Content-Range inválido para $1')
+    .replace(
+      /^Server returned (\d+) bytes for range (.+); expected (\d+)$/,
+      'O servidor retornou $1 bytes para o intervalo $2; eram esperados $3',
+    )
+    .replace(/^Missing row at index (\d+)$/, 'Registro ausente no índice $1')
+    .replace(/^Table with original name '(.+)' not found$/, 'Tabela com nome original \'$1\' não encontrada');
+}
+
+function localizeCliText(output: string) {
+  return output
+    .replaceAll('Usage:', 'Uso:')
+    .replaceAll('Arguments:', 'Argumentos:')
+    .replaceAll('Commands:', 'Comandos:')
+    .replaceAll('Options:', 'Opções:')
+    .replaceAll('Print help for a subcommand', 'Exibir ajuda de um subcomando')
+    .replaceAll('Print help', 'Exibir ajuda')
+    .replaceAll('Print version', 'Exibir versão')
+    .replaceAll('Enable or disable color output', 'Ativar ou desativar cores na saída')
+    .replaceAll('expected a schedulable Bun cron expression', 'esperada uma expressão cron válida')
+    .replaceAll('[env:', '[variável:')
+    .replaceAll('[default:', '[padrão:')
+    .replaceAll('For more information, try \'--help\'.', 'Para mais informações, use \'--help\'.')
+    .replaceAll('error:', 'erro:')
+    .replace(/invalid value (.+?) for (.+?): expected value matching (.+)/g, 'valor inválido $1 para $2: esperado valor compatível com $3')
+    .replace(
+      /invalid value (.+?) for (.+?): expected a number from (.+?) to (.+)/g,
+      'valor inválido $1 para $2: esperado número entre $3 e $4',
+    )
+    .replace(/invalid value (.+?) for (.+?): (.+)/g, 'valor inválido $1 para $2: $3')
+    .replace(/unexpected argument (.+)/g, 'argumento inesperado $1')
+    .replace(
+      /arguments (.+?) and (.+?) cannot be used together/g,
+      'os argumentos $1 e $2 não podem ser usados juntos',
+    )
+    .replace(
+      /argument (.+?) requires at least (\d+) value\(s\)/g,
+      'o argumento $1 exige pelo menos $2 valor(es)',
+    )
+    .replace(
+      /the following required arguments were not provided:/g,
+      'os seguintes argumentos obrigatórios não foram informados:',
+    )
+    .replace(/a similar argument exists:/g, 'existe um argumento semelhante:');
 }
 
 function isPathConflict(error: unknown) {
@@ -1139,7 +1559,7 @@ function firstErrorLine(output: string) {
     .split('\n')
     .map((line) => line.trim())
     .find(Boolean)
-    ?.replace(/^error:\s*/i, '') ?? 'Invalid command arguments.';
+    ?.replace(/^error:\s*/i, '') ?? 'Argumentos inválidos.';
 }
 
 function elapsedMilliseconds(startedAt: number) {
@@ -1162,6 +1582,28 @@ function formatDateTime(value: string | undefined) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString(DISPLAY_LOCALE);
 }
 
+export function formatDuration(milliseconds: number) {
+  const normalized = Math.max(0, Math.round(milliseconds));
+  if (normalized < 1_000) {
+    return `${formatInteger(normalized)} ms`;
+  }
+
+  const totalSeconds = Math.round(normalized / 1_000);
+  if (totalSeconds < 60) {
+    const seconds = Math.round(normalized / 100) / 10;
+    return `${DURATION_SECONDS_FORMAT.format(seconds)} s`;
+  }
+
+  const hours = Math.floor(totalSeconds / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const seconds = totalSeconds % 60;
+  return [
+    hours ? `${formatInteger(hours)} h` : '',
+    minutes ? `${formatInteger(minutes)} min` : '',
+    seconds ? `${formatInteger(seconds)} s` : '',
+  ].filter(Boolean).join(' ');
+}
+
 function formatBytes(bytes: number) {
   if (bytes < 1024) {
     return `${formatInteger(bytes)} B`;
@@ -1172,8 +1614,17 @@ function formatBytes(bytes: number) {
   return `${formatDecimal(bytes / (1024 * 1024))} MiB`;
 }
 
-function capitalize(value: string) {
-  return value.length ? `${value[0]?.toUpperCase()}${value.slice(1)}` : value;
+function formatBoolean(value: boolean) {
+  return value ? 'sim' : 'não';
+}
+
+function fetchStatusText(status: string) {
+  const statuses: Record<string, string> = {
+    'current': 'atualizada',
+    'unknown': 'desconhecido',
+    'update-available': 'atualização disponível',
+  };
+  return statuses[status] ?? status;
 }
 
 function shellQuote(value: string) {

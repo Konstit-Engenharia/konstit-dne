@@ -15,7 +15,7 @@ const fixtureSeconds = timed('bun', ['run', 'bench/create-dne.bench.ts', dneDir,
 const bun = timed('bun', [
   'run',
   'src/index.ts',
-  'fetch',
+  'build',
   bunDb,
   '--source',
   dneDir,

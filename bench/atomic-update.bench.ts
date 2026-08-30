@@ -73,7 +73,7 @@ try {
 }
 
 function loadDatabase(databasePath: string, sourceDir: string) {
-  runCommand('bun', ['run', 'src/index.ts', 'fetch', '--db', databasePath, '--source', sourceDir]);
+  runCommand('bun', ['run', 'src/index.ts', 'build', '--db', databasePath, '--source', sourceDir]);
 }
 
 function atomicReplaceFromScratch(targetPath: string, scratchPath: string) {

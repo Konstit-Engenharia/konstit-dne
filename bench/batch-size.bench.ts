@@ -55,7 +55,7 @@ for (const size of sizes) {
   const db = `/tmp/edne-batch-size-${size}.db`;
   rmSync(db, { force: true });
   const start = performance.now();
-  const result = spawnSync('bun', ['run', 'src/index.ts', 'fetch', '--db', db], {
+  const result = spawnSync('bun', ['run', 'src/index.ts', 'build', '--db', db], {
     cwd: process.cwd(),
     env: { ...process.env, EDNE_INSERT_BATCH_SIZE: String(size) },
     stdio: 'pipe',

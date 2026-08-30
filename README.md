@@ -23,8 +23,8 @@ Este pacote fornece somente uma CLI. Ele não expõe uma API pública de bibliot
 ## Início rápido
 
 ```sh
-bunx @konstit/dne fetch --db ./dne.db
-bunx @konstit/dne lookup 01001-000 --db ./dne.db
+bunx @konstit/dne build --db ./dne.db
+bunx @konstit/dne get 01001-000 --db ./dne.db
 ```
 
 ## Execução
@@ -36,28 +36,29 @@ bunx @konstit/dne --version
 bunx @konstit/dne --json doctor --offline
 ```
 
+Os nomes de comandos, subcomandos, opções e flags permanecem em inglês. A ajuda, o progresso, os resultados textuais e as mensagens de erro são exibidos em português. O contrato JSON mantém chaves, códigos e valores de estado estáveis em inglês.
+
 `--db` é uma opção global. Ela pode aparecer antes ou depois de um subcomando. O caminho da base segue esta ordem de precedência:
 
 1. `--db PATH`
-2. `DNE_DB`
-3. `./dne.db`
+2. `./dne.db`
 
 Use `--color` para forçar cores e `--no-color` para desativá-las. Sem essas opções, a CLI detecta o terminal. A presença da variável `NO_COLOR` sempre desativa as cores.
 
-## Baixar e atualizar
+## Criar e atualizar
 
 ```sh
-bunx @konstit/dne fetch --db ./dne.db
-bunx @konstit/dne fetch --db ./dne.db --source ./eDNE_Basico.zip
-bunx @konstit/dne fetch --db ./dne.db --source ./Delimitado
-bunx @konstit/dne fetch --db ./dne.db --source https://example.com/eDNE_Basico.zip
-bunx @konstit/dne fetch --db ./dne.db --force
-bunx @konstit/dne fetch --db ./dne.db --check --json
+bunx @konstit/dne build --db ./dne.db
+bunx @konstit/dne build --db ./dne.db --source ./eDNE_Basico.zip
+bunx @konstit/dne build --db ./dne.db --source ./Delimitado
+bunx @konstit/dne build --db ./dne.db --source https://example.com/eDNE_Basico.zip
+bunx @konstit/dne build --db ./dne.db --force
+bunx @konstit/dne build --db ./dne.db --check --json
 ```
 
-`fetch` grava cada etapa e sua duração em milissegundos em stderr. O resultado final é gravado em stdout. Use `--quiet` para ocultar o progresso. Use `--json` para receber o caminho da base, a quantidade de registros, o tamanho em bytes, os metadados da fonte, o tempo total e o estado da atualização.
+`build` grava cada etapa e sua duração em formato compacto (`ms`, `s`, `min` ou `h`) em stderr. O resultado final é gravado em stdout. Use `--quiet` para ocultar o progresso. Use `--json` para receber o caminho da base, a quantidade de registros, o tamanho em bytes, os metadados da fonte, o tempo total em `elapsed_ms` e o estado da atualização.
 
-Cada carga grava a versão do `@konstit/dne` em `edne_metadata`. Ao usar uma fonte remota, a CLI também grava `Last-Modified`, ETag, tamanho do conteúdo, URL da fonte e horário da carga. Uma execução posterior de `fetch` não recria a base se a fonte não mudou e mostra o `Last-Modified` remoto na saída textual. `--check` verifica se há uma atualização sem alterar a base e também mostra o `Last-Modified` remoto. `--force` ignora os metadados e recria a base.
+Cada carga grava a versão do `@konstit/dne` em `edne_metadata`. Ao usar uma fonte remota, a CLI também grava `Last-Modified`, ETag, tamanho do conteúdo, URL da fonte e horário da carga. Uma execução posterior de `build` não recria a base se a fonte não mudou e mostra o `Last-Modified` remoto na saída textual. `--check` verifica se há uma atualização sem alterar a base e também mostra o `Last-Modified` remoto. `--force` ignora os metadados e recria a base.
 
 Uma fonte HTTP ou HTTPS deve aceitar `HEAD`. A CLI usa essa requisição para obter o tamanho do arquivo e os metadados de atualização antes de baixar o ZIP.
 
@@ -65,7 +66,7 @@ As entradas do ZIP são verificadas com seus valores CRC32 durante a leitura. Se
 
 ## Acesso simultâneo
 
-Cada execução de `fetch` que pode alterar a base adquire um lock exclusivo antes de verificar a fonte. Outra instância do `@konstit/dne` aguarda por até 30 segundos, então verifica novamente os metadados e evita uma carga duplicada se a primeira instância já atualizou a base. `fetch --check` não adquire esse lock.
+Cada execução de `build` que pode alterar a base adquire um lock exclusivo antes de verificar a fonte. Outra instância do `@konstit/dne` aguarda por até 30 segundos, então verifica novamente os metadados e evita uma carga duplicada se a primeira instância já atualizou a base. `build --check` não adquire esse lock.
 
 O lock fica no diretório temporário do sistema, dentro de `konstit-dne-<uid>`. Seu nome contém um hash do caminho absoluto da base, evitando conflitos entre bases com o mesmo nome. Ele é removido quando a execução termina e também ao receber `SIGHUP`, `SIGINT` ou `SIGTERM`. Se o processo for encerrado sem executar essa limpeza, a próxima execução identifica o PID inativo e remove o lock antes de continuar. Processos que coordenam a mesma base devem usar o mesmo host e usuário do sistema.
 
@@ -75,26 +76,47 @@ Um leitor com uma transação ativa continua vendo a versão anterior até o fim
 
 O SQLite permite um escritor por vez. Se outro processo mantiver uma transação de escrita, a atualização aguarda por até 30 segundos. Depois desse período, ela falha se o bloqueio continuar ativo.
 
+## Atualização automática
+
+Instale uma atualização semanal para a base:
+
+```sh
+bunx @konstit/dne cron install --db ./dne.db
+```
+
+O padrão `0 0 * * 5` executa à meia-noite de sexta-feira, no fuso local do cron. Informe outra expressão como argumento quando necessário:
+
+```sh
+bunx @konstit/dne cron install '30 6 * * 5' --db ./dne.db
+bunx @konstit/dne cron install '@weekly' --db ./dne.db --dry-run
+bunx @konstit/dne cron status --db ./dne.db --json
+bunx @konstit/dne cron remove --db ./dne.db
+```
+
+`cron install` usa `Bun.cron` para registrar o job no agendador do sistema operacional: `crontab` no Linux e `launchd` no macOS. O título contém um hash do caminho absoluto da base. Uma nova instalação para a mesma base substitui o job existente, enquanto bases diferentes mantêm agendamentos independentes. `cron remove` usa `Bun.cron.remove`.
+
+Cada job recebe um módulo persistente e metadados no diretório de estado do usuário. O módulo executa os caminhos absolutos do `bunx` e da base. A versão atual do `@konstit/dne` fica fixada no comando. Execute `cron install` novamente depois de atualizar o pacote para usar a nova versão. A execução usa `--quiet`, descarta a saída normal e mantém erros em stderr para o agendador do sistema. `cron status` também calcula a próxima execução com `Bun.cron.parse`.
+
 ## Consultar CEPs
 
 Consulta individual:
 
 ```sh
-bunx @konstit/dne lookup 01001000
-bunx @konstit/dne lookup 01001-000 --json
+bunx @konstit/dne get 01001000
+bunx @konstit/dne get 01001-000 --json
 ```
 
 Consulta em lote:
 
 ```sh
-bunx @konstit/dne lookup 01001000 20040002 --json
-bunx @konstit/dne lookup --file ./ceps.txt --jsonl
-printf '01001000\n20040002\n' | bunx @konstit/dne lookup --jsonl
+bunx @konstit/dne get 01001000 20040002 --json
+bunx @konstit/dne get --file ./ceps.txt --jsonl
+printf '01001000\n20040002\n' | bunx @konstit/dne get --jsonl
 ```
 
 Os formatos aceitos são `01001000` e `01001-000`. A entrada por arquivo ou stdin pode usar espaços, vírgulas ou pontos e vírgulas como separadores.
 
-`lookup` abre o SQLite em modo somente leitura. Se o caminho da base não existir, nenhum arquivo será criado. O formato JSONL grava um resultado completo por linha e é adequado para lotes grandes.
+`get` abre o SQLite em modo somente leitura. Se o caminho da base não existir, nenhum arquivo será criado. O formato JSONL grava um resultado completo por linha e é adequado para lotes grandes.
 
 ## Inspecionar a base
 
@@ -135,7 +157,7 @@ Erros de execução e de argumentos usam este formato em stderr:
   "ok": false,
   "error": {
     "code": "invalid-cep",
-    "message": "Invalid CEP 'x'. Use 01001000 or 01001-000."
+    "message": "CEP inválido 'x'. Use 01001000 ou 01001-000."
   }
 }
 ```

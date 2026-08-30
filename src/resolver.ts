@@ -69,17 +69,17 @@ export class DneResolver {
     }
 
     if (await Bun.file(path).exists()) {
-      this.progress('Preparing ZIP source');
+      this.progress('Preparando a fonte ZIP');
       const nestedZipPath = join(await this.getTempDir(), 'edne-inner.zip');
       const resolved = await resolveZipDneSource(path, schema, nestedZipPath);
-      this.progress('ZIP source is ready');
+      this.progress('Fonte ZIP pronta');
       return resolved;
     }
 
-    this.progress('Reading directory source');
+    this.progress('Lendo a fonte do diretório');
     const directorySource = resolveDirectoryDneSource(path, schema);
     if (directorySource) {
-      this.progress('Directory source is ready');
+      this.progress('Fonte do diretório pronta');
       return directorySource;
     }
 
@@ -91,7 +91,7 @@ export class DneResolver {
     const tempDir = await this.getTempDir();
     const path = join(tempDir, 'edne-download.zip');
 
-    this.progress('Downloading the DNE archive');
+    this.progress('Baixando o arquivo DNE');
     await downloadRemoteFile(url, path, info);
     return path;
   }

@@ -29,7 +29,7 @@ export function createNestedZipFixture(directory: string, rows: number) {
 }
 
 export function fetchDatabase(databasePath: string, sourcePath: string) {
-  run('bun', ['run', 'src/index.ts', 'fetch', '--db', databasePath, '--source', sourcePath]);
+  run('bun', ['run', 'src/index.ts', 'build', '--db', databasePath, '--source', sourcePath]);
 }
 
 export function rowCount(db: Database) {

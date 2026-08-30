@@ -33,8 +33,8 @@
     "LICENSE"
   ],
   "scripts": {
-    "fetch": "bun run src/index.ts fetch",
-    "lookup": "bun run src/index.ts lookup",
+    "build:database": "bun run src/index.ts build",
+    "get": "bun run src/index.ts get",
     "test": "bun test --dots --parallel",
     "benchmark": "bun run bench/benchmark.ts",
     "benchmark:download": "bun run bench/download.bench.ts",
