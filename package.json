@@ -24,15 +24,17 @@
   ],
   "type": "module",
   "bin": {
-    "dne": "src/index.ts"
+    "dne": "./dist/index.js"
   },
   "files": [
-    "src"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "fetch": "bun run src/index.ts fetch",
     "lookup": "bun run src/index.ts lookup",
-    "test": "bun test --dots",
+    "test": "bun test --dots --parallel",
     "benchmark": "bun run bench/benchmark.ts",
     "benchmark:download": "bun run bench/download.bench.ts",
     "benchmark:micro": "bun run bench/micro.bench.ts",
@@ -44,7 +46,14 @@
     "lint:biome": "bunx --bun @biomejs/biome check",
     "lint:oxlint": "bunx --bun oxlint --type-aware",
     "lint": "bun run --parallel tsc lint:biome lint:oxlint",
-    "fmt": "bunx --bun dprint fmt"
+    "fmt": "bunx --bun dprint fmt",
+    "coverage": "bun test --dots --coverage",
+    "audit": "bun audit",
+    "check": "bun run coverage && bun run --parallel tsc lint:biome lint:oxlint build audit",
+    "build": "bun run build:artifacts",
+    "build:artifacts": "bun run build:clean && bun run --parallel build:js",
+    "build:clean": "rm -rf ./dist",
+    "build:js": "bun build ./src/index.ts --outdir ./dist --target=bun --format=esm --sourcemap=external --minify --keep-names --splitting --chunk-naming 'chunks/[name]-[hash].[ext]'"
   },
   "dependencies": {
     "@konstit/cli": "0.0.4"
