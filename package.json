@@ -2,6 +2,26 @@
   "name": "@konstit/dne",
   "version": "0.0.1",
   "description": "Build and query a local SQLite database of Brazilian postal codes.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Konstit-Engenharia/konstit-dne.git"
+  },
+  "author": {
+    "name": "KONSTIT ENGENHARIA E TECNOLOGIA LTDA",
+    "email": "opensource@konstit.com.br"
+  },
+  "contributors": [
+    {
+      "name": "Diego Alcântara",
+      "url": "https://github.com/dgoalcantara",
+      "email": "diego.alcantara@konstit.com.br"
+    },
+    {
+      "name": "Marcelo Marchioro",
+      "url": "https://github.com/Sprayscelo",
+      "email": "marcelo.marchioro@konstit.com.br"
+    }
+  ],
   "type": "module",
   "bin": {
     "dne": "src/index.ts"
@@ -27,7 +47,7 @@
     "fmt": "bunx --bun dprint fmt"
   },
   "dependencies": {
-    "@konstit/cli": "0.0.1"
+    "@konstit/cli": "0.0.4"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.9",
@@ -40,9 +60,6 @@
   },
   "engines": {
     "bun": "^1.4.0"
-  },
-  "publishConfig": {
-    "registry": "https://npm.konstit.com.br"
   },
   "packageManager": "bun@1.4.0"
 }
