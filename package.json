@@ -1,7 +1,7 @@
 {
   "name": "@konstit/dne",
   "version": "0.0.1",
-  "description": "Build and query a local SQLite database of Brazilian postal codes.",
+  "description": "Build, update and query a local SQLite database of Brazilian postal codes.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Konstit-Engenharia/konstit-dne.git"
@@ -22,6 +22,7 @@
       "email": "marcelo.marchioro@konstit.com.br"
     }
   ],
+  "license": "MIT",
   "type": "module",
   "bin": {
     "dne": "./dist/index.js"

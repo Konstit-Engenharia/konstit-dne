@@ -5,7 +5,7 @@
     "": {
       "name": "edne",
       "dependencies": {
-        "@konstit/cli": "0.0.1",
+        "@konstit/cli": "0.0.4",
       },
       "devDependencies": {
         "@biomejs/biome": "2.5.9",
@@ -67,7 +67,7 @@
 
     "@dprint/win32-x64": ["@dprint/win32-x64@0.56.0", "", { "os": "win32", "cpu": "x64" }, "sha512-goIeNrok/Fev/ae4OFdt7beuT6v1/myr8SzlSL7352tK0ldCsNzCGMyZzM3VT88jNf7f87bBsLgLkSXeiGXurQ=="],
 
-    "@konstit/cli": ["@konstit/cli@0.0.1", "https://npm.konstit.com.br/@konstit/cli/-/cli-0.0.1.tgz", { "peerDependencies": { "typescript": ">=5.5" } }, "sha512-PE80EHLhYFH7zbFlZIyNDwYlIsmYiAKk6hBCGk5hUGDGvApUawRuBQU3+3lS+vNNV/2/XievBPNbTA7twiQG7g=="],
+    "@konstit/cli": ["@konstit/cli@0.0.4", "", { "peerDependencies": { "typescript": ">=5.5" } }, "sha512-XxJnx0Vszi1X8aIOv0YyueGD1ojmZIMBT6q4c0FGiubMrdVw6/15JlwaIGKirExoG1Yh3LjYYA/8e3IiM1JRvQ=="],
 
     "@oxlint-tsgolint/darwin-arm64": ["@oxlint-tsgolint/darwin-arm64@7.0.2001", "", { "os": "darwin", "cpu": "arm64" }, "sha512-CUJEdbSZ54+Xy9OXqOhWLTKZKV0BBiV7C2i/ygyVmXtkUNXx5YCzN8DpSSshTAKktoL7S+tnQ/ftFG/i7X896w=="],
 
