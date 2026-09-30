@@ -38,10 +38,12 @@ import {
   type DatabaseInspection,
 } from './database-service.ts';
 import {
+  cepViewName,
+  createCepViewSql,
   createPrettyTableSql,
   DneDatabaseWriter,
   DneSourceQualityError,
-  prepareTableForLoad,
+  prepareDatabaseForLoad,
   quoteIdent,
   type DneRow,
 } from './db.ts';
@@ -54,6 +56,7 @@ import {
 } from './resolver.ts';
 import {
   buildSchema,
+  getStoredTables,
   getUnifiedTable,
 } from './schema.ts';
 import {
@@ -487,6 +490,10 @@ async function executeFetch(
       buildLoadMetadata(sourceInput, remoteInfo, VERSION),
       progress,
     );
+    if (options.format === 'sqlite' && target !== ':memory:') {
+      progress('Compactando a base SQLite');
+      writer.compact();
+    }
     writer.close();
     closed = true;
     let outputPath = scratch.path;
@@ -602,7 +609,8 @@ async function showSchema(options: { expected: boolean; }, globals: GlobalOption
 
   let database: string | null = null;
   let source: 'binary' | 'database' | 'declared' = 'declared';
-  let sql = createPrettyTableSql(cepTable);
+  const storedTables = getStoredTables(schema);
+  let sql = `${[...storedTables.map(createPrettyTableSql), createCepViewSql(cepTable.name)].join(';\n\n')};`;
 
   if (!options.expected) {
     database = databasePath(globals.database);
@@ -611,9 +619,17 @@ async function showSchema(options: { expected: boolean; }, globals: GlobalOption
       if (!('tableSchema' in reader)) {
         source = 'binary';
       } else {
-        const storedSchema = reader.tableSchema(SQLITE_CEP_TABLE_NAME);
-        if (storedSchema) {
-          sql = formatTableSql(storedSchema);
+        const statements = storedTables.map((table) => reader.tableSchema(table.name))
+          .filter((value): value is string => value !== null).map(formatTableSql);
+        const view = reader.querySql(
+          `SELECT sql FROM sqlite_master WHERE type = 'view' AND name = ${quoteLiteral(cepViewName(cepTable.name))}`,
+          1,
+        ).rows[0]?.['sql'];
+        if (typeof view === 'string') {
+          statements.push(view);
+        }
+        if (statements.length) {
+          sql = `${statements.join(';\n\n')};`;
           source = 'database';
         }
       }
@@ -1093,9 +1109,7 @@ async function replaceTargetFromScratch(
   scratchPath: string,
   schema: ReturnType<typeof buildDneSchema>,
 ) {
-  const cepTable = getUnifiedTable(schema);
-
-  const columns = cepTable.columns.map((column) => quoteIdent(column.name)).join(', ');
+  const storedTables = getStoredTables(schema);
   const attachPath = `${scratchPath}.attach`;
   await rm(attachPath, { force: true });
   await copyFile(scratchPath, attachPath);
@@ -1105,22 +1119,24 @@ async function replaceTargetFromScratch(
     db.run('PRAGMA busy_timeout = 30000');
     db.run('PRAGMA journal_mode = WAL');
     db.run('PRAGMA synchronous = NORMAL');
+    db.run('PRAGMA foreign_keys = ON');
     db.run(`ATTACH DATABASE ${quoteLiteral(attachPath)} AS fresh`);
     db.run('BEGIN IMMEDIATE');
     try {
-      prepareTableForLoad(db, cepTable);
+      prepareDatabaseForLoad(db, schema);
       db.run(`
         CREATE TABLE IF NOT EXISTS ${quoteIdent(SQLITE_METADATA_TABLE_NAME)} (
           key TEXT PRIMARY KEY NOT NULL,
           value TEXT NOT NULL
         )
       `);
-      db.run(`DELETE FROM main.${quoteIdent(SQLITE_CEP_TABLE_NAME)}`);
-      db.run(`
-        INSERT INTO main.${quoteIdent(SQLITE_CEP_TABLE_NAME)} (${columns})
-        SELECT ${columns}
-        FROM fresh.${quoteIdent(SQLITE_CEP_TABLE_NAME)}
-      `);
+      for (const table of storedTables) {
+        const columns = table.columns.map((column) => quoteIdent(column.name)).join(', ');
+        db.run(`
+          INSERT INTO main.${quoteIdent(table.name)} (${columns})
+          SELECT ${columns} FROM fresh.${quoteIdent(table.name)}
+        `);
+      }
       db.run(`DELETE FROM main.${quoteIdent(SQLITE_METADATA_TABLE_NAME)}`);
       db.run(`
         INSERT INTO main.${quoteIdent(SQLITE_METADATA_TABLE_NAME)} (key, value)

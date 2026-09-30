@@ -5,6 +5,10 @@ export const BINARY_NAME = 'dne';
 export const SQLITE_FILE_NAME = 'dne.db';
 /** Default physical table name for unified CEP rows. */
 export const SQLITE_CEP_TABLE_NAME = 'dne';
+/** Table storing neighborhoods under their original DNE identifiers. */
+export const SQLITE_BAIRROS_TABLE_NAME = 'bairros';
+/** Table storing the distinct CEP intervals assigned to each neighborhood. */
+export const SQLITE_BAIRRO_FAIXAS_TABLE_NAME = 'bairro_faixas';
 /** Table storing string-valued import provenance and quality metadata. */
 export const SQLITE_METADATA_TABLE_NAME = 'edne_metadata';
 /** SQLite database page size in bytes for generated files. */

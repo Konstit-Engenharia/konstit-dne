@@ -1,5 +1,5 @@
 /** Logical schema revision recorded in load metadata to invalidate outdated imports. */
-export const DATABASE_SCHEMA_VERSION = '3';
+export const DATABASE_SCHEMA_VERSION = '4';
 /** DNE locality codes in the order used by the binary format: municipality, district, village. */
 export const LOCALIDADE_TIPOS = ['M', 'D', 'P'] as const;
 /** Original `LOC_IN_TIPO_LOC` code: municipality (`M`), district (`D`), or village (`P`). */
@@ -21,6 +21,8 @@ export type ColumnDefinition = {
   primaryKey?: boolean;
   /** Rejects SQL NULL values when enabled. */
   notNull?: boolean;
+  /** Optional foreign key, using a physical table name and its referenced column. */
+  references?: { table: string; column: string; };
 };
 
 /** Describes a DNE source file or the generated unified SQLite table. */
@@ -37,6 +39,8 @@ export type TableDefinition = {
   sourceFields?: Readonly<Record<string, number>>;
   /** Marks the generated CEP table, which has no corresponding source file. */
   unifiedTable?: boolean;
+  /** Stores a table directly in its primary-key B-tree without a separate rowid. */
+  withoutRowid?: boolean;
 };
 
 /** Maps stable logical table names to caller-selected physical table names. */
@@ -66,7 +70,14 @@ const baseTables: TableDefinition[] = [
       uf: 1,
       locNu: 2,
       bairro: 3,
+      abreviado: 4,
     },
+    columns: [],
+  },
+  {
+    name: 'log_faixa_bairro',
+    originalName: 'log_faixa_bairro',
+    sourceFields: { baiNu: 0, cepInicial: 1, cepFinal: 2 },
     columns: [],
   },
   {
@@ -123,6 +134,39 @@ const baseTables: TableDefinition[] = [
     columns: [],
   },
   {
+    name: 'bairros',
+    originalName: 'bairros',
+    fileGlob: null,
+    columns: [
+      { name: 'bairro_id', type: 'INTEGER', primaryKey: true, check: 'bairro_id > 0' },
+      { name: 'localidade_id', type: 'INTEGER', notNull: true, check: 'localidade_id > 0' },
+      { name: 'uf', type: 'TEXT', notNull: true },
+      { name: 'nome', type: 'TEXT', notNull: true },
+      { name: 'nome_abreviado', type: 'TEXT' },
+    ],
+  },
+  {
+    name: 'bairro_faixas',
+    originalName: 'bairro_faixas',
+    fileGlob: null,
+    withoutRowid: true,
+    columns: [
+      { name: 'bairro_id', type: 'INTEGER', primaryKey: true, references: { table: 'bairros', column: 'bairro_id' } },
+      {
+        name: 'cep_inicial',
+        type: 'TEXT',
+        primaryKey: true,
+        check: 'length(cep_inicial) = 8 AND cep_inicial NOT GLOB \'*[^0-9]*\'',
+      },
+      {
+        name: 'cep_final',
+        type: 'TEXT',
+        primaryKey: true,
+        check: 'length(cep_final) = 8 AND cep_final NOT GLOB \'*[^0-9]*\' AND cep_inicial <= cep_final',
+      },
+    ],
+  },
+  {
     name: 'cep_unificado',
     originalName: 'cep_unificado',
     fileGlob: null,
@@ -136,7 +180,13 @@ const baseTables: TableDefinition[] = [
       },
       { name: 'logradouro', type: 'TEXT' },
       { name: 'complemento', type: 'TEXT' },
-      { name: 'bairro', type: 'TEXT' },
+      { name: 'bairro_id', type: 'INTEGER', references: { table: 'bairros', column: 'bairro_id' } },
+      {
+        name: 'localidade_nome',
+        type: 'TEXT',
+        comment: 'Original district or village name for a locality-wide CEP.',
+        check: 'localidade_nome IS NULL OR (bairro_id IS NULL AND localidade_tipo IN (\'D\', \'P\'))',
+      },
       { name: 'municipio', type: 'TEXT', notNull: true },
       { name: 'municipio_cod_ibge', type: 'INTEGER', notNull: true },
       { name: 'uf', type: 'TEXT', notNull: true },
@@ -156,7 +206,12 @@ export function buildSchema(tableNames: TableNameMap = {}): TableDefinition[] {
   return baseTables.map((table) => ({
     ...table,
     name: tableNames[table.originalName] ?? table.name,
-    columns: table.columns.map((column) => ({ ...column })),
+    columns: table.columns.map((column) => ({
+      ...column,
+      ...(column.references
+        ? { references: { ...column.references, table: tableNames[column.references.table] ?? column.references.table } }
+        : {}),
+    })),
     sourceFields: table.sourceFields ? { ...table.sourceFields } : undefined,
   }));
 }
@@ -176,12 +231,21 @@ export function getUnifiedTable(schema: readonly TableDefinition[]): TableDefini
 }
 
 /**
+ * Lists persisted tables in parent-before-child creation and insertion order.
+ * @param schema - Source and output table definitions returned by `buildSchema`.
+ * @returns Definitions with output columns; source-only definitions are excluded.
+ */
+export function getStoredTables(schema: readonly TableDefinition[]): TableDefinition[] {
+  return schema.filter((table) => table.columns.length > 0);
+}
+
+/**
  * Resolves the source filename pattern for a table.
  * @param table - Source or output table definition.
  * @returns The explicit or derived uppercase TXT pattern, or null for a generated table.
  */
 export function getTableFilesGlob(table: TableDefinition): string | null {
-  if (table.unifiedTable) {
+  if (table.unifiedTable || table.fileGlob === null) {
     return null;
   }
   return table.fileGlob ?? `${table.originalName.toUpperCase()}.TXT`;

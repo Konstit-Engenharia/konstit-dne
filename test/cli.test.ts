@@ -457,7 +457,7 @@ describe('CLI contract', () => {
       expect(unchanged.status).toBe(0);
       expect(unchanged.stderr).toMatch(/Aguardando outra atualização da base \(\d+ ms\)/);
       expect(unchanged.stdout).toContain('A base DNE já está atualizada:');
-      expect(unchanged.stdout).toContain('24 registros, 128,0 KiB');
+      expect(unchanged.stdout).toMatch(/24 registros, \d+,\d KiB/);
       expect(unchanged.stdout).toMatch(/Última modificação na fonte: 30\/08\/2026, \d{2}:00:00/);
       expect(unchanged.stdout).toMatch(/Verificação concluída em \d+ ms\./);
       expect(unchanged.stdout).not.toContain('Unchanged');

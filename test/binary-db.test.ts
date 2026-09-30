@@ -128,7 +128,7 @@ describe('binary database', () => {
     }
   });
 
-  test('rejects older binary versions and corrupt locality indicators', async () => {
+  test('rejects unsupported binary versions and corrupt locality indicators', async () => {
     const sourcePath = join(workDir, 'invalid-localities');
     const sqlitePath = join(workDir, 'invalid-localities.db');
     const binaryPath = join(workDir, 'invalid-localities.bin');
@@ -242,7 +242,7 @@ function expectAllRowsMatch(reader: DneBinaryDatabaseReader, sqlitePath: string)
   try {
     const rows = sqlite.query(`
       SELECT cep, logradouro, complemento, bairro, municipio, municipio_cod_ibge, uf, nome, localidade_situacao, localidade_tipo
-      FROM dne
+      FROM dne_consulta
       ORDER BY cep
     `).all() as DneRow[];
     for (const row of rows) {

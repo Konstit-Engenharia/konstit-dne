@@ -57,9 +57,9 @@ describe('loader', () => {
       const tables = db
         .query('SELECT name FROM sqlite_master WHERE type = \'table\' AND name NOT LIKE \'sqlite_%\' ORDER BY name')
         .all() as { name: string; }[];
-      expect(tables.map((row) => row.name)).toEqual([SQLITE_CEP_TABLE_NAME, 'edne_metadata'].sort());
+      expect(tables.map((row) => row.name)).toEqual([SQLITE_CEP_TABLE_NAME, 'bairros', 'bairro_faixas', 'edne_metadata'].sort());
 
-      const cep = db.query(`SELECT * FROM ${SQLITE_CEP_TABLE_NAME} WHERE cep = ?`).get('30000001');
+      const cep = db.query(`SELECT * FROM ${SQLITE_CEP_TABLE_NAME}_consulta WHERE cep = ?`).get('30000001');
       expect(cep).toEqual({
         cep: '30000001',
         logradouro: 'Rua Endereco 1',
@@ -84,7 +84,7 @@ describe('loader', () => {
         version: 1,
         status: 'passed',
         output_rows: 47,
-        totals: { read: 127, accepted: 127, rejected: 0 },
+        totals: { read: 128, accepted: 128, rejected: 0 },
       });
       expect(quality.stages['log_localidade']?.files['LOG_LOCALIDADE.TXT']).toEqual({
         read: 40,

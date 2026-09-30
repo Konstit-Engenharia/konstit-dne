@@ -142,24 +142,35 @@ describe('binary reader error contract', () => {
     }
   });
 
-  test('wraps native decoding exceptions without losing their cause', () => {
-    const reader = new DneBinaryDatabaseReader(binaryPath);
-    const cause = new RangeError('Native view access failed');
-    const nativeRead = spyOn(DataView.prototype, 'getUint8').mockImplementationOnce(() => {
-      throw cause;
-    });
-    let error: unknown;
-    try {
-      reader.queryCep('10000000');
-    } catch (caught) {
-      error = caught;
-    } finally {
-      nativeRead.mockRestore();
-      reader.close();
-    }
-    expect(error).toBeInstanceOf(DneBinaryDatabaseFormatError);
-    expect(error).toMatchObject({ code: 'INVALID_FORMAT', cause });
-  });
+  test.each(['cep', 'bairro', 'bairro-cep', 'faixas'] as const)(
+    'wraps native decoding exceptions from %s without losing their cause',
+    (query) => {
+      const reader = new DneBinaryDatabaseReader(binaryPath);
+      const cause = new RangeError('Native view access failed');
+      const nativeRead = spyOn(DataView.prototype, 'getUint8').mockImplementationOnce(() => {
+        throw cause;
+      });
+      let error: unknown;
+      try {
+        if (query === 'cep') {
+          reader.queryCep('10000000');
+        } else if (query === 'bairro') {
+          reader.queryBairro(11);
+        } else if (query === 'bairro-cep') {
+          reader.queryBairroPorCep('21000000');
+        } else {
+          reader.queryFaixasBairro(11);
+        }
+      } catch (caught) {
+        error = caught;
+      } finally {
+        nativeRead.mockRestore();
+        reader.close();
+      }
+      expect(error).toBeInstanceOf(DneBinaryDatabaseFormatError);
+      expect(error).toMatchObject({ code: 'INVALID_FORMAT', cause });
+    },
+  );
 });
 
 function captureError(action: () => unknown): DneBinaryDatabaseError {

@@ -1,11 +1,14 @@
 /**
  * Binary format revision accepted by the current reader and emitted by the writer.
  */
-export const BINARY_DATABASE_VERSION = 3;
+export const BINARY_DATABASE_VERSION = 1;
 /**
  * Fixed file-header size in bytes, including the section directory and reserved space.
  */
 export const BINARY_DATABASE_HEADER_SIZE = 256;
+
+/** Neighborhood section header: row count and widths of the original DNE identifiers. */
+export const BINARY_BAIRRO_HEADER_SIZE = 16;
 
 /**
  * Eight-byte signature identifying a DNE binary database, independent of its version.
@@ -76,6 +79,13 @@ export const BINARY_SECTION_NAMES = [
   'ufDictionary',
   'nomeDictionary',
   'localidadeFlags',
+  'bairros',
+  'bairroFaixaOffsets',
+  'bairroFaixas',
+  'bairroAbreviadoDictionary',
+  'localidadeNomeBitmap',
+  'localidadeNomeRanks',
+  'localidadeNomeIds',
 ] as const;
 
 /**

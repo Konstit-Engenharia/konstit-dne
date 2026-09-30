@@ -1,10 +1,10 @@
 # DNE binary database format
 
-This document specifies version 3 of the `@konstit/dne` binary database format. It is intended for authors of readers in languages other than TypeScript.
+This document specifies version 1 of the `@konstit/dne` binary database format. It is intended for authors of readers in languages other than TypeScript.
 
 The format is immutable and optimized for memory-mapped, read-only CEP lookup. It stores rows in CEP order, splits each CEP into a prefix directory and a packed suffix, interns strings in per-column dictionaries, and stores nullable low-density columns with bitmaps and rank indexes.
 
-Version 3 files do not contain a checksum. Readers that accept files from untrusted sources must validate every offset, length, count, and identifier before dereferencing it.
+Version 1 files do not contain a checksum. Readers that accept files from untrusted sources must validate every offset, length, count, and identifier before dereferencing it.
 
 ## Conventions
 
@@ -26,6 +26,13 @@ The following symbols are used in size formulas:
 | --- | --- |
 | `N` | Number of CEP rows |
 | `M` | Number of municipality records |
+| `B` | Number of neighborhood records, possibly zero |
+| `F` | Number of neighborhood CEP intervals |
+| `L` | Number of non-null district or village fallback names |
+| `Wb` | Width of an internal neighborhood index, `width(B)` |
+| `Wo` | Width of an original neighborhood identifier |
+| `Wl` | Width of an original locality identifier |
+| `Rb` | Neighborhood record width, `Wo + Wl + W(bairro) + W(bairroAbreviado) + W(uf)` |
 | `P` | Number of possible five-digit CEP prefixes, always `100000` |
 | `C` | Number of non-null `complemento` values |
 | `K` | Number of non-null `nome` values |
@@ -46,7 +53,7 @@ Consequently, `Wc = width(N)`, `Wm = width(M)`, and each dictionary uses `width(
 
 ## File overview
 
-A file consists of a fixed 256-byte header followed by 20 sections in a fixed order.
+A file consists of a fixed 256-byte header followed by 27 sections in a fixed order.
 
 ```text
 +---------------------------+ 0
@@ -62,13 +69,17 @@ A file consists of a fixed 256-byte header followed by 20 sections in a fixed or
 +---------------------------+
 | Locality indicators       | one byte per CEP row
 +---------------------------+
+| Neighborhoods and ranges  | original identities and CEP intervals
++---------------------------+
+| Locality fallback names   | bitmap, ranks, sparse dictionary IDs
++---------------------------+
 | Final padding             | file size is a multiple of 8
 +---------------------------+
 ```
 
 Every section begins at an offset divisible by 8. Zero-filled padding may appear between sections and after the final section. Writers must zero reserved bytes and padding. Readers should ignore their contents.
 
-The file size, all section offsets, and all section lengths are stored as `u32`, so a version 3 file cannot exceed `4294967295` bytes.
+The file size, all section offsets, and all section lengths are stored as `u32`, so a version 1 file cannot exceed `4294967295` bytes.
 
 ## Header
 
@@ -77,7 +88,7 @@ The header occupies bytes `0` through `255`.
 | Offset | Size | Type | Field | Required value or meaning |
 | ---: | ---: | --- | --- | --- |
 | 0 | 8 | bytes | Magic | `44 4e 45 42 49 4e 00 00`, or `DNEBIN\0\0` |
-| 8 | 2 | `u16` | Version | `3` |
+| 8 | 2 | `u16` | Version | `1` |
 | 10 | 2 | `u16` | Header size | `256` |
 | 12 | 4 | `u32` | Row count | `N`, must be greater than zero |
 | 16 | 4 | `u32` | File size | Exact file length, including final padding |
@@ -85,11 +96,11 @@ The header occupies bytes `0` through `255`.
 | 21 | 1 | `u8` | Municipality ID width | `Wm`, one of `1`, `2`, `3`, or `4` |
 | 22 | 1 | `u8` | Sparse rank shift | `8`, meaning one rank block per 256 rows |
 | 23 | 1 | `u8` | Dictionary block shift | `3`, meaning eight strings per block |
-| 24 | 2 | `u16` | Section count | `20` |
+| 24 | 2 | `u16` | Section count | `27` |
 | 26 | 2 | bytes | Reserved | Written as zero |
 | 28 | 4 | `u32` | Municipality count | `M`, must be greater than zero |
-| 32 | 160 | entries | Section directory | 20 entries of 8 bytes each |
-| 192 | 64 | bytes | Reserved | Written as zero |
+| 32 | 216 | entries | Section directory | 27 entries of 8 bytes each |
+| 248 | 8 | bytes | Reserved | Written as zero |
 
 ### Section directory
 
@@ -111,7 +122,7 @@ The entries have the following fixed order. The byte range column identifies the
 | 4 | 64-71 | `complementoBitmap` | `ceil(N / 8)` |
 | 5 | 72-79 | `complementoRanks` | `(ceil(N / 256) + 1) * 4` |
 | 6 | 80-87 | `complementoIds` | `C * W(complemento)` |
-| 7 | 88-95 | `bairroIds` | `N * W(bairro)` |
+| 7 | 88-95 | `bairroIds` | `N * Wb` |
 | 8 | 96-103 | `municipalityIds` | `N * Wm` |
 | 9 | 104-111 | `nomeBitmap` | `ceil(N / 8)` |
 | 10 | 112-119 | `nomeRanks` | `(ceil(N / 256) + 1) * 4` |
@@ -124,6 +135,13 @@ The entries have the following fixed order. The byte range column identifies the
 | 17 | 168-175 | `ufDictionary` | Variable dictionary section |
 | 18 | 176-183 | `nomeDictionary` | Variable dictionary section |
 | 19 | 184-191 | `localidadeFlags` | `N` |
+| 20 | 192-199 | `bairros` | `16 + B * Rb` |
+| 21 | 200-207 | `bairroFaixaOffsets` | `(B + 1) * 4` |
+| 22 | 208-215 | `bairroFaixas` | `F * 8` |
+| 23 | 216-223 | `bairroAbreviadoDictionary` | Variable dictionary section |
+| 24 | 224-231 | `localidadeNomeBitmap` | `ceil(N / 8)` |
+| 25 | 232-239 | `localidadeNomeRanks` | `(ceil(N / 256) + 1) * 4` |
+| 26 | 240-247 | `localidadeNomeIds` | `L * W(bairro)` |
 
 Sections must appear in directory order, must not overlap, and must fit entirely inside the file. The official writer aligns every section to 8 bytes.
 
@@ -138,7 +156,7 @@ Each result contains these fields:
 | `cep` | Reconstructed from the CEP prefix and suffix |
 | `logradouro` | Dense dictionary ID; ID zero means null |
 | `complemento` | Sparse dictionary ID; an unset bitmap bit means null |
-| `bairro` | Dense dictionary ID; ID zero means null |
+| `bairro` | Neighborhood record name, or sparse locality fallback name; otherwise null |
 | `municipio` | Municipality record followed by a dictionary lookup |
 | `municipio_cod_ibge` | `u24` in the municipality record |
 | `uf` | Municipality record followed by a dictionary lookup |
@@ -231,11 +249,33 @@ Suffixes inside each prefix range are sorted, so a binary search is sufficient.
 
 The `logradouroIds`, `bairroIds`, and `municipalityIds` sections are dense arrays. Entry `i` starts at `section_offset + i * width` and is decoded as `uint(width)`.
 
-`logradouroIds` and `bairroIds` use the width declared in their respective dictionary headers. Their ID may be zero for null. `municipalityIds` uses `Wm`; its IDs must be in the inclusive range `1` through `M`.
+`logradouroIds` uses its dictionary ID width. `bairroIds` uses `Wb = width(B)` and references the neighborhood registry, not the string dictionary. Both may be zero for null. `municipalityIds` uses `Wm`; its IDs must be in the inclusive range `1` through `M`.
+
+## Neighborhood registry and intervals
+
+`bairros` stores every source neighborhood, including those without a CEP row or interval. Its 16-byte header contains `B` as `u32` at offset 0, `Wo` as `u8` at offset 4, and `Wl` as `u8` at offset 5. Bytes 6 through 15 are reserved and zero. Both widths are in `1..4`, chosen from the maximum original identifier (1 byte when empty).
+
+The header is followed by `B` packed records with no padding between fields:
+
+| Field | Width | Meaning |
+| --- | --- | --- |
+| Original neighborhood ID | `Wo` | Positive `BAI_NU`, sorted strictly ascending |
+| Original locality ID | `Wl` | Positive `LOC_NU` |
+| Name ID | `W(bairro)` | Required name in `bairroDictionary` |
+| Abbreviated name ID | `W(bairroAbreviado)` | Zero for null |
+| State ID | `W(uf)` | Required state code |
+
+The internal index in `bairroIds` is one-based: `1` selects registry record `0`. Zero means no neighborhood. The original identifiers may have gaps, and distinct neighborhoods may share a name ID. To query by original identifier, binary-search the registry. A CEP query resolves its internal index to the registry's name ID.
+
+`bairroFaixaOffsets` contains `B + 1` values of type `u32`, measured in interval records, not bytes. For internal neighborhood index `j`, the intervals are in `[offsets[j - 1], offsets[j])`. The first offset is zero and the last is `F`. Empty intervals are allowed.
+
+`bairroFaixas` contains `F` records of eight bytes: initial CEP as `u32`, then final CEP as `u32`. Both endpoints are inclusive and must be in `0..99999999`, with initial no greater than final. Records for each neighborhood are sorted by `(initial, final)` without duplicate pairs. Separate and overlapping intervals are preserved; do not infer membership from a combined minimum and maximum. Convert each endpoint to exactly eight decimal digits on output.
+
+`localidadeNome` preserves the original district or village name for locality-wide CEPs. It uses the sparse layout below and shares `bairroDictionary`. A row cannot have both a neighborhood index and a locality fallback name. Fallback names require locality type `D` or `P`; they do not create neighborhood registry records. The public `bairro` field resolves to the registry name when present, otherwise to this fallback, otherwise null.
 
 ## Sparse nullable columns
 
-`complemento` and `nome` use three sections each:
+`complemento`, `nome`, and `localidadeNome` use three sections each. `localidadeNome` shares `bairroDictionary`; the other columns use their own dictionaries:
 
 1. A presence bitmap with one bit per row.
 2. A rank index with one `u32` entry per 256-row block, plus a final total.
@@ -397,8 +437,14 @@ complemento = read_sparse_value(
     row,
 )
 
-bairro_id = bairroIds[row]
-bairro = bairroDictionary[bairro_id]
+bairro_index = bairroIds[row]
+if bairro_index != 0:
+    bairro = bairroDictionary[bairros[bairro_index - 1].nome_id]
+else:
+    bairro = read_sparse_value(
+        localidadeNomeBitmap, localidadeNomeRanks, localidadeNomeIds,
+        bairroDictionary, row,
+    )
 
 municipality_id = municipalityIds[row]
 municipality_record = municipalities[municipality_id - 1]
@@ -434,7 +480,7 @@ A robust reader should perform these checks before or during lookup:
 2. The declared file size equals the actual file size.
 3. `N` and `M` are nonzero.
 4. Integer widths are in the range 1 through 4 and their corresponding counts fit those widths.
-5. The sparse rank shift is 8, the dictionary block shift is 3, and the section count is 20.
+5. The sparse rank shift is 8, the dictionary block shift is 3, and the section count is 27.
 6. Every section is inside the file, appears in directory order, and does not overlap the preceding section.
 7. Every fixed-size section matches the formulas in the section-directory table.
 8. The CEP prefix directory begins with zero, ends with `N`, is monotonic, and contains no value greater than `N`.
@@ -444,12 +490,15 @@ A robust reader should perform these checks before or during lookup:
 12. The final sparse rank equals the number of sparse IDs, rank values are monotonic, and unused bitmap bits are ignored or verified as zero.
 13. Every municipality ID is between 1 and `M`; required municipality-name and state-code IDs are nonzero and in range.
 14. Metadata is valid UTF-8 JSON whose top-level value is an object.
-15. Each locality byte has a situation in `0..2`, a type index in `0..2`, and zero reserved bits.
+15. Neighborhood original identifiers are positive and strictly increasing; every locality identifier is positive and all dictionary references are valid.
+16. Neighborhood indexes are in `0..B`; fallback names occur only with index zero and locality type `D` or `P`.
+17. Range offsets start at zero, are monotonic, and end at `F`; each interval has `0 <= initial <= final <= 99999999`, and intervals per neighborhood are strictly ordered by `(initial, final)`.
+18. Each locality byte has a situation in `0..3`, a type index in `0..2`, and zero reserved bits.
 
 Bounds checks are still required at point of use, even after initial validation. A memory-mapped file must not be truncated or replaced in place while readers are using that mapping.
 
 ## Compatibility
 
-Readers implementing this document must require version `3`. Versions 1 and 2 are not compatible; version 2 had 19 sections and did not preserve locality indicators. Regenerate older files from the DNE source to recover those fields. A reader should reject unknown versions, header sizes, section counts, sparse rank shifts, and dictionary block shifts rather than guessing their meaning.
+Readers implementing this document must require version `1` and the 27-section layout above. The version numbering was deliberately reset for this implementation; previously generated binaries are unsupported, including any older files marked version `1`. Regenerate them from the DNE source. A reader must reject mismatched versions, header sizes, section counts, sparse rank shifts, and dictionary block shifts rather than guessing their meaning.
 
 There is no platform-endianness marker. The on-disk representation is always little-endian, independent of the reader's host architecture.

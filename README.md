@@ -66,7 +66,7 @@ bunx @konstit/dne build --db ./dne.db --check --json
 
 Cada carga grava a versão do `@konstit/dne` em `edne_metadata` (ou no cabeçalho do arquivo binário). Ao usar uma fonte remota, a CLI também grava `Last-Modified`, ETag, tamanho do conteúdo, URL da fonte e horário da carga. Todos os validadores disponíveis devem continuar iguais para a base ser considerada atual. Uma execução posterior de `build` não recria a base se a fonte não mudou e mostra o `Last-Modified` remoto na saída textual. `--check` valida a estrutura de uma fonte local ou verifica se há uma atualização remota, sem alterar a base. `--force` ignora os metadados e recria a base.
 
-O formato binário é selecionado explicitamente com `--format binary`. Ele mantém os mesmos dez campos da tabela unificada em um layout próprio para `mmap`: o CEP usa um diretório de prefixos e sufixos de 10 bits; município e UF são compartilhados; campos opcionais usam bitmaps; os indicadores da localidade ocupam um byte por CEP; e as strings ficam em dicionários por coluna com front-coding em blocos de oito. `get`, `status` e `schema` detectam o formato automaticamente. O comando `sql` continua disponível somente para bases SQLite.
+O formato binário é selecionado explicitamente com `--format binary`. Ele mantém os mesmos dez campos da consulta por CEP em um layout próprio para `mmap`: o CEP usa um diretório de prefixos e sufixos de 10 bits; município e UF são compartilhados; campos opcionais usam bitmaps; os indicadores da localidade ocupam um byte por CEP; e as strings ficam em dicionários por coluna com front-coding em blocos de oito. `get`, `status` e `schema` detectam o formato automaticamente. O comando `sql` continua disponível somente para bases SQLite.
 
 A especificação completa para implementar leitores em outras linguagens está em [docs/binary-layout.md](docs/binary-layout.md).
 
@@ -185,11 +185,28 @@ Códigos de saída:
 ## Schema SQLite
 
 ```sql
-CREATE TABLE "dne" (
+CREATE TABLE IF NOT EXISTS "bairros" (
+  "bairro_id" INTEGER NOT NULL CHECK (bairro_id > 0),
+  "localidade_id" INTEGER NOT NULL CHECK (localidade_id > 0),
+  "uf" TEXT NOT NULL,
+  "nome" TEXT NOT NULL,
+  "nome_abreviado" TEXT,
+  PRIMARY KEY ("bairro_id")
+);
+
+CREATE TABLE IF NOT EXISTS "bairro_faixas" (
+  "bairro_id" INTEGER NOT NULL REFERENCES "bairros" ("bairro_id"),
+  "cep_inicial" TEXT NOT NULL CHECK (length(cep_inicial) = 8 AND cep_inicial NOT GLOB '*[^0-9]*'),
+  "cep_final" TEXT NOT NULL CHECK (length(cep_final) = 8 AND cep_final NOT GLOB '*[^0-9]*' AND cep_inicial <= cep_final),
+  PRIMARY KEY ("bairro_id", "cep_inicial", "cep_final")
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS "dne" (
   "cep" TEXT NOT NULL /* Contém somente os oito dígitos do CEP, sem separadores. */,
   "logradouro" TEXT,
   "complemento" TEXT,
-  "bairro" TEXT,
+  "bairro_id" INTEGER REFERENCES "bairros" ("bairro_id"),
+  "localidade_nome" TEXT CHECK (localidade_nome IS NULL OR (bairro_id IS NULL AND localidade_tipo IN ('D', 'P'))) /* Original district or village name for a locality-wide CEP. */,
   "municipio" TEXT NOT NULL,
   "municipio_cod_ibge" INTEGER NOT NULL,
   "uf" TEXT NOT NULL,
@@ -198,9 +215,38 @@ CREATE TABLE "dne" (
   "localidade_tipo" TEXT NOT NULL CHECK (localidade_tipo IN ('M', 'D', 'P')),
   PRIMARY KEY ("cep")
 ) WITHOUT ROWID;
+
+CREATE VIEW "dne_consulta" AS
+    SELECT d.cep, d.logradouro, d.complemento, COALESCE(b.nome, d.localidade_nome) AS bairro,
+      d.municipio, d.municipio_cod_ibge, d.uf, d.nome, d.localidade_situacao, d.localidade_tipo
+    FROM "dne" d
+    LEFT JOIN "bairros" b ON b.bairro_id = d.bairro_id;
 ```
 
 `cep` é a chave primária, sem digito separador. A tabela usa `WITHOUT ROWID` e páginas de 32 KiB para oferecer consultas diretas com menor uso de espaço.
+
+`bairros` preserva o identificador original `BAI_NU`, a localidade `LOC_NU`, UF, nome e abreviação de `LOG_BAIRRO.TXT`, inclusive bairros sem CEP associado. Bairros homônimos continuam distintos. `dne.bairro_id` referencia esse cadastro; `bairro_faixas` armazena todos os intervalos de `LOG_FAIXA_BAIRRO.TXT`, com limites inclusivos e zeros à esquerda. As faixas não são consolidadas em um único mínimo/máximo: lacunas são preservadas, e pertencer a uma faixa não garante que um CEP esteja cadastrado.
+
+Para manter os dez campos da consulta por CEP, incluindo o nome do bairro, use `dne_consulta`. Nos CEPs gerais de distritos e povoados, o nome original fica em `dne.localidade_nome`; esses registros não viram bairros artificiais. `get` e `queryCep()` continuam retornando o mesmo objeto.
+
+```sql
+SELECT * FROM dne_consulta WHERE cep = '01141000';
+
+SELECT b.*, f.cep_inicial, f.cep_final
+FROM dne d
+JOIN bairros b ON b.bairro_id = d.bairro_id
+LEFT JOIN bairro_faixas f ON f.bairro_id = b.bairro_id
+WHERE d.cep = '01141000'
+ORDER BY f.cep_inicial, f.cep_final;
+```
+
+Os leitores `DneDatabaseReader` e `DneBinaryDatabaseReader` oferecem as mesmas consultas adicionais:
+
+- `queryBairro(bairroId)`: retorna `{ bairro_id, localidade_id, uf, nome, nome_abreviado }` pelo identificador original.
+- `queryBairroPorCep(cep)`: retorna o bairro efetivamente associado ao CEP, ou `null` quando ausente, inclusive nos CEPs gerais de distritos e povoados.
+- `queryFaixasBairro(bairroId)`: retorna `{ cep_inicial, cep_final }[]`, ordenado pelos limites, ou `[]` quando não há faixas.
+
+Identificadores inválidos ou desconhecidos retornam `null`/`[]`. No binário, o cadastro de bairros tem índices internos compactos e preserva os identificadores originais; os intervalos usam pares de inteiros de 32 bits e são convertidos para oito dígitos na leitura.
 
 `localidade_situacao` preserva `LOC_IN_SIT`: `0` indica localidade sem codificação por logradouro, `1` indica localidade codificada, `2` indica distrito ou povoado inserido na codificação e `3` indica localidade em fase de codificação por logradouro. Na situação `3`, o CEP geral e os CEPs de logradouros coexistem durante a transição, conforme `Delimitado/Leiautes_delimitador.doc` incluído no [arquivo oficial do e-DNE](https://www2.correios.com.br/sistemas/edne/download/eDNE_Basico.zip). `localidade_tipo` preserva `LOC_IN_TIPO_LOC`: `M` para município, `D` para distrito e `P` para povoado. Os indicadores pertencem à localidade de origem de cada CEP, inclusive nos registros de logradouros, caixas postais comunitárias, grandes usuários e unidades operacionais. Para distritos e povoados, `municipio` e `municipio_cod_ibge` continuam identificando o município superior.
 
@@ -215,18 +261,40 @@ ORDER BY uf, municipio;
 
 Um município com CEP geral ainda pode ter CEPs específicos de estabelecimentos ou unidades postais. Por isso, contar seus registros e exigir apenas um CEP não substitui os indicadores oficiais.
 
-Bases anteriores precisam de uma nova importação para recuperar esses campos. Execute `build --force` com a fonte e o caminho da base desejados. A atualização do SQLite substitui o esquema dentro da transação somente após validar a nova carga. O formato binário passa à versão 3; arquivos das versões anteriores precisam ser regenerados. A versão do esquema é gravada em `schema_version`, e uma base com esquema antigo deixa de ser considerada atual mesmo quando os validadores da fonte remota não mudaram.
+Bases anteriores precisam de uma nova importação para recuperar esses campos. Execute `build --force` com a fonte e o caminho da base desejados. A atualização do SQLite substitui o esquema dentro da transação somente após validar a nova carga. O esquema SQLite está na versão 4. O formato binário foi redefinido como versão 1, sem retrocompatibilidade; regenere os arquivos binários existentes. A versão do esquema é gravada em `schema_version`, e uma base com esquema antigo deixa de ser considerada atual mesmo quando os validadores da fonte remota não mudaram.
 
 ### Drizzle ORM schema
 
 ```typescript
-import { sqliteTable } from 'drizzle-orm/sqlite-core';
+import {
+  primaryKey,
+  sqliteTable,
+} from 'drizzle-orm/sqlite-core';
+
+export const bairrosTable = sqliteTable('bairros', (t) => ({
+  bairro_id: t.integer().primaryKey(),
+  localidade_id: t.integer().notNull(),
+  uf: t.text().notNull(),
+  nome: t.text().notNull(),
+  nome_abreviado: t.text(),
+}));
+
+export const bairroFaixasTable = sqliteTable(
+  'bairro_faixas',
+  (t) => ({
+    bairro_id: t.integer().notNull().references(() => bairrosTable.bairro_id),
+    cep_inicial: t.text().notNull(),
+    cep_final: t.text().notNull(),
+  }),
+  (t) => [primaryKey({ columns: [t.bairro_id, t.cep_inicial, t.cep_final] })],
+);
 
 export const dneTable = sqliteTable('dne', (t) => ({
   cep: t.text().primaryKey(),
   logradouro: t.text(),
   complemento: t.text(),
-  bairro: t.text(),
+  bairro_id: t.integer().references(() => bairrosTable.bairro_id),
+  localidade_nome: t.text(),
   municipio: t.text().notNull(),
   municipio_cod_ibge: t.integer().notNull(),
   uf: t.text().notNull(),
@@ -236,7 +304,7 @@ export const dneTable = sqliteTable('dne', (t) => ({
 }));
 ```
 
-Este schema serve para consultar um banco criado pelo `@konstit/dne`. O Drizzle não representa `WITHOUT ROWID`; portanto, usar o Drizzle Kit para gerar ou migrar essa tabela cria uma estrutura física diferente.
+Este schema serve para consultar um banco criado pelo `@konstit/dne`. O Drizzle não representa `WITHOUT ROWID`; portanto, usar o Drizzle Kit para gerar ou migrar essas tabelas cria uma estrutura física diferente.
 
 ## Desenvolvimento
 

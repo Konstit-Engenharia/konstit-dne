@@ -1,8 +1,14 @@
 import { Database } from 'bun:sqlite';
 import { open } from 'node:fs/promises';
 import {
+  isBairroId,
+  type DneBairro,
+  type DneFaixaCep,
+} from './bairro.ts';
+import {
   alignBinaryOffset as align,
   assertPackedInteger,
+  BINARY_BAIRRO_HEADER_SIZE,
   BINARY_DATABASE_HEADER_SIZE,
   BINARY_DATABASE_MAGIC as MAGIC,
   BINARY_DATABASE_VERSION,
@@ -32,6 +38,8 @@ import type {
 } from './db.ts';
 import { LOCALIDADE_TIPOS } from './schema.ts';
 import {
+  SQLITE_BAIRRO_FAIXAS_TABLE_NAME,
+  SQLITE_BAIRROS_TABLE_NAME,
   SQLITE_CEP_TABLE_NAME,
   SQLITE_METADATA_TABLE_NAME,
 } from './settings.ts';
@@ -45,6 +53,7 @@ type BuiltDictionary = {
 
 type BuiltDictionaries = {
   bairro: BuiltDictionary;
+  bairroAbreviado: BuiltDictionary;
   complemento: BuiltDictionary;
   logradouro: BuiltDictionary;
   municipio: BuiltDictionary;
@@ -52,19 +61,10 @@ type BuiltDictionaries = {
   uf: BuiltDictionary;
 };
 
-type RawDneRow = Pick<
-  DneRow,
-  | 'bairro'
-  | 'cep'
-  | 'complemento'
-  | 'localidade_situacao'
-  | 'localidade_tipo'
-  | 'logradouro'
-  | 'municipio'
-  | 'municipio_cod_ibge'
-  | 'nome'
-  | 'uf'
->;
+type RawDneRow = Omit<DneRow, 'bairro'> & {
+  bairro_id: number | null;
+  localidade_nome: string | null;
+};
 
 type Municipality = {
   municipio: string;
@@ -73,10 +73,12 @@ type Municipality = {
 
 type GatheredValues = {
   complementoCount: number;
+  localidadeNomeCount: number;
   municipalitiesByIbge: Map<number, Municipality>;
   nomeCount: number;
   strings: {
     bairro: Set<string>;
+    bairroAbreviado: Set<string>;
     complemento: Set<string>;
     logradouro: Set<string>;
     municipio: Set<string>;
@@ -112,13 +114,18 @@ export async function buildBinaryDatabase(
   const db = new Database(sqlitePath, { readonly: true });
 
   try {
+    db.run('BEGIN');
     const rowCount = readRowCount(db, tableName);
     assertUint32(rowCount, 'row count');
     if (!rowCount) {
       throw new Error('Cannot create a binary database without rows');
     }
 
-    const gathered = gatherValues(db, tableName);
+    const bairros = db.query(`SELECT bairro_id, localidade_id, uf, nome, nome_abreviado
+      FROM ${quoteIdent(SQLITE_BAIRROS_TABLE_NAME)} ORDER BY bairro_id`).all() as DneBairro[];
+    const bairroIndexes = new Map(bairros.map((bairro, index) => [bairro.bairro_id, index + 1]));
+    const bairroIdWidth = integerByteWidth(bairros.length);
+    const gathered = gatherValues(db, tableName, bairros);
     const dictionaries = buildDictionaries(gathered);
     const municipalityEntries = [...gathered.municipalitiesByIbge.entries()]
       .sort(([left,], [right,]) => left - right);
@@ -134,7 +141,9 @@ export async function buildBinaryDatabase(
     const logradouroIds = new Uint8Array(rowCount * dictionaries.logradouro.idWidth);
     const complementoBitmap = new Uint8Array(bitmapByteLength(rowCount));
     const complementoIds = new Uint8Array(gathered.complementoCount * dictionaries.complemento.idWidth);
-    const bairroIds = new Uint8Array(rowCount * dictionaries.bairro.idWidth);
+    const bairroIds = new Uint8Array(rowCount * bairroIdWidth);
+    const localidadeNomeBitmap = new Uint8Array(bitmapByteLength(rowCount));
+    const localidadeNomeIds = new Uint8Array(gathered.localidadeNomeCount * dictionaries.bairro.idWidth);
     const municipalityIds = new Uint8Array(rowCount * municipalityIdWidth);
     const localidadeFlags = new Uint8Array(rowCount);
     const nomeBitmap = new Uint8Array(bitmapByteLength(rowCount));
@@ -142,6 +151,7 @@ export async function buildBinaryDatabase(
 
     let complementoIndex = 0;
     let nomeIndex = 0;
+    let localidadeNomeIndex = 0;
     let nextPrefix = 0;
     let previousCep = -1;
     let rowIndex = 0;
@@ -181,12 +191,24 @@ export async function buildBinaryDatabase(
         );
         complementoIndex++;
       }
-      writePackedInteger(
-        bairroIds,
-        rowIndex * dictionaries.bairro.idWidth,
-        dictionaryId(dictionaries.bairro, row.bairro),
-        dictionaries.bairro.idWidth,
-      );
+      const bairroIndex = row.bairro_id === null ? 0 : bairroIndexes.get(row.bairro_id);
+      if (bairroIndex === undefined) {
+        throw new Error(`Unknown bairro_id for CEP: ${row.cep}`);
+      }
+      writePackedInteger(bairroIds, rowIndex * bairroIdWidth, bairroIndex, bairroIdWidth);
+      if (row.localidade_nome !== null) {
+        if (bairroIndex !== 0 || row.localidade_tipo === 'M') {
+          throw new Error(`Invalid subordinate locality name for CEP: ${row.cep}`);
+        }
+        setBitmapBit(localidadeNomeBitmap, rowIndex);
+        writePackedInteger(
+          localidadeNomeIds,
+          localidadeNomeIndex * dictionaries.bairro.idWidth,
+          requiredDictionaryId(dictionaries.bairro, row.localidade_nome, 'localidade_nome'),
+          dictionaries.bairro.idWidth,
+        );
+        localidadeNomeIndex++;
+      }
       const municipalityId = municipalityIdsByIbge.get(row.municipio_cod_ibge);
       if (municipalityId === undefined) {
         throw new Error(`Missing municipality for IBGE code: ${row.municipio_cod_ibge}`);
@@ -213,7 +235,10 @@ export async function buildBinaryDatabase(
     if (rowIndex !== rowCount) {
       throw new Error(`SQLite row count changed while exporting: expected ${rowCount}, got ${rowIndex}`);
     }
-    if (complementoIndex !== gathered.complementoCount || nomeIndex !== gathered.nomeCount) {
+    if (
+      complementoIndex !== gathered.complementoCount || nomeIndex !== gathered.nomeCount
+      || localidadeNomeIndex !== gathered.localidadeNomeCount
+    ) {
       throw new Error('SQLite nullable field counts changed while exporting');
     }
     while (nextPrefix < CEP_PREFIX_OFFSETS_COUNT) {
@@ -224,11 +249,17 @@ export async function buildBinaryDatabase(
     const cepPrefixOffsetWidth = integerByteWidth(rowCount);
     const complemento = createSparseSections(complementoBitmap, complementoIds, rowCount);
     const nome = createSparseSections(nomeBitmap, nomeIds, rowCount);
+    const localidadeNome = createSparseSections(localidadeNomeBitmap, localidadeNomeIds, rowCount);
+    const bairroRanges = createBairroRangeSections(db, bairroIndexes);
     const metadata = textEncoder.encode(JSON.stringify(readMetadata(db)));
     const municipalities = createMunicipalitySection(municipalityEntries, dictionaries);
     const sections: Record<SectionName, Uint8Array> = {
       bairroDictionary: dictionaries.bairro.bytes,
+      bairroAbreviadoDictionary: dictionaries.bairroAbreviado.bytes,
       bairroIds,
+      bairros: createBairroSection(bairros, dictionaries),
+      bairroFaixaOffsets: bairroRanges.offsets,
+      bairroFaixas: bairroRanges.ranges,
       cepPrefixOffsets: packIntegerColumn(cepPrefixOffsets, cepPrefixOffsetWidth),
       cepSuffixes,
       complementoBitmap: complemento.bitmap,
@@ -236,6 +267,9 @@ export async function buildBinaryDatabase(
       complementoIds: complemento.ids,
       complementoRanks: complemento.ranks,
       localidadeFlags,
+      localidadeNomeBitmap: localidadeNome.bitmap,
+      localidadeNomeRanks: localidadeNome.ranks,
+      localidadeNomeIds: localidadeNome.ids,
       logradouroDictionary: dictionaries.logradouro.bytes,
       logradouroIds,
       metadata,
@@ -250,19 +284,22 @@ export async function buildBinaryDatabase(
     };
 
     await writeBinaryFile(binaryPath, rowCount, municipalityCount, municipalityIdWidth, cepPrefixOffsetWidth, sections);
+    db.run('COMMIT');
     return rowCount;
   } finally {
     db.close();
   }
 }
 
-function gatherValues(db: Database, tableName: string): GatheredValues {
+function gatherValues(db: Database, tableName: string, bairros: DneBairro[]): GatheredValues {
   const gathered: GatheredValues = {
     complementoCount: 0,
+    localidadeNomeCount: 0,
     municipalitiesByIbge: new Map(),
     nomeCount: 0,
     strings: {
       bairro: new Set(),
+      bairroAbreviado: new Set(),
       complemento: new Set(),
       logradouro: new Set(),
       municipio: new Set(),
@@ -271,10 +308,19 @@ function gatherValues(db: Database, tableName: string): GatheredValues {
     },
   };
 
+  for (const bairro of bairros) {
+    if (!isBairroId(bairro.bairro_id) || !isBairroId(bairro.localidade_id) || !bairro.nome || !bairro.uf) {
+      throw new Error(`Invalid neighborhood: ${bairro.bairro_id}`);
+    }
+    gathered.strings.bairro.add(bairro.nome);
+    addNullable(gathered.strings.bairroAbreviado, bairro.nome_abreviado);
+    gathered.strings.uf.add(bairro.uf);
+  }
+
   for (const row of iterateRows(db, tableName)) {
     addNullable(gathered.strings.logradouro, row.logradouro);
     addNullable(gathered.strings.complemento, row.complemento);
-    addNullable(gathered.strings.bairro, row.bairro);
+    addNullable(gathered.strings.bairro, row.localidade_nome);
     gathered.strings.municipio.add(row.municipio);
     gathered.strings.uf.add(row.uf);
     addNullable(gathered.strings.nome, row.nome);
@@ -283,6 +329,9 @@ function gatherValues(db: Database, tableName: string): GatheredValues {
     }
     if (row.nome !== null) {
       gathered.nomeCount++;
+    }
+    if (row.localidade_nome !== null) {
+      gathered.localidadeNomeCount++;
     }
 
     assertPackedInteger(row.municipio_cod_ibge, 3, 'municipio_cod_ibge');
@@ -301,6 +350,7 @@ function gatherValues(db: Database, tableName: string): GatheredValues {
 function buildDictionaries(gathered: GatheredValues): BuiltDictionaries {
   return {
     bairro: buildDictionary(gathered.strings.bairro),
+    bairroAbreviado: buildDictionary(gathered.strings.bairroAbreviado),
     complemento: buildDictionary(gathered.strings.complemento),
     logradouro: buildDictionary(gathered.strings.logradouro),
     municipio: buildDictionary(gathered.strings.municipio),
@@ -415,6 +465,70 @@ function createSparseSections(bitmap: Uint8Array, ids: Uint8Array, rowCount: num
   return { bitmap, ids, ranks: asBytes(ranks) };
 }
 
+function createBairroSection(bairros: DneBairro[], dictionaries: BuiltDictionaries) {
+  const originalIdWidth = integerByteWidth(bairros.at(-1)?.bairro_id ?? 0);
+  const localidadeIdWidth = integerByteWidth(bairros.reduce((max, bairro) => Math.max(max, bairro.localidade_id), 0));
+  const recordWidth = originalIdWidth + localidadeIdWidth + dictionaries.bairro.idWidth
+    + dictionaries.bairroAbreviado.idWidth + dictionaries.uf.idWidth;
+  const bytes = new Uint8Array(BINARY_BAIRRO_HEADER_SIZE + bairros.length * recordWidth);
+  const data = new DataView(bytes.buffer);
+  data.setUint32(0, bairros.length, true);
+  data.setUint8(4, originalIdWidth);
+  data.setUint8(5, localidadeIdWidth);
+  for (const [index, bairro,] of bairros.entries()) {
+    let offset = BINARY_BAIRRO_HEADER_SIZE + index * recordWidth;
+    writePackedInteger(bytes, offset, bairro.bairro_id, originalIdWidth);
+    offset += originalIdWidth;
+    writePackedInteger(bytes, offset, bairro.localidade_id, localidadeIdWidth);
+    offset += localidadeIdWidth;
+    writePackedInteger(bytes, offset, requiredDictionaryId(dictionaries.bairro, bairro.nome, 'bairro'), dictionaries.bairro.idWidth);
+    offset += dictionaries.bairro.idWidth;
+    writePackedInteger(
+      bytes,
+      offset,
+      dictionaryId(dictionaries.bairroAbreviado, bairro.nome_abreviado),
+      dictionaries.bairroAbreviado.idWidth,
+    );
+    offset += dictionaries.bairroAbreviado.idWidth;
+    writePackedInteger(bytes, offset, requiredDictionaryId(dictionaries.uf, bairro.uf, 'uf'), dictionaries.uf.idWidth);
+  }
+  return bytes;
+}
+
+function createBairroRangeSections(db: Database, bairroIndexes: Map<number, number>) {
+  const rows = db.query(`SELECT bairro_id, cep_inicial, cep_final FROM ${quoteIdent(SQLITE_BAIRRO_FAIXAS_TABLE_NAME)}
+    ORDER BY bairro_id, cep_inicial, cep_final`).all() as (DneFaixaCep & { bairro_id: number; })[];
+  const offsets = new Uint32Array(bairroIndexes.size + 1);
+  const ranges = new Uint8Array(rows.length * 8);
+  const data = new DataView(ranges.buffer);
+  let nextBairro = 0;
+  let previous: typeof rows[number] | undefined;
+  for (const [index, row,] of rows.entries()) {
+    const bairroIndex = bairroIndexes.get(row.bairro_id);
+    if (bairroIndex === undefined) {
+      throw new Error(`Unknown neighborhood in CEP range: ${row.bairro_id}`);
+    }
+    const start = parseCepNumber(row.cep_inicial);
+    const end = parseCepNumber(row.cep_final);
+    if (start > end) {
+      throw new Error(`Reversed neighborhood CEP range: ${row.bairro_id}`);
+    }
+    if (previous?.bairro_id === row.bairro_id && previous.cep_inicial === row.cep_inicial && previous.cep_final === row.cep_final) {
+      throw new Error(`Duplicate neighborhood CEP range: ${row.bairro_id}`);
+    }
+    while (nextBairro < bairroIndex) {
+      offsets[nextBairro++] = index;
+    }
+    data.setUint32(index * 8, start, true);
+    data.setUint32(index * 8 + 4, end, true);
+    previous = row;
+  }
+  while (nextBairro < offsets.length) {
+    offsets[nextBairro++] = rows.length;
+  }
+  return { offsets: asBytes(offsets), ranges };
+}
+
 async function writeBinaryFile(
   path: string,
   rowCount: number,
@@ -487,7 +601,7 @@ function readRowCount(db: Database, tableName: string) {
 
 function* iterateRows(db: Database, tableName: string): Generator<RawDneRow> {
   const statement = db.query(`
-    SELECT cep, logradouro, complemento, bairro, municipio, municipio_cod_ibge, uf, nome, localidade_situacao, localidade_tipo
+    SELECT cep, logradouro, complemento, bairro_id, localidade_nome, municipio, municipio_cod_ibge, uf, nome, localidade_situacao, localidade_tipo
     FROM ${quoteIdent(tableName)}
     ORDER BY cep
   `);

@@ -1,9 +1,15 @@
 import { Database } from 'bun:sqlite';
+import {
+  isBairroId,
+  type DneBairro,
+  type DneFaixaCep,
+} from './bairro.ts';
 import { cepToU32 } from './cep.ts';
 import type { DneDataSource } from './dne-source.ts';
 import {
   DATABASE_SCHEMA_VERSION,
   getSourceFieldIndexes,
+  getStoredTables,
   getTableFilesGlob,
   getUnifiedTable,
   LOCALIDADE_TIPOS,
@@ -12,12 +18,17 @@ import {
   type TableDefinition,
 } from './schema.ts';
 import {
+  SQLITE_BAIRRO_FAIXAS_TABLE_NAME,
+  SQLITE_BAIRROS_TABLE_NAME,
   SQLITE_CACHE_SIZE,
   SQLITE_CEP_TABLE_NAME,
   SQLITE_INSERT_BATCH_SIZE,
   SQLITE_METADATA_TABLE_NAME,
   SQLITE_PAGE_SIZE,
 } from './settings.ts';
+
+/** Neighborhood records and inclusive CEP intervals shared by both storage formats. */
+export type { DneBairro, DneFaixaCep } from './bairro.ts';
 
 type InsertStatement = ReturnType<Database['prepare']>;
 /** String-valued provenance and quality metadata stored alongside the imported CEP rows. */
@@ -80,6 +91,7 @@ export class DneSourceQualityError extends Error {
 /** Read-only SQLite access for CEP lookup, schema inspection, metadata, and bounded SQL queries. */
 export class DneDatabaseReader {
   private db: Database;
+  private normalizedSchemaReady = false;
 
   /**
    * Opens an existing SQLite database in read-only mode with a 30-second busy timeout.
@@ -132,12 +144,75 @@ export class DneDatabaseReader {
     if (Number.isNaN(parsed)) {
       return null;
     }
-    const row = this.db.query(`SELECT * FROM ${quoteIdent(SQLITE_CEP_TABLE_NAME)} WHERE cep = ?`)
+    this.requireCurrentSchema();
+    const row = this.db.query(`SELECT * FROM ${quoteIdent(cepViewName(SQLITE_CEP_TABLE_NAME))} WHERE cep = ?`)
       .get(cep.length === 8 ? cep : `${cep.slice(0, 5)}${cep.slice(6)}`) as DneRow | null;
     if (row && (row.localidade_situacao === undefined || row.localidade_tipo === undefined)) {
       throw new Error('Database schema lacks locality indicators. Rebuild the database with build --force.');
     }
     return row;
+  }
+
+  /**
+   * Reads a neighborhood by its original DNE identifier.
+   * @param bairroId - Positive `BAI_NU` identifier.
+   * @returns The neighborhood, or null for an invalid or unknown identifier.
+   * @throws {Error} If the database cannot be queried or requires rebuilding.
+   */
+  queryBairro(bairroId: number): DneBairro | null {
+    if (!isBairroId(bairroId)) {
+      return null;
+    }
+    this.requireCurrentSchema();
+    return this.db.query(`SELECT * FROM ${quoteIdent(SQLITE_BAIRROS_TABLE_NAME)} WHERE bairro_id = ?`)
+      .get(bairroId) as DneBairro | null;
+  }
+
+  /**
+   * Resolves the actual neighborhood attached to a CEP, without treating a district or village as a neighborhood.
+   * @param cep - Eight ASCII digits or `NNNNN-NNN`.
+   * @returns The neighborhood, or null for an invalid, unknown, or neighborhood-free CEP.
+   * @throws {Error} If the database cannot be queried or requires rebuilding.
+   */
+  queryBairroPorCep(cep: string): DneBairro | null {
+    if (Number.isNaN(cepToU32(cep))) {
+      return null;
+    }
+    this.requireCurrentSchema();
+    return this.db.query(`
+      SELECT b.* FROM ${quoteIdent(SQLITE_CEP_TABLE_NAME)} d
+      JOIN ${quoteIdent(SQLITE_BAIRROS_TABLE_NAME)} b ON b.bairro_id = d.bairro_id
+      WHERE d.cep = ?
+    `).get(cep.replace('-', '')) as DneBairro | null;
+  }
+
+  /**
+   * Lists a neighborhood's original CEP intervals without merging gaps.
+   * @param bairroId - Positive `BAI_NU` identifier.
+   * @returns Intervals sorted by their lower and upper bounds; an empty array for invalid, unknown, or rangeless neighborhoods.
+   * @throws {Error} If the database cannot be queried or requires rebuilding.
+   */
+  queryFaixasBairro(bairroId: number): DneFaixaCep[] {
+    if (!isBairroId(bairroId)) {
+      return [];
+    }
+    this.requireCurrentSchema();
+    return this.db.query(`
+      SELECT cep_inicial, cep_final FROM ${quoteIdent(SQLITE_BAIRRO_FAIXAS_TABLE_NAME)}
+      WHERE bairro_id = ? ORDER BY cep_inicial, cep_final
+    `).all(bairroId) as DneFaixaCep[];
+  }
+
+  private requireCurrentSchema() {
+    if (!this.normalizedSchemaReady) {
+      this.normalizedSchemaReady = Boolean(
+        this.db.query('SELECT 1 FROM sqlite_master WHERE type = \'view\' AND name = ?')
+          .get(cepViewName(SQLITE_CEP_TABLE_NAME)),
+      );
+    }
+    if (!this.normalizedSchemaReady) {
+      throw new Error('Database schema lacks normalized neighborhoods. Rebuild the database with build --force.');
+    }
   }
 
   /**
@@ -197,7 +272,8 @@ type UnifiedInsertRow = [
   cep: string,
   logradouro: string | null,
   complemento: string | null,
-  bairro: string | null,
+  bairroId: number | null,
+  localidadeNome: string | null,
   municipio: string,
   municipioCodIbge: number,
   uf: string,
@@ -221,9 +297,11 @@ type LocalidadeCandidate = Localidade & {
 };
 
 type Bairro = {
+  id: number;
   uf: string;
   locNu: string;
   nome: string;
+  abreviado: string | null;
 };
 
 /** Row counts for a source file, import stage, or complete load. */
@@ -393,24 +471,17 @@ class BatchedUnifiedInsert implements UnifiedInsert {
 
     const rows = this.rows;
     this.rows = [];
-    const params = Array.from({ length: rows.length * 10 }, () => null as UnifiedInsertValue);
+    const params = Array.from({ length: rows.length * 11 }, () => null as UnifiedInsertValue);
 
     for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
       const row = rows[rowIndex];
       if (!row) {
         throw new Error(`Missing row at index ${rowIndex}`);
       }
-      const offset = rowIndex * 10;
-      params[offset] = row[0];
-      params[offset + 1] = row[1];
-      params[offset + 2] = row[2];
-      params[offset + 3] = row[3];
-      params[offset + 4] = row[4];
-      params[offset + 5] = row[5];
-      params[offset + 6] = row[6];
-      params[offset + 7] = row[7];
-      params[offset + 8] = row[8];
-      params[offset + 9] = row[9];
+      const offset = rowIndex * 11;
+      for (let column = 0; column < row.length; column++) {
+        params[offset + column] = row[column] ?? null;
+      }
     }
 
     this.statementFor(rows.length).run(...params);
@@ -429,10 +500,10 @@ class BatchedUnifiedInsert implements UnifiedInsert {
       return statement;
     }
 
-    const placeholders = Array.from({ length: rowCount }, () => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ');
+    const placeholders = Array.from({ length: rowCount }, () => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ');
     statement = this.db.prepare(`
       INSERT INTO ${quoteIdent(this.tableName)}
-        (cep, logradouro, complemento, bairro, municipio, municipio_cod_ibge, uf, nome, localidade_situacao, localidade_tipo)
+        (cep, logradouro, complemento, bairro_id, localidade_nome, municipio, municipio_cod_ibge, uf, nome, localidade_situacao, localidade_tipo)
       VALUES ${placeholders}
     `);
     this.statements.set(rowCount, statement);
@@ -452,7 +523,7 @@ export class DneDatabaseWriter {
    * @param schema - Source mappings and one unified output table definition.
    * @throws {Error} If the database cannot be opened or the unified table is missing.
    */
-  constructor(databasePath: string, schema: TableDefinition[]) {
+  constructor(databasePath: string, private schema: TableDefinition[]) {
     this.db = new Database(databasePath);
     this.tableByOriginalName = new Map(schema.map((table) => [table.originalName, table]));
     this.unifiedTable = getUnifiedTable(schema);
@@ -466,6 +537,14 @@ export class DneDatabaseWriter {
     // Checkpoint and truncate the WAL file
     this.db.run('PRAGMA wal_checkpoint(TRUNCATE);');
     this.db.close();
+  }
+
+  /**
+   * Compacts a completed import before publishing its SQLite file.
+   * @throws {Error} If SQLite cannot rewrite the database or an import transaction is active.
+   */
+  compact() {
+    this.db.run('VACUUM');
   }
 
   /**
@@ -484,15 +563,17 @@ export class DneDatabaseWriter {
 
     this.configureBulkLoad();
     await this.transaction(async () => {
-      prepareTableForLoad(this.db, cepTable);
+      prepareDatabaseForLoad(this.db, this.schema);
       this.createMetadataTable();
-      this.db.run(`DELETE FROM ${quoteIdent(cepTable.name)}`);
       this.db.run(`DELETE FROM ${quoteIdent(SQLITE_METADATA_TABLE_NAME)}`);
 
       onProgress('Lendo municípios');
       const localidades = await this.readLocalidades(source, quality);
       onProgress('Lendo bairros');
       const bairros = await this.readBairros(source, localidades, quality);
+      this.insertBairros(bairros);
+      onProgress('Carregando faixas de CEP dos bairros');
+      await this.insertFaixasBairro(source, bairros, quality);
       const insert = this.prepareUnifiedInsert(cepTable.name);
 
       try {
@@ -627,10 +708,10 @@ export class DneDatabaseWriter {
     await this.forEachSelectedRow(
       table,
       source,
-      getSourceFieldIndexes(table, ['baiNu', 'uf', 'locNu', 'bairro']),
+      getSourceFieldIndexes(table, ['baiNu', 'uf', 'locNu', 'bairro', 'abreviado']),
       quality,
       (row, _file, counter) => {
-        const [baiNu = null, uf = null, locNu = null, bairro = null,] = row;
+        const [baiNu = null, uf = null, locNu = null, bairro = null, abreviado = null,] = row;
         const requiredProblem = missingRequiredField([
           ['baiNu', baiNu],
           ['uf', uf],
@@ -639,6 +720,11 @@ export class DneDatabaseWriter {
         ]);
         if (requiredProblem || !baiNu || !uf || !locNu || !bairro) {
           counter.reject(requiredProblem ?? 'invalid_structure');
+          return;
+        }
+        const id = parseSourceId(baiNu);
+        if (id === null || parseSourceId(locNu) === null) {
+          counter.reject('invalid_bairro_identifier');
           return;
         }
         if (!isBrazilianUf(uf)) {
@@ -659,12 +745,67 @@ export class DneDatabaseWriter {
           return;
         }
 
-        bairros.set(baiNu, { uf, locNu, nome: bairro });
+        bairros.set(baiNu, { id, uf, locNu, nome: bairro, abreviado });
         counter.accept();
       },
     );
 
     return bairros;
+  }
+
+  private insertBairros(bairros: Map<string, Bairro>) {
+    const table = this.originalTable('bairros');
+    const insert = this.db.prepare(`
+      INSERT INTO ${quoteIdent(table.name)} (bairro_id, localidade_id, uf, nome, nome_abreviado) VALUES (?, ?, ?, ?, ?)
+    `);
+    try {
+      for (const bairro of bairros.values()) {
+        insert.run(bairro.id, Number(bairro.locNu), bairro.uf, bairro.nome, bairro.abreviado);
+      }
+    } finally {
+      insert.finalize();
+    }
+  }
+
+  private async insertFaixasBairro(source: DneDataSource, bairros: Map<string, Bairro>, quality: LoadQualityTracker) {
+    const table = this.originalTable('log_faixa_bairro');
+    const target = this.originalTable('bairro_faixas');
+    const seen = new Set<string>();
+    const insert = this.db.prepare(`INSERT INTO ${quoteIdent(target.name)} (bairro_id, cep_inicial, cep_final) VALUES (?, ?, ?)`);
+    try {
+      await this.forEachSelectedRow(
+        table,
+        source,
+        getSourceFieldIndexes(table, ['baiNu', 'cepInicial', 'cepFinal']),
+        quality,
+        (row, _file, counter) => {
+          const [baiNu = null, cepInicial = null, cepFinal = null,] = row;
+          const bairro = baiNu === null ? undefined : bairros.get(baiNu);
+          if (!bairro) {
+            counter.reject('missing_bairro');
+            return;
+          }
+          if (!isValidCep(cepInicial) || !isValidCep(cepFinal)) {
+            counter.reject('invalid_cep_range');
+            return;
+          }
+          if (cepInicial > cepFinal) {
+            counter.reject('reversed_cep_range');
+            return;
+          }
+          const key = `${bairro.id}:${cepInicial}:${cepFinal}`;
+          if (seen.has(key)) {
+            counter.reject('duplicate_cep_range');
+            return;
+          }
+          seen.add(key);
+          insert.run(bairro.id, cepInicial, cepFinal);
+          counter.accept();
+        },
+      );
+    } finally {
+      insert.finalize();
+    }
   }
 
   private prepareUnifiedInsert(tableName: string) {
@@ -752,7 +893,8 @@ export class DneDatabaseWriter {
           cep,
           logStaTlo === 'S' ? `${tloTx} ${logNo}` : logNo,
           null,
-          bairro.nome,
+          bairro.id,
+          null,
           municipality.nome,
           municipality.munNu,
           uf,
@@ -773,6 +915,7 @@ export class DneDatabaseWriter {
           null,
           null,
           null,
+          null,
           localidade.nome,
           localidade.munNu,
           localidade.uf,
@@ -790,6 +933,7 @@ export class DneDatabaseWriter {
       if (localidade.cep && parent?.munNu !== null && parent?.munNu !== undefined) {
         insert.run(
           localidade.cep,
+          null,
           null,
           null,
           localidade.nome,
@@ -858,6 +1002,7 @@ export class DneDatabaseWriter {
           cep,
           logradouro,
           complemento,
+          null,
           null,
           municipality.nome,
           municipality.munNu,
@@ -969,7 +1114,8 @@ export class DneDatabaseWriter {
           cep,
           logradouro,
           complemento,
-          bairro.nome,
+          bairro.id,
+          null,
           municipality.nome,
           municipality.munNu,
           uf,
@@ -1028,8 +1174,9 @@ export class DneDatabaseWriter {
   private configureBulkLoad() {
     // Set database page size before data is written.
     this.db.run(`PRAGMA page_size = ${SQLITE_PAGE_SIZE}`);
-    // Disable rollback journal writes; faster bulk load, no crash recovery.
-    this.db.run('PRAGMA journal_mode = OFF');
+    // Preserve transactional rollback during validation without writing a disk journal.
+    this.db.run('PRAGMA journal_mode = MEMORY');
+    this.db.run('PRAGMA foreign_keys = ON');
     // Skip fsync calls; faster writes, but committed data can be lost on crash.
     this.db.run('PRAGMA synchronous = OFF');
     // Keep temporary tables and indexes in memory instead of disk.
@@ -1124,6 +1271,9 @@ function createTableSqlWithSeparator(table: TableDefinition, separator: string) 
     if (column.check) {
       parts.push(`CHECK (${column.check})`);
     }
+    if (column.references) {
+      parts.push(`REFERENCES ${quoteIdent(column.references.table)} (${quoteIdent(column.references.column)})`);
+    }
     if (column.comment) {
       parts.push(`/* ${column.comment} */`);
     }
@@ -1133,7 +1283,7 @@ function createTableSqlWithSeparator(table: TableDefinition, separator: string) 
   if (primaryKeys.length) {
     definitions.push(`PRIMARY KEY (${primaryKeys.join(', ')})`);
   }
-  const withoutRowid = table.unifiedTable ? ' WITHOUT ROWID' : '';
+  const withoutRowid = (table.withoutRowid ?? table.unifiedTable) ? ' WITHOUT ROWID' : '';
   if (separator.includes('\n')) {
     return `CREATE TABLE IF NOT EXISTS ${quoteIdent(table.name)} (\n  ${definitions.join(separator)}\n)${withoutRowid}`;
   }
@@ -1146,6 +1296,57 @@ function splitAddress(value: string): [string, string | null] {
     return [value.trim(), null];
   }
   return [value.slice(0, comma).trim(), value.slice(comma + 1).trim()];
+}
+
+/**
+ * Resolves the address projection that retains the public CEP lookup columns.
+ * @param tableName - Physical normalized address table name.
+ * @returns The corresponding view name.
+ */
+export function cepViewName(tableName: string): string {
+  return `${tableName}_consulta`;
+}
+
+/**
+ * Creates the view that resolves neighborhood names and subordinate locality names.
+ * @param tableName - Physical normalized address table name.
+ * @param bairrosTableName - Physical neighborhood table name.
+ * @returns A quoted CREATE VIEW statement with the existing ten public address columns.
+ */
+export function createCepViewSql(tableName: string, bairrosTableName = SQLITE_BAIRROS_TABLE_NAME): string {
+  return `CREATE VIEW ${quoteIdent(cepViewName(tableName))} AS
+    SELECT d.cep, d.logradouro, d.complemento, COALESCE(b.nome, d.localidade_nome) AS bairro,
+      d.municipio, d.municipio_cod_ibge, d.uf, d.nome, d.localidade_situacao, d.localidade_tipo
+    FROM ${quoteIdent(tableName)} d
+    LEFT JOIN ${quoteIdent(bairrosTableName)} b ON b.bairro_id = d.bairro_id`;
+}
+
+/**
+ * Recreates the owned address, neighborhood, and interval tables inside the caller's transaction.
+ * Unrelated tables are retained. The transaction must be rolled back if importing or copying data fails.
+ * @param db - Writable SQLite connection with foreign keys enabled.
+ * @param schema - Source mappings and persisted table definitions.
+ * @throws {Error} If a required table definition is missing or SQLite rejects a schema operation.
+ */
+export function prepareDatabaseForLoad(db: Database, schema: readonly TableDefinition[]): void {
+  const cepTable = getUnifiedTable(schema);
+  const bairros = schema.find((table) => table.originalName === 'bairros');
+  if (!bairros) {
+    throw new Error('Neighborhood table definition is missing');
+  }
+  const stored = getStoredTables(schema);
+  db.run(`DROP VIEW IF EXISTS main.${quoteIdent(cepViewName(cepTable.name))}`);
+  for (const table of [...stored].reverse()) {
+    db.run(`DROP TABLE IF EXISTS main.${quoteIdent(table.name)}`);
+  }
+  for (const table of stored) {
+    db.run(createTableSql(table));
+  }
+  db.run(createCepViewSql(cepTable.name, bairros.name));
+}
+
+function parseSourceId(value: string): number | null {
+  return /^\d{1,8}$/.test(value) && isBairroId(Number(value)) ? Number(value) : null;
 }
 
 const BRAZILIAN_UFS = new Set([

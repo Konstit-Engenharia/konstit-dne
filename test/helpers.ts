@@ -36,13 +36,18 @@ export function createLocalityFixture(directory: string) {
       '8@SP@Povoado em Codificacao@14000000@3@P@6@@',
     ],
     'LOG_BAIRRO.TXT': [
-      '11@SP@1@Centro',
+      '11@SP@1@Centro@Ctr',
       '12@SP@2@Centro',
       '14@SP@4@Povoado',
       '15@SP@5@Vila',
       '16@SP@6@Centro',
       '17@SP@7@Distrito',
       '18@SP@8@Povoado',
+    ],
+    'LOG_FAIXA_BAIRRO.TXT': [
+      '11@01000000@01000010',
+      '11@21000000@21000000',
+      '14@24000000@24000099',
     ],
     'LOG_LOGRADOURO_SP.TXT': [
       '21@SP@1@11@@Principal@@21000000@Rua@S',
