@@ -16,14 +16,20 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  createTableSql,
+  DneDatabaseReader,
   DneDatabaseWriter,
   type LoadQualityReport,
 } from '../src/db.ts';
 import { DirectoryDneSource } from '../src/dne-source.ts';
-import { buildSchema } from '../src/schema.ts';
+import {
+  buildSchema,
+  getUnifiedTable,
+} from '../src/schema.ts';
 import { SQLITE_CEP_TABLE_NAME } from '../src/settings.ts';
 import {
   createFixture,
+  createLocalityFixture,
   createNestedZipFixture,
   fetchDatabase,
 } from './helpers.ts';
@@ -63,6 +69,8 @@ describe('loader', () => {
         municipio_cod_ibge: 3500001,
         uf: 'BA',
         nome: null,
+        localidade_situacao: 1,
+        localidade_tipo: 'M',
       });
 
       const sourceKind = db.query('SELECT value FROM edne_metadata WHERE key = ?').get('source_kind');
@@ -88,6 +96,137 @@ describe('loader', () => {
         'LOG_LOGRADOURO_BA.TXT': { read: 20, accepted: 20, rejected: 0 },
         'LOG_LOGRADOURO_SP.TXT': { read: 20, accepted: 20, rejected: 0 },
       });
+    } finally {
+      db.close();
+    }
+  });
+
+  test('preserves the source locality indicators for every category of CEP', () => {
+    const dneDir = join(workDir, 'localities');
+    const dbPath = join(workDir, 'localities.db');
+    createLocalityFixture(dneDir);
+    fetchDatabase(dbPath, dneDir);
+
+    const db = new Database(dbPath);
+    try {
+      const rows = db.query(`
+        SELECT cep, localidade_situacao, localidade_tipo, municipio_cod_ibge
+        FROM dne ORDER BY cep
+      `).values();
+      expect(rows).toEqual([
+        ['10000000', 0, 'M', 3500002],
+        ['11000000', 0, 'D', 3500006],
+        ['12000000', 3, 'M', 3500006],
+        ['13000000', 3, 'D', 3500006],
+        ['14000000', 3, 'P', 3500006],
+        ['21000000', 1, 'M', 3500001],
+        ['24000000', 2, 'P', 3500001],
+        ['25000000', 1, 'D', 3500001],
+        ['26000000', 3, 'M', 3500006],
+        ['27000000', 3, 'D', 3500006],
+        ['28000000', 3, 'P', 3500006],
+        ['41000000', 1, 'M', 3500001],
+        ['42000000', 0, 'M', 3500002],
+        ['44000000', 2, 'P', 3500001],
+        ['46000000', 3, 'M', 3500006],
+        ['52000000', 0, 'M', 3500002],
+        ['57000000', 3, 'D', 3500006],
+        ['62000000', 0, 'M', 3500002],
+        ['64000000', 2, 'P', 3500001],
+        ['68000000', 3, 'P', 3500006],
+      ]);
+      expect(
+        db.query(`
+        SELECT DISTINCT municipio FROM dne
+        WHERE localidade_situacao = 0 AND localidade_tipo = 'M'
+      `).values(),
+      ).toEqual([['Municipio Unico']]);
+      for (const value of [null, -1, 4, 1.5]) {
+        expect(() => db.run('UPDATE dne SET localidade_situacao = ?', [value])).toThrow();
+      }
+      for (const value of [null, '', 'X']) {
+        expect(() => db.run('UPDATE dne SET localidade_tipo = ?', [value])).toThrow();
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+  test.each([
+    [4, '', 'missing_situacao'],
+    [4, '4', 'invalid_localidade_situacao'],
+    [4, '-1', 'invalid_localidade_situacao'],
+    [4, '03', 'invalid_localidade_situacao'],
+    [4, '1.0', 'invalid_localidade_situacao'],
+    [5, '', 'missing_tipo'],
+    [5, 'X', 'invalid_localidade_tipo'],
+  ])('rejects invalid locality field %i = %s', async (fieldIndex, value, reason) => {
+    const dneDir = join(workDir, `invalid-locality-${fieldIndex}-${value}`);
+    const dbPath = `${dneDir}.db`;
+    createLocalityFixture(dneDir);
+    const writer = new DneDatabaseWriter(dbPath, buildSchema({ cep_unificado: SQLITE_CEP_TABLE_NAME }));
+    const source = new DirectoryDneSource(join(dneDir, 'Delimitado'));
+    try {
+      await writer.loadFromSource(source);
+      replaceDelimitedField(join(dneDir, 'Delimitado', 'LOG_LOCALIDADE.TXT'), 0, fieldIndex, value);
+      const error = await writer.loadFromSource(source).catch((error: unknown) => error);
+      expect(String(error)).toContain(reason);
+    } finally {
+      writer.close();
+    }
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      expect(db.query('SELECT localidade_situacao, localidade_tipo FROM dne WHERE cep = ?').values('21000000'))
+        .toEqual([[1, 'M']]);
+      expect(db.query('SELECT count(*) FROM dne').values()).toEqual([[20]]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('rebuilds an existing eight-column database from the source', () => {
+    const dneDir = join(workDir, 'legacy');
+    const dbPath = join(workDir, 'legacy.db');
+    createLocalityFixture(dneDir);
+    const db = new Database(dbPath);
+    db.run(`CREATE TABLE dne (
+      cep TEXT PRIMARY KEY, logradouro TEXT, complemento TEXT, bairro TEXT,
+      municipio TEXT NOT NULL, municipio_cod_ibge INTEGER NOT NULL, uf TEXT NOT NULL, nome TEXT
+    ) WITHOUT ROWID`);
+    db.run('INSERT INTO dne VALUES (\'99999999\', NULL, NULL, NULL, \'Antigo\', 3500000, \'SP\', NULL)');
+    try {
+      const reader = new DneDatabaseReader(dbPath);
+      try {
+        expect(() => reader.queryCep('99999999')).toThrow('build --force');
+      } finally {
+        reader.close();
+      }
+      fetchDatabase(dbPath, dneDir);
+      expect(db.query('SELECT count(*) FROM dne WHERE cep = ?').values('99999999')).toEqual([[0]]);
+      expect(db.query('SELECT localidade_situacao, localidade_tipo FROM dne WHERE cep = ?').values('10000000'))
+        .toEqual([[0, 'M']]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('rebuilds the former locality CHECK constraint when updating SQLite', () => {
+    const dneDir = join(workDir, 'legacy-locality-check');
+    const dbPath = `${dneDir}.db`;
+    createLocalityFixture(dneDir);
+    const table = getUnifiedTable(buildSchema({ cep_unificado: SQLITE_CEP_TABLE_NAME }));
+    const situationColumn = table.columns.find((column) => column.name === 'localidade_situacao');
+    if (!situationColumn) {
+      throw new Error('Missing locality situation column');
+    }
+    situationColumn.check = 'localidade_situacao IN (0, 1, 2)';
+    const db = new Database(dbPath);
+    try {
+      db.run(createTableSql(table));
+      fetchDatabase(dbPath, dneDir);
+      expect(db.query('SELECT localidade_situacao FROM dne WHERE cep = ?').values('12000000')).toEqual([[3]]);
+      expect(db.query('SELECT count(*) FROM dne').values()).toEqual([[20]]);
+      expect(() => db.run('UPDATE dne SET localidade_situacao = 4')).toThrow();
     } finally {
       db.close();
     }

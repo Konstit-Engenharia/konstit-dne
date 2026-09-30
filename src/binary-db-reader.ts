@@ -1,0 +1,682 @@
+import {
+  DneBinaryDatabaseClosedError,
+  DneBinaryDatabaseError,
+  DneBinaryDatabaseFormatError,
+  DneBinaryDatabaseIOError,
+  DneBinaryDatabaseVersionError,
+} from './binary-db-errors.ts';
+import {
+  BINARY_DATABASE_HEADER_SIZE,
+  BINARY_DATABASE_MAGIC as MAGIC,
+  BINARY_DATABASE_VERSION,
+  BINARY_SECTION_NAMES as SECTION_NAMES,
+  bitmapByteLength,
+  CEP_PREFIX_COUNT,
+  CEP_PREFIX_OFFSETS_COUNT,
+  CEP_SUFFIX_BITS,
+  createPopcountTable,
+  DICTIONARY_BLOCK_SHIFT,
+  DICTIONARY_BLOCK_SIZE,
+  DICTIONARY_HEADER_SIZE,
+  hasBinaryMagic as hasMagic,
+  maxPackedInteger,
+  packedBitLength,
+  readByteWidth,
+  readPackedInteger as readPackedIntegerFromData,
+  SECTION_TABLE_OFFSET,
+  SPARSE_RANK_ROWS,
+  SPARSE_RANK_SHIFT,
+  type BinaryHeader,
+  type BinaryRegion as Region,
+  type BinarySectionName as SectionName,
+  type ByteWidth,
+} from './binary-db-format.ts';
+import { cepToU32 } from './cep.ts';
+import type {
+  DneRow,
+  LoadMetadata,
+} from './db.ts';
+import {
+  LOCALIDADE_TIPOS,
+  type LocalidadeSituacao,
+} from './schema.ts';
+
+/** Error classes and discriminants used by this module's public operations. */
+export {
+  DneBinaryDatabaseClosedError,
+  DneBinaryDatabaseError,
+  type DneBinaryDatabaseErrorCode,
+  DneBinaryDatabaseFormatError,
+  DneBinaryDatabaseIOError,
+  DneBinaryDatabaseVersionError,
+} from './binary-db-errors.ts';
+/** Header size and format version accepted by this reader. */
+export { BINARY_DATABASE_HEADER_SIZE, BINARY_DATABASE_VERSION } from './binary-db-format.ts';
+
+type BinaryDictionary = {
+  blockCount: number;
+  blockOffsetsOffset: number;
+  count: number;
+  idWidth: ByteWidth;
+  lengthsOffset: number;
+  prefixesOffset: number;
+  region: Region;
+  suffixDataLength: number;
+  suffixDataOffset: number;
+};
+
+type BinaryDictionaries = {
+  bairro: BinaryDictionary;
+  complemento: BinaryDictionary;
+  logradouro: BinaryDictionary;
+  municipio: BinaryDictionary;
+  nome: BinaryDictionary;
+  uf: BinaryDictionary;
+};
+
+type DecodedMunicipality = {
+  codigoIbge: number;
+  municipio: string;
+  uf: string;
+};
+
+const textDecoder = new TextDecoder();
+const popcount = createPopcountTable();
+
+/**
+ * Checks a file's magic bytes without validating its version or contents.
+ * @param path - Path to the candidate database file.
+ * @returns `false` for a missing file or nonmatching signature; `true` for the DNE binary signature.
+ * @throws {DneBinaryDatabaseIOError} If the file cannot be inspected or read.
+ */
+export async function isBinaryDatabase(path: string): Promise<boolean> {
+  try {
+    if (!(await Bun.file(path).exists())) {
+      return false;
+    }
+
+    const prefix = new Uint8Array(await Bun.file(path).slice(0, MAGIC.length).arrayBuffer());
+    return hasMagic(prefix);
+  } catch (cause) {
+    throw new DneBinaryDatabaseIOError(path, { cause });
+  }
+}
+
+/**
+ * Provides synchronous, read-only CEP lookups over a memory-mapped DNE binary database.
+ *
+ * Construction validates the file layout; individual records are decoded and checked on demand.
+ * Keep the underlying file immutable while the reader is open. Call `close()` when finished.
+ * All operational errors extend {@link DneBinaryDatabaseError}; invalid or absent CEPs return `null`.
+ */
+export class DneBinaryDatabaseReader {
+  private bairroCache: (string | undefined)[];
+  private data: DataView | null;
+  private decodeScratch = new Uint8Array(0xff);
+  private dictionaries: BinaryDictionaries;
+  private header: BinaryHeader;
+  private mapped: Uint8Array<ArrayBuffer> | null;
+  private metadataValue: LoadMetadata;
+  private municipalityCache: (DecodedMunicipality | undefined)[];
+
+  /**
+   * Opens and validates a binary database using Bun's memory-mapping API.
+   * @param databasePath - Path to an existing binary database file.
+   * @throws {DneBinaryDatabaseIOError} If the file cannot be mapped.
+   * @throws {DneBinaryDatabaseVersionError} If the declared format version is unsupported.
+   * @throws {DneBinaryDatabaseFormatError} If the header, layout, dictionaries, or metadata are invalid.
+   */
+  constructor(databasePath: string) {
+    let mapped: Uint8Array<ArrayBuffer>;
+    try {
+      mapped = Bun.mmap(databasePath, { shared: false });
+    } catch (cause) {
+      throw new DneBinaryDatabaseIOError(databasePath, { cause });
+    }
+    try {
+      const data = new DataView(mapped.buffer, mapped.byteOffset, mapped.byteLength);
+      const header = readHeader(data);
+      validateHeader(data, header);
+      const dictionaries = readDictionaries(data, header);
+      validateLayout(data, header, dictionaries);
+      const metadata = parseMetadata(mapped, header.sections.metadata);
+
+      this.mapped = mapped;
+      this.data = data;
+      this.header = header;
+      this.dictionaries = dictionaries;
+      this.metadataValue = metadata;
+      this.bairroCache = Array.from({ length: dictionaries.bairro.count + 1 });
+      this.municipalityCache = Array.from({ length: header.municipalityCount + 1 });
+    } catch (error) {
+      this.mapped = null;
+      this.data = null;
+      if (error instanceof DneBinaryDatabaseError) {
+        throw error;
+      }
+      throw new DneBinaryDatabaseFormatError('Unable to decode binary database', { cause: error });
+    }
+  }
+
+  /**
+   * Releases this reader's references to the mapping and decoded caches.
+   * Repeated calls are safe. Bun controls when the mapping is reclaimed; this method does not
+   * guarantee immediate unmapping. Metadata and row count remain available after closing.
+   */
+  close(): void {
+    this.bairroCache = [];
+    this.data = null;
+    this.mapped = null;
+    this.municipalityCache = [];
+  }
+
+  /**
+   * Returns the load metadata parsed when the reader was constructed.
+   * @returns The cached metadata object, which callers should treat as read-only. Available after `close()`.
+   */
+  metadata(): LoadMetadata {
+    return this.metadataValue;
+  }
+
+  /**
+   * Looks up a CEP and decodes its address, including the originating locality indicators.
+   * @param cep - Eight ASCII digits or the form `NNNNN-NNN`; surrounding whitespace is not accepted.
+   * @returns An address with an eight-digit CEP, or `null` when the input is invalid or absent from the database.
+   * @throws {DneBinaryDatabaseClosedError} If called after `close()`, including for invalid CEP input.
+   * @throws {DneBinaryDatabaseFormatError} If the lookup encounters invalid indexes or record data.
+   */
+  queryCep(cep: string): DneRow | null {
+    try {
+      this.requireData();
+      return this.findCep(cep);
+    } catch (error) {
+      if (error instanceof DneBinaryDatabaseError) {
+        throw error;
+      }
+      throw new DneBinaryDatabaseFormatError('Unable to decode binary database record', { cause: error });
+    }
+  }
+
+  /**
+   * Returns the number of CEP records declared by the validated header.
+   * @returns The row count recorded at construction; available after `close()`.
+   */
+  rowCount(): number {
+    return this.header.rowCount;
+  }
+
+  private findCep(cep: string): DneRow | null {
+    const wanted = cepToU32(cep);
+    if (Number.isNaN(wanted)) {
+      return null;
+    }
+
+    const prefix = Math.floor(wanted / 1_000);
+    const suffix = wanted % 1_000;
+    const prefixRegion = this.header.sections.cepPrefixOffsets;
+    const width = this.header.cepPrefixOffsetWidth;
+    let low = this.readPackedInteger(prefixRegion.offset + prefix * width, width);
+    const prefixEnd = this.readPackedInteger(prefixRegion.offset + (prefix + 1) * width, width);
+    let high = prefixEnd;
+    if (low > prefixEnd || prefixEnd > this.header.rowCount) {
+      throw new DneBinaryDatabaseFormatError(`Invalid binary CEP prefix range: ${prefix}`);
+    }
+
+    while (low < high) {
+      const middle = low + ((high - low) >>> 1);
+      const current = this.readPacked10(middle);
+      if (current < suffix) {
+        low = middle + 1;
+      } else {
+        high = middle;
+      }
+    }
+
+    if (low >= prefixEnd || this.readPacked10(low) !== suffix) {
+      return null;
+    }
+    return this.readRow(low, cep.length === 8 ? cep : `${cep.slice(0, 5)}${cep.slice(6)}`);
+  }
+
+  private readRow(index: number, cep: string): DneRow {
+    const sections = this.header.sections;
+    const municipalityId = this.readPackedInteger(
+      sections.municipalityIds.offset + index * this.header.municipalityIdWidth,
+      this.header.municipalityIdWidth,
+    );
+    if (municipalityId === 0 || municipalityId > this.header.municipalityCount) {
+      throw new DneBinaryDatabaseFormatError(`Invalid binary municipality id: ${municipalityId}`);
+    }
+    const municipality = this.readMunicipality(municipalityId);
+    const flags = this.requireData().getUint8(sections.localidadeFlags.offset + index);
+    const situacao = flags & 3;
+    const tipo = LOCALIDADE_TIPOS[flags >>> 2];
+    if (tipo === undefined) {
+      throw new DneBinaryDatabaseFormatError(`Invalid binary locality indicators: ${flags}`);
+    }
+
+    return {
+      bairro: this.readCachedDictionaryString(
+        this.dictionaries.bairro,
+        this.readPackedInteger(
+          sections.bairroIds.offset + index * this.dictionaries.bairro.idWidth,
+          this.dictionaries.bairro.idWidth,
+        ),
+        this.bairroCache,
+      ),
+      cep,
+      complemento: this.readDictionaryString(
+        this.dictionaries.complemento,
+        this.readSparseId(
+          sections.complementoBitmap,
+          sections.complementoRanks,
+          sections.complementoIds,
+          index,
+          this.dictionaries.complemento.idWidth,
+        ),
+      ),
+      localidade_situacao: situacao as LocalidadeSituacao,
+      localidade_tipo: tipo,
+      logradouro: this.readDictionaryString(
+        this.dictionaries.logradouro,
+        this.readPackedInteger(
+          sections.logradouroIds.offset + index * this.dictionaries.logradouro.idWidth,
+          this.dictionaries.logradouro.idWidth,
+        ),
+      ),
+      municipio: municipality.municipio,
+      municipio_cod_ibge: municipality.codigoIbge,
+      nome: this.readDictionaryString(
+        this.dictionaries.nome,
+        this.readSparseId(
+          sections.nomeBitmap,
+          sections.nomeRanks,
+          sections.nomeIds,
+          index,
+          this.dictionaries.nome.idWidth,
+        ),
+      ),
+      uf: municipality.uf,
+    };
+  }
+
+  private readMunicipality(id: number) {
+    const cached = this.municipalityCache[id];
+    if (cached) {
+      return cached;
+    }
+    const recordWidth = 3 + this.dictionaries.municipio.idWidth + this.dictionaries.uf.idWidth;
+    const offset = this.header.sections.municipalities.offset + (id - 1) * recordWidth;
+    const municipioId = this.readPackedInteger(offset + 3, this.dictionaries.municipio.idWidth);
+    const ufId = this.readPackedInteger(
+      offset + 3 + this.dictionaries.municipio.idWidth,
+      this.dictionaries.uf.idWidth,
+    );
+    const municipality = {
+      codigoIbge: this.readPackedInteger(offset, 3),
+      municipio: this.readRequiredDictionaryString(this.dictionaries.municipio, municipioId, 'municipio'),
+      uf: this.readRequiredDictionaryString(this.dictionaries.uf, ufId, 'uf'),
+    };
+    this.municipalityCache[id] = municipality;
+    return municipality;
+  }
+
+  private readSparseId(
+    bitmap: Region,
+    ranks: Region,
+    ids: Region,
+    rowIndex: number,
+    idWidth: 1 | 2 | 3 | 4,
+  ) {
+    const mapped = this.requireMapped();
+    const bitmapByteIndex = rowIndex >>> 3;
+    const bitmapByte = mapped[bitmap.offset + bitmapByteIndex] ?? 0;
+    const bitIndex = rowIndex & 7;
+    if ((bitmapByte & (1 << bitIndex)) === 0) {
+      return 0;
+    }
+
+    const rankBlock = rowIndex >>> SPARSE_RANK_SHIFT;
+    let denseIndex = this.readUint32(ranks.offset + rankBlock * 4);
+    const blockByteOffset = rankBlock * (SPARSE_RANK_ROWS >>> 3);
+    for (let offset = blockByteOffset; offset < bitmapByteIndex; offset++) {
+      denseIndex += popcount[mapped[bitmap.offset + offset] ?? 0] ?? 0;
+    }
+    denseIndex += popcount[bitmapByte & ((1 << bitIndex) - 1)] ?? 0;
+    if ((denseIndex + 1) * idWidth > ids.length) {
+      throw new DneBinaryDatabaseFormatError(`Invalid binary sparse id index: ${denseIndex}`);
+    }
+    return this.readPackedInteger(ids.offset + denseIndex * idWidth, idWidth);
+  }
+
+  private readDictionaryString(dictionary: BinaryDictionary, id: number) {
+    if (id === 0) {
+      return null;
+    }
+    if (id > dictionary.count) {
+      throw new DneBinaryDatabaseFormatError(`Invalid binary string id: ${id}`);
+    }
+
+    const mapped = this.requireMapped();
+    const index = id - 1;
+    const block = index >>> DICTIONARY_BLOCK_SHIFT;
+    const blockStart = block << DICTIONARY_BLOCK_SHIFT;
+    const relativeOffset = this.readUint32(dictionary.blockOffsetsOffset + block * 4);
+    if (relativeOffset > dictionary.suffixDataLength) {
+      throw new DneBinaryDatabaseFormatError(`Invalid binary string block offset: ${relativeOffset}`);
+    }
+    let cursor = dictionary.suffixDataOffset + relativeOffset;
+    const decoded = this.decodeScratch;
+    let previousLength = 0;
+
+    for (let currentIndex = blockStart; currentIndex <= index; currentIndex++) {
+      const length = mapped[dictionary.lengthsOffset + currentIndex] ?? 0;
+      const prefixLength = mapped[dictionary.prefixesOffset + currentIndex] ?? 0;
+      if ((currentIndex === blockStart && prefixLength !== 0) || prefixLength > previousLength || prefixLength > length) {
+        throw new DneBinaryDatabaseFormatError(`Invalid binary front-coded string: ${id}`);
+      }
+      const suffixLength = length - prefixLength;
+      if (cursor < dictionary.suffixDataOffset || cursor + suffixLength > dictionary.suffixDataOffset + dictionary.suffixDataLength) {
+        throw new DneBinaryDatabaseFormatError(`Invalid binary string suffix: ${id}`);
+      }
+      decoded.set(mapped.subarray(cursor, cursor + suffixLength), prefixLength);
+      cursor += suffixLength;
+      previousLength = length;
+    }
+
+    return textDecoder.decode(decoded.subarray(0, previousLength));
+  }
+
+  private readCachedDictionaryString(
+    dictionary: BinaryDictionary,
+    id: number,
+    cache: (string | undefined)[],
+  ) {
+    if (id === 0) {
+      return null;
+    }
+    const cached = cache[id];
+    if (cached !== undefined) {
+      return cached;
+    }
+    const value = this.readDictionaryString(dictionary, id);
+    if (value !== null) {
+      cache[id] = value;
+    }
+    return value;
+  }
+
+  private readRequiredDictionaryString(dictionary: BinaryDictionary, id: number, field: string) {
+    const value = this.readDictionaryString(dictionary, id);
+    if (value === null) {
+      throw new DneBinaryDatabaseFormatError(`Binary database has a null required field: ${field}`);
+    }
+    return value;
+  }
+
+  private readPacked10(index: number) {
+    const mapped = this.requireMapped();
+    const region = this.header.sections.cepSuffixes;
+    const bitOffset = index * CEP_SUFFIX_BITS;
+    const byteIndex = bitOffset >>> 3;
+    const shift = bitOffset & 7;
+    const absoluteOffset = region.offset + byteIndex;
+    const value = (mapped[absoluteOffset] ?? 0)
+      | ((mapped[absoluteOffset + 1] ?? 0) << 8)
+      | ((mapped[absoluteOffset + 2] ?? 0) << 16);
+    return (value >>> shift) & 0x3ff;
+  }
+
+  private readPackedInteger(offset: number, width: 1 | 2 | 3 | 4) {
+    return readPackedIntegerFromData(this.requireData(), offset, width);
+  }
+
+  private readUint32(offset: number) {
+    return this.requireData().getUint32(offset, true);
+  }
+
+  private requireData() {
+    if (!this.data) {
+      throw new DneBinaryDatabaseClosedError();
+    }
+    return this.data;
+  }
+
+  private requireMapped() {
+    if (!this.mapped) {
+      throw new DneBinaryDatabaseClosedError();
+    }
+    return this.mapped;
+  }
+}
+
+/**
+ * Opens a binary database, reads its load metadata, and closes the temporary reader.
+ * @param path - Path to an existing binary database file.
+ * @returns Metadata parsed from the file at open time.
+ * @throws {DneBinaryDatabaseIOError} If the file cannot be mapped.
+ * @throws {DneBinaryDatabaseVersionError} If the binary version is unsupported.
+ * @throws {DneBinaryDatabaseFormatError} If the file layout or metadata are invalid.
+ */
+export async function readBinaryDatabaseMetadata(path: string): Promise<LoadMetadata> {
+  const reader = new DneBinaryDatabaseReader(path);
+  try {
+    return reader.metadata();
+  } finally {
+    reader.close();
+  }
+}
+
+function readHeader(data: DataView): BinaryHeader {
+  if (data.byteLength < BINARY_DATABASE_HEADER_SIZE) {
+    throw new DneBinaryDatabaseFormatError('Binary database header is truncated');
+  }
+  for (let index = 0; index < MAGIC.length; index++) {
+    if (data.getUint8(index) !== MAGIC[index]) {
+      throw new DneBinaryDatabaseFormatError('Invalid binary database magic');
+    }
+  }
+  const version = data.getUint16(8, true);
+  if (version !== BINARY_DATABASE_VERSION) {
+    throw new DneBinaryDatabaseVersionError(version, BINARY_DATABASE_VERSION);
+  }
+  if (data.getUint16(10, true) !== BINARY_DATABASE_HEADER_SIZE) {
+    throw new DneBinaryDatabaseFormatError('Unsupported binary database header size');
+  }
+  if (data.getUint8(22) !== SPARSE_RANK_SHIFT || data.getUint8(23) !== DICTIONARY_BLOCK_SHIFT) {
+    throw new DneBinaryDatabaseFormatError('Unsupported binary database block layout');
+  }
+  if (data.getUint16(24, true) !== SECTION_NAMES.length) {
+    throw new DneBinaryDatabaseFormatError('Unsupported binary database section table');
+  }
+
+  const sections = {} as Record<SectionName, Region>;
+  for (const [index, name,] of SECTION_NAMES.entries()) {
+    const offset = SECTION_TABLE_OFFSET + index * 8;
+    sections[name] = {
+      length: data.getUint32(offset + 4, true),
+      offset: data.getUint32(offset, true),
+    };
+  }
+  return {
+    cepPrefixOffsetWidth: readByteWidth(data.getUint8(20), 'CEP prefix offset'),
+    fileSize: data.getUint32(16, true),
+    municipalityCount: data.getUint32(28, true),
+    municipalityIdWidth: readByteWidth(data.getUint8(21), 'municipality id'),
+    rowCount: data.getUint32(12, true),
+    sections,
+  };
+}
+
+function validateHeader(data: DataView, header: BinaryHeader) {
+  if (header.fileSize !== data.byteLength) {
+    throw new DneBinaryDatabaseFormatError(`Binary database size mismatch: header=${header.fileSize}, actual=${data.byteLength}`);
+  }
+  if (!header.rowCount || !header.municipalityCount) {
+    throw new DneBinaryDatabaseFormatError('Binary database must contain rows and municipalities');
+  }
+  if (header.rowCount > maxPackedInteger(header.cepPrefixOffsetWidth)) {
+    throw new DneBinaryDatabaseFormatError('Binary row count does not fit the CEP prefix offset width');
+  }
+  if (header.municipalityCount > maxPackedInteger(header.municipalityIdWidth)) {
+    throw new DneBinaryDatabaseFormatError('Binary municipality count does not fit its id width');
+  }
+
+  let previousEnd = BINARY_DATABASE_HEADER_SIZE;
+  for (const name of SECTION_NAMES) {
+    const region = header.sections[name];
+    validateRegion(data.byteLength, region, name);
+    if (region.offset < previousEnd) {
+      throw new DneBinaryDatabaseFormatError(`Binary section is out of order or overlaps: ${name}`);
+    }
+    previousEnd = region.offset + region.length;
+  }
+  if (header.sections.cepPrefixOffsets.length !== CEP_PREFIX_OFFSETS_COUNT * header.cepPrefixOffsetWidth) {
+    throw new DneBinaryDatabaseFormatError('Binary CEP prefix directory has an invalid length');
+  }
+  if (header.sections.cepSuffixes.length !== packedBitLength(header.rowCount, CEP_SUFFIX_BITS)) {
+    throw new DneBinaryDatabaseFormatError('Binary CEP suffix column has an invalid length');
+  }
+  if (
+    header.sections.complementoBitmap.length !== bitmapByteLength(header.rowCount)
+    || header.sections.nomeBitmap.length !== bitmapByteLength(header.rowCount)
+  ) {
+    throw new DneBinaryDatabaseFormatError('Binary nullable bitmap has an invalid length');
+  }
+  const expectedRankLength = (Math.ceil(header.rowCount / SPARSE_RANK_ROWS) + 1) * 4;
+  if (
+    header.sections.complementoRanks.length !== expectedRankLength
+    || header.sections.nomeRanks.length !== expectedRankLength
+  ) {
+    throw new DneBinaryDatabaseFormatError('Binary sparse rank index has an invalid length');
+  }
+}
+
+function readDictionaries(data: DataView, header: BinaryHeader): BinaryDictionaries {
+  return {
+    bairro: readDictionary(data, header.sections.bairroDictionary, 'bairro'),
+    complemento: readDictionary(data, header.sections.complementoDictionary, 'complemento'),
+    logradouro: readDictionary(data, header.sections.logradouroDictionary, 'logradouro'),
+    municipio: readDictionary(data, header.sections.municipioDictionary, 'municipio'),
+    nome: readDictionary(data, header.sections.nomeDictionary, 'nome'),
+    uf: readDictionary(data, header.sections.ufDictionary, 'uf'),
+  };
+}
+
+function readDictionary(data: DataView, region: Region, name: string): BinaryDictionary {
+  if (region.length < DICTIONARY_HEADER_SIZE) {
+    throw new DneBinaryDatabaseFormatError(`Binary ${name} dictionary is truncated`);
+  }
+  const count = data.getUint32(region.offset, true);
+  const blockCount = data.getUint32(region.offset + 4, true);
+  const blockOffsetsRelative = data.getUint32(region.offset + 8, true);
+  const lengthsRelative = data.getUint32(region.offset + 12, true);
+  const prefixesRelative = data.getUint32(region.offset + 16, true);
+  const suffixDataRelative = data.getUint32(region.offset + 20, true);
+  const suffixDataLength = data.getUint32(region.offset + 24, true);
+  const idWidth = readByteWidth(data.getUint8(region.offset + 28), `${name} dictionary id`);
+  if (data.getUint8(region.offset + 29) !== DICTIONARY_BLOCK_SHIFT) {
+    throw new DneBinaryDatabaseFormatError(`Unsupported binary ${name} dictionary block size`);
+  }
+  if (blockCount !== Math.ceil(count / DICTIONARY_BLOCK_SIZE)) {
+    throw new DneBinaryDatabaseFormatError(`Binary ${name} dictionary has an invalid block count`);
+  }
+  if (count > maxPackedInteger(idWidth)) {
+    throw new DneBinaryDatabaseFormatError(`Binary ${name} dictionary does not fit its id width`);
+  }
+  if (
+    blockOffsetsRelative !== DICTIONARY_HEADER_SIZE
+    || lengthsRelative !== blockOffsetsRelative + blockCount * 4
+    || prefixesRelative !== lengthsRelative + count
+    || suffixDataRelative !== prefixesRelative + count
+    || suffixDataRelative > region.length
+    || suffixDataLength !== region.length - suffixDataRelative
+  ) {
+    throw new DneBinaryDatabaseFormatError(`Binary ${name} dictionary has an invalid layout`);
+  }
+
+  const dictionary = {
+    blockCount,
+    blockOffsetsOffset: region.offset + blockOffsetsRelative,
+    count,
+    idWidth,
+    lengthsOffset: region.offset + lengthsRelative,
+    prefixesOffset: region.offset + prefixesRelative,
+    region,
+    suffixDataLength,
+    suffixDataOffset: region.offset + suffixDataRelative,
+  };
+  if (blockCount && data.getUint32(dictionary.blockOffsetsOffset, true) !== 0) {
+    throw new DneBinaryDatabaseFormatError(`Binary ${name} dictionary has an invalid first block offset`);
+  }
+  return dictionary;
+}
+
+function validateLayout(data: DataView, header: BinaryHeader, dictionaries: BinaryDictionaries) {
+  const sections = header.sections;
+  assertRegionLength(sections.localidadeFlags, header.rowCount, 'locality indicators');
+  assertRegionLength(sections.logradouroIds, header.rowCount * dictionaries.logradouro.idWidth, 'logradouro ids');
+  assertRegionLength(sections.bairroIds, header.rowCount * dictionaries.bairro.idWidth, 'bairro ids');
+  assertRegionLength(sections.municipalityIds, header.rowCount * header.municipalityIdWidth, 'municipality ids');
+  const municipalityRecordWidth = 3 + dictionaries.municipio.idWidth + dictionaries.uf.idWidth;
+  assertRegionLength(
+    sections.municipalities,
+    header.municipalityCount * municipalityRecordWidth,
+    'municipalities',
+  );
+  validateSparseLayout(data, sections.complementoRanks, sections.complementoIds, dictionaries.complemento.idWidth, 'complemento');
+  validateSparseLayout(data, sections.nomeRanks, sections.nomeIds, dictionaries.nome.idWidth, 'nome');
+
+  const firstPrefix = readPackedIntegerFromData(data, sections.cepPrefixOffsets.offset, header.cepPrefixOffsetWidth);
+  const lastPrefix = readPackedIntegerFromData(
+    data,
+    sections.cepPrefixOffsets.offset + CEP_PREFIX_COUNT * header.cepPrefixOffsetWidth,
+    header.cepPrefixOffsetWidth,
+  );
+  if (firstPrefix !== 0 || lastPrefix !== header.rowCount) {
+    throw new DneBinaryDatabaseFormatError('Binary CEP prefix directory has invalid boundaries');
+  }
+}
+
+function validateSparseLayout(
+  data: DataView,
+  ranks: Region,
+  ids: Region,
+  idWidth: 1 | 2 | 3 | 4,
+  name: string,
+) {
+  const denseCount = data.getUint32(ranks.offset + ranks.length - 4, true);
+  if (ids.length !== denseCount * idWidth) {
+    throw new DneBinaryDatabaseFormatError(`Binary ${name} sparse ids have an invalid length`);
+  }
+}
+
+function parseMetadata(mapped: Uint8Array<ArrayBuffer>, region: Region): LoadMetadata {
+  const text = textDecoder.decode(mapped.subarray(region.offset, region.offset + region.length));
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (cause) {
+    throw new DneBinaryDatabaseFormatError('Binary database metadata is invalid JSON', { cause });
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new DneBinaryDatabaseFormatError('Binary database metadata must be an object');
+  }
+  return parsed as LoadMetadata;
+}
+
+function validateRegion(fileLength: number, region: Region, name: string) {
+  if (
+    region.offset < BINARY_DATABASE_HEADER_SIZE
+    || region.offset > fileLength
+    || region.length > fileLength - region.offset
+  ) {
+    throw new DneBinaryDatabaseFormatError(`Binary ${name} region is outside the file`);
+  }
+}
+
+function assertRegionLength(region: Region, expected: number, name: string) {
+  if (region.length !== expected) {
+    throw new DneBinaryDatabaseFormatError(`Binary ${name} region has an invalid length`);
+  }
+}

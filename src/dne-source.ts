@@ -41,9 +41,27 @@ const LOCAL_FILE_FILENAME_LENGTH_OFFSET = 26;
 const LOCAL_FILE_FIXED_SIZE = 30;
 const LOCAL_FILE_HEADER = 0x04034b50;
 
+/**
+ * Read-only access to decoded DNE files, whether stored in a directory or ZIP archive.
+ */
 export type DneDataSource = {
+  /**
+   * Lists available source filenames matching a DNE basename pattern.
+   * @param glob - Filename or wildcard pattern such as `LOG_LOGRADOURO_*.TXT`.
+   * @returns Matching basenames in deterministic order.
+   */
   matchingFiles(glob: string): string[];
+  /**
+   * Streams decoded source records without line terminators.
+   * @param file - A filename returned by `matchingFiles`.
+   * @returns An asynchronous record sequence; source and archive validation failures propagate during iteration.
+   */
   readLines(file: string): AsyncIterable<string>;
+  /**
+   * Optionally reads a complete decoded source file for loaders that support buffered parsing.
+   * @param file - A filename returned by `matchingFiles`.
+   * @returns The entire decoded file content.
+   */
   readText?(file: string): Promise<string>;
 };
 
@@ -56,19 +74,38 @@ type ZipEntry = {
   localHeaderOffset: number;
 };
 
+/**
+ * Reads Latin-1 DNE text files from one directory with a filename inventory captured at construction.
+ */
 export class DirectoryDneSource implements DneDataSource {
   private files: string[];
 
+  /**
+   * Captures the sorted file inventory for a directory.
+   * @param path - Directory containing the DNE text files.
+   * @throws {Error} If the directory cannot be scanned.
+   */
   constructor(private path: string) {
     this.files = Array.from(
       new Bun.Glob('*').scanSync({ cwd: path, onlyFiles: true }),
     ).sort();
   }
 
+  /**
+   * Lists captured filenames that match a DNE source pattern.
+   * @param glob - Basename or wildcard pattern.
+   * @returns Matching basenames in sorted order.
+   */
   matchingFiles(glob: string) {
     return matchingFiles(this.files, glob);
   }
 
+  /**
+   * Streams a captured source file as decoded Latin-1 records.
+   * @param file - Basename returned by `matchingFiles`.
+   * @returns Records without line terminators.
+   * @throws {Error} If the file cannot be read.
+   */
   async *readLines(file: string) {
     yield* decodeLines(Bun.file(join(this.path, file)).stream());
   }
@@ -133,6 +170,12 @@ class BufferedZipDneSource implements DneDataSource {
   }
 }
 
+/**
+ * Finds a complete DNE source in a directory or its `Delimitado` subdirectory.
+ * @param path - Candidate directory.
+ * @param schema - Definitions describing all required source files.
+ * @returns A directory-backed source, or null if no complete source is found.
+ */
 export function resolveDirectoryDneSource(
   path: string,
   schema: TableDefinition[],
@@ -155,6 +198,14 @@ export function resolveDirectoryDneSource(
   return findMissingGlob(delimited, schema) ? null : delimited;
 }
 
+/**
+ * Resolves a ZIP source, materializing an embedded e-DNE ZIP when present.
+ * @param path - Existing ZIP file path.
+ * @param schema - Definitions describing all required source files.
+ * @param nestedZipPath - Temporary path for an embedded archive; keep it available until all reads finish.
+ * @returns A source that streams the selected archive entries and verifies their CRCs during reads.
+ * @throws {Error} If archive parsing, required-file validation, or file access fails.
+ */
 export async function resolveZipDneSource(
   path: string,
   schema: TableDefinition[],
@@ -176,7 +227,11 @@ export async function resolveZipDneSource(
 }
 
 /**
- * Preserves the former full-buffer implementation for comparative benchmarks.
+ * Resolves a complete in-memory ZIP, including nested e-DNE archives, for comparative benchmarks.
+ * @param buffer - Complete archive bytes, retained by the returned source.
+ * @param schema - Definitions describing the required source files.
+ * @returns A buffered source that decodes Latin-1 text and validates CRCs during reads.
+ * @throws {Error} If the archive structure or required files are invalid.
  */
 export function resolveBufferedZipDneSource(
   buffer: Buffer,

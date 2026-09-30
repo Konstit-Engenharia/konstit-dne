@@ -1,6 +1,6 @@
 # CLI para e-DNE dos Correios
 
-Crie em segundos uma base SQLite local, compacta e pronta para consultar os CEPs do Brasil com dados do e-DNE dos Correios. Depois da carga, as consultas funcionam sem servidor e sem acesso à rede.
+Crie em segundos uma base local, em SQLite ou em formato binário compacto, pronta para consultar os CEPs do Brasil com dados do e-DNE dos Correios. Depois da carga, as consultas funcionam sem servidor e sem acesso à rede.
 
 O `@konstit/dne` recebe um diretório, um arquivo ZIP local ou o arquivo público mais recente do e-DNE. Os dados são processados em fluxo e gravados diretamente em uma única tabela `dne` indexada, sem tabelas brutas intermediárias.
 
@@ -8,6 +8,7 @@ Principais vantagens:
 
 - **Rápido e compacto:** em um benchmark de 10 execuções realizado em 2026-08-30, a geração completa a partir do arquivo público levou 5,73 segundos em média, incluindo o download. A base final continha 1.605.136 registros e ocupava 125,4 MiB.
 - **Consultas locais simples:** procure um CEP, consulte vários CEPs em lote ou execute SQL somente leitura diretamente no arquivo SQLite.
+- **Formato binário opcional:** use `--format binary` para gerar um arquivo SoA com strings internadas e leitura mmap, otimizado para lookup por CEP.
 - **Atualizações seguras:** o modo WAL e uma única transação permitem atualizar a base sem expor dados parciais aos processos de leitura.
 - **Atualizações automáticas:** registre uma agenda com `Bun.cron` para manter a base atualizada no Linux ou macOS. Cada job usa uma versão fixada do pacote, e o lock exclusivo evita cargas simultâneas.
 - **Pronto para automação:** a CLI oferece saídas JSON e JSONL estáveis, códigos de saída documentados e separação entre dados e mensagens de progresso.
@@ -25,6 +26,8 @@ Este pacote fornece somente uma CLI. Ele não expõe uma API pública de bibliot
 
 ```sh
 bunx @konstit/dne build --db ./dne.db
+bunx @konstit/dne build --format binary
+bunx @konstit/dne get 01001-000 --db ./dne.bin
 bunx @konstit/dne get 01001-000 --db ./dne.db
 ```
 
@@ -42,7 +45,9 @@ Os nomes de comandos, subcomandos, opções e flags permanecem em inglês. A aju
 `--db` é uma opção global. Ela pode aparecer antes ou depois de um subcomando. O caminho da base segue esta ordem de precedência:
 
 1. `--db PATH`
-2. `./dne.db`
+2. `./dne.bin` em `build --format binary`; `./dne.db` nos demais comandos.
+
+No build binário, a extensão do caminho é substituída por `.bin` ou adicionada quando não existe: `--db ./base.db` e `--db ./base` geram `./base.bin`. Para consultar ou inspecionar o arquivo binário, informe seu caminho com `--db ./base.bin`.
 
 Use `--color` para forçar cores e `--no-color` para desativá-las. Sem essas opções, a CLI detecta o terminal. A presença da variável `NO_COLOR` sempre desativa as cores.
 
@@ -59,7 +64,11 @@ bunx @konstit/dne build --db ./dne.db --check --json
 
 `build` grava cada etapa e sua duração em formato compacto (`ms`, `s`, `min` ou `h`) em stderr. O resultado final é gravado em stdout. Use `--quiet` para ocultar o progresso. Use `--json` para receber o caminho da base, a quantidade de registros, o tamanho em bytes, os metadados da fonte, o tempo total em `elapsed_ms` e o estado da atualização.
 
-Cada carga grava a versão do `@konstit/dne` em `edne_metadata`. Ao usar uma fonte remota, a CLI também grava `Last-Modified`, ETag, tamanho do conteúdo, URL da fonte e horário da carga. Todos os validadores disponíveis devem continuar iguais para a base ser considerada atual. Uma execução posterior de `build` não recria a base se a fonte não mudou e mostra o `Last-Modified` remoto na saída textual. `--check` valida a estrutura de uma fonte local ou verifica se há uma atualização remota, sem alterar a base. `--force` ignora os metadados e recria a base.
+Cada carga grava a versão do `@konstit/dne` em `edne_metadata` (ou no cabeçalho do arquivo binário). Ao usar uma fonte remota, a CLI também grava `Last-Modified`, ETag, tamanho do conteúdo, URL da fonte e horário da carga. Todos os validadores disponíveis devem continuar iguais para a base ser considerada atual. Uma execução posterior de `build` não recria a base se a fonte não mudou e mostra o `Last-Modified` remoto na saída textual. `--check` valida a estrutura de uma fonte local ou verifica se há uma atualização remota, sem alterar a base. `--force` ignora os metadados e recria a base.
+
+O formato binário é selecionado explicitamente com `--format binary`. Ele mantém os mesmos dez campos da tabela unificada em um layout próprio para `mmap`: o CEP usa um diretório de prefixos e sufixos de 10 bits; município e UF são compartilhados; campos opcionais usam bitmaps; os indicadores da localidade ocupam um byte por CEP; e as strings ficam em dicionários por coluna com front-coding em blocos de oito. `get`, `status` e `schema` detectam o formato automaticamente. O comando `sql` continua disponível somente para bases SQLite.
+
+A especificação completa para implementar leitores em outras linguagens está em [docs/binary-layout.md](docs/binary-layout.md).
 
 Para fontes HTTP ou HTTPS, a CLI tenta obter os metadados com `HEAD`. Se o servidor não aceitar esse método, ela usa uma requisição `GET` limitada ao primeiro byte. Requisições têm timeout de 30 segundos e até duas novas tentativas para falhas transitórias, respostas 408, 425, 429 e 5xx.
 
@@ -118,7 +127,7 @@ printf '01001000\n20040002\n' | bunx @konstit/dne get --jsonl
 
 Os formatos aceitos são `01001000` e `01001-000`. A entrada por arquivo ou stdin pode usar espaços, vírgulas ou pontos e vírgulas como separadores.
 
-`get` abre o SQLite em modo somente leitura. Se o caminho da base não existir, nenhum arquivo será criado. O formato JSONL lê a entrada e grava cada resultado de forma incremental, sem manter o lote completo na memória.
+`get` abre o SQLite em modo somente leitura ou mapeia o arquivo binário com `mmap`. Se o caminho da base não existir, nenhum arquivo será criado. O formato JSONL lê a entrada e grava cada resultado de forma incremental, sem manter o lote completo na memória.
 
 ## Inspecionar a base
 
@@ -185,11 +194,28 @@ CREATE TABLE "dne" (
   "municipio_cod_ibge" INTEGER NOT NULL,
   "uf" TEXT NOT NULL,
   "nome" TEXT,
+  "localidade_situacao" INTEGER NOT NULL CHECK (localidade_situacao IN (0, 1, 2, 3)),
+  "localidade_tipo" TEXT NOT NULL CHECK (localidade_tipo IN ('M', 'D', 'P')),
   PRIMARY KEY ("cep")
 ) WITHOUT ROWID;
 ```
 
 `cep` é a chave primária, sem digito separador. A tabela usa `WITHOUT ROWID` e páginas de 32 KiB para oferecer consultas diretas com menor uso de espaço.
+
+`localidade_situacao` preserva `LOC_IN_SIT`: `0` indica localidade sem codificação por logradouro, `1` indica localidade codificada, `2` indica distrito ou povoado inserido na codificação e `3` indica localidade em fase de codificação por logradouro. Na situação `3`, o CEP geral e os CEPs de logradouros coexistem durante a transição, conforme `Delimitado/Leiautes_delimitador.doc` incluído no [arquivo oficial do e-DNE](https://www2.correios.com.br/sistemas/edne/download/eDNE_Basico.zip). `localidade_tipo` preserva `LOC_IN_TIPO_LOC`: `M` para município, `D` para distrito e `P` para povoado. Os indicadores pertencem à localidade de origem de cada CEP, inclusive nos registros de logradouros, caixas postais comunitárias, grandes usuários e unidades operacionais. Para distritos e povoados, `municipio` e `municipio_cod_ibge` continuam identificando o município superior.
+
+Para listar municípios com CEP único:
+
+```sql
+SELECT DISTINCT municipio, municipio_cod_ibge, uf
+FROM dne
+WHERE localidade_tipo = 'M' AND localidade_situacao = 0
+ORDER BY uf, municipio;
+```
+
+Um município com CEP geral ainda pode ter CEPs específicos de estabelecimentos ou unidades postais. Por isso, contar seus registros e exigir apenas um CEP não substitui os indicadores oficiais.
+
+Bases anteriores precisam de uma nova importação para recuperar esses campos. Execute `build --force` com a fonte e o caminho da base desejados. A atualização do SQLite substitui o esquema dentro da transação somente após validar a nova carga. O formato binário passa à versão 3; arquivos das versões anteriores precisam ser regenerados. A versão do esquema é gravada em `schema_version`, e uma base com esquema antigo deixa de ser considerada atual mesmo quando os validadores da fonte remota não mudaram.
 
 ### Drizzle ORM schema
 
@@ -205,6 +231,8 @@ export const dneTable = sqliteTable('dne', (t) => ({
   municipio_cod_ibge: t.integer().notNull(),
   uf: t.text().notNull(),
   nome: t.text(),
+  localidade_situacao: t.integer().$type<0 | 1 | 2 | 3>().notNull(),
+  localidade_tipo: t.text({ enum: ['M', 'D', 'P'] }).notNull(),
 }));
 ```
 

@@ -1,64 +1,114 @@
 import { Database } from 'bun:sqlite';
+import { cepToU32 } from './cep.ts';
 import type { DneDataSource } from './dne-source.ts';
 import {
+  DATABASE_SCHEMA_VERSION,
   getSourceFieldIndexes,
   getTableFilesGlob,
   getUnifiedTable,
+  LOCALIDADE_TIPOS,
+  type LocalidadeSituacao,
+  type LocalidadeTipo,
   type TableDefinition,
 } from './schema.ts';
 import {
   SQLITE_CACHE_SIZE,
+  SQLITE_CEP_TABLE_NAME,
   SQLITE_INSERT_BATCH_SIZE,
   SQLITE_METADATA_TABLE_NAME,
   SQLITE_PAGE_SIZE,
 } from './settings.ts';
 
 type InsertStatement = ReturnType<Database['prepare']>;
+/** String-valued provenance and quality metadata stored alongside the imported CEP rows. */
 export type LoadMetadata = Record<string, string> & {
+  /** Version of the package that performed the import. */
   package_version?: string;
+  /** Logical database schema revision used to determine whether a rebuild is required. */
+  schema_version?: string;
+  /** Source Content-Length header, retained as text. */
   source_content_length?: string;
+  /** Source ETag header, including any quotes or weak-validator prefix. */
   source_etag?: string;
+  /** Source category, normally `local` or `remote`. */
   source_kind?: string;
+  /** Unmodified Last-Modified response header. */
   source_last_modified?: string;
+  /** Remote source URL used for validator comparisons. */
   source_url?: string;
 };
 
+/** Unified address returned by CEP lookups in current SQLite and binary databases. */
 export type DneRow = {
+  /** Neighborhood or subordinate locality name, when available. */
   bairro: string | null;
+  /** Eight ASCII digits with leading zeros retained and no separator. */
   cep: string;
+  /** Additional address information, when available. */
   complemento: string | null;
+  /** Postal coding status of the originating locality, not necessarily the parent municipality. */
+  localidade_situacao: LocalidadeSituacao;
+  /** Municipality, district, or village classification of the originating locality. */
+  localidade_tipo: LocalidadeTipo;
+  /** Street or delivery address; null for a locality-wide CEP. */
   logradouro: string | null;
+  /** Municipality name, resolved to the parent for districts and villages. */
   municipio: string;
+  /** Seven-digit IBGE municipality code represented as an integer. */
   municipio_cod_ibge: number;
+  /** Named recipient, community mailbox, or postal unit, when available. */
   nome: string | null;
+  /** Two-letter Brazilian state abbreviation. */
   uf: string;
 };
 
+/** Receives human-readable progress messages during a database import. */
 export type LoadProgress = (message: string) => void;
 
+/** Indicates that source validation rejected rows or produced no usable CEP records. */
 export class DneSourceQualityError extends Error {
+  /**
+   * Creates a source-quality failure that aborts the current load transaction.
+   * @param message - Validation summary, including rejection counts or reasons when available.
+   */
   constructor(message: string) {
     super(message);
     this.name = 'DneSourceQualityError';
   }
 }
 
+/** Read-only SQLite access for CEP lookup, schema inspection, metadata, and bounded SQL queries. */
 export class DneDatabaseReader {
   private db: Database;
 
+  /**
+   * Opens an existing SQLite database in read-only mode with a 30-second busy timeout.
+   * @param databasePath - Path to the SQLite database.
+   * @throws {Error} If SQLite cannot open the database.
+   */
   constructor(databasePath: string) {
     this.db = new Database(databasePath, { readonly: true });
     this.db.run('PRAGMA busy_timeout = 30000');
   }
 
+  /** Closes the underlying SQLite connection. Do not perform further operations on this reader. */
   close() {
     this.db.close();
   }
 
+  /**
+   * Checks whether a named table exists in the database catalog.
+   * @param tableName - Physical table name.
+   * @returns True when the catalog contains a table with this name.
+   */
   hasTable(tableName: string) {
     return Boolean(this.db.query('SELECT 1 FROM sqlite_master WHERE type = \'table\' AND name = ?').get(tableName));
   }
 
+  /**
+   * Reads the import metadata table.
+   * @returns A new metadata map, or null when the metadata table is absent.
+   */
   metadata(): LoadMetadata | null {
     if (!this.hasTable(SQLITE_METADATA_TABLE_NAME)) {
       return null;
@@ -71,15 +121,41 @@ export class DneDatabaseReader {
     return Object.fromEntries(rows.map((row) => [row.key, row.value]));
   }
 
-  queryCep(cepTableName: string, cep: string): DneRow | null {
-    return this.db.query(`SELECT * FROM ${quoteIdent(cepTableName)} WHERE cep = ?`).get(cep) as DneRow | null;
+  /**
+   * Looks up a plain or hyphenated CEP in the default unified table.
+   * @param cep - Eight ASCII digits or `NNNNN-NNN`, without surrounding whitespace.
+   * @returns The matching address, or null for invalid input or a missing CEP.
+   * @throws {Error} If the database cannot be queried or the matched row lacks the current locality fields.
+   */
+  queryCep(cep: string): DneRow | null {
+    const parsed = cepToU32(cep);
+    if (Number.isNaN(parsed)) {
+      return null;
+    }
+    const row = this.db.query(`SELECT * FROM ${quoteIdent(SQLITE_CEP_TABLE_NAME)} WHERE cep = ?`)
+      .get(cep.length === 8 ? cep : `${cep.slice(0, 5)}${cep.slice(6)}`) as DneRow | null;
+    if (row && (row.localidade_situacao === undefined || row.localidade_tipo === undefined)) {
+      throw new Error('Database schema lacks locality indicators. Rebuild the database with build --force.');
+    }
+    return row;
   }
 
+  /**
+   * Counts all rows in a SQLite table.
+   * @param tableName - Existing physical table name.
+   * @returns The number of rows reported by SQLite.
+   * @throws {Error} If the table cannot be queried.
+   */
   rowCount(tableName: string) {
     const row = this.db.query(`SELECT count(*) AS count FROM ${quoteIdent(tableName)}`).get() as { count: number; };
     return row.count;
   }
 
+  /**
+   * Reads a table's stored CREATE statement without reconstructing it from the declared schema.
+   * @param tableName - Physical table name.
+   * @returns The catalog SQL, or null when no SQL definition is available.
+   */
   tableSchema(tableName: string) {
     const row = this.db.query('SELECT sql FROM sqlite_master WHERE type = \'table\' AND name = ?').get(tableName) as {
       sql: string | null;
@@ -87,6 +163,13 @@ export class DneDatabaseReader {
     return row?.sql ?? null;
   }
 
+  /**
+   * Executes caller-supplied SQL on the read-only connection, retaining a bounded result.
+   * @param sql - A statement accepted by SQLite; this method does not apply the CLI's statement filter.
+   * @param limit - Positive maximum number of rows to retain.
+   * @returns Rows plus a flag indicating whether at least one additional row was available.
+   * @throws {Error} If statement preparation or execution fails.
+   */
   querySql(sql: string, limit: number) {
     const rows: Record<string, unknown>[] = [];
     const statement = this.db.query(sql);
@@ -119,6 +202,8 @@ type UnifiedInsertRow = [
   municipioCodIbge: number,
   uf: string,
   nome: string | null,
+  localidadeSituacao: LocalidadeSituacao,
+  localidadeTipo: LocalidadeTipo,
 ];
 
 type Localidade = {
@@ -127,6 +212,8 @@ type Localidade = {
   cep: string | null;
   locNuSub: string | null;
   munNu: number | null;
+  situacao: LocalidadeSituacao;
+  tipo: LocalidadeTipo;
 };
 
 type LocalidadeCandidate = Localidade & {
@@ -139,25 +226,39 @@ type Bairro = {
   nome: string;
 };
 
+/** Row counts for a source file, import stage, or complete load. */
 export type LoadQualityCounts = {
+  /** Source rows examined. */
   read: number;
+  /** Source rows accepted after validation. */
   accepted: number;
+  /** Source rows rejected by validation. */
   rejected: number;
 };
 
+/** Validation counts augmented with machine-readable rejection reasons. */
 export type LoadQualityBreakdown = LoadQualityCounts & {
+  /** Rejected-row counts grouped by reason identifier. */
   rejection_reasons: Record<string, number>;
 };
 
+/** Aggregate validation results for a logical DNE source table. */
 export type LoadQualityStage = LoadQualityBreakdown & {
+  /** Per-file validation results keyed by the source filename. */
   files: Record<string, LoadQualityBreakdown>;
 };
 
+/** Quality report persisted only after a load has passed validation. */
 export type LoadQualityReport = {
+  /** Revision of the quality-report structure, independent of the database schema version. */
   version: 1;
+  /** Successful validation marker; failed loads do not persist a report. */
   status: 'passed';
+  /** Number of CEP rows written to the unified output. */
   output_rows: number;
+  /** Total source-row counts across every stage. */
   totals: LoadQualityCounts;
+  /** Validation results keyed by logical DNE source table name. */
   stages: Record<string, LoadQualityStage>;
 };
 
@@ -292,14 +393,14 @@ class BatchedUnifiedInsert implements UnifiedInsert {
 
     const rows = this.rows;
     this.rows = [];
-    const params = Array.from({ length: rows.length * 8 }, () => null as UnifiedInsertValue);
+    const params = Array.from({ length: rows.length * 10 }, () => null as UnifiedInsertValue);
 
     for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
       const row = rows[rowIndex];
       if (!row) {
         throw new Error(`Missing row at index ${rowIndex}`);
       }
-      const offset = rowIndex * 8;
+      const offset = rowIndex * 10;
       params[offset] = row[0];
       params[offset + 1] = row[1];
       params[offset + 2] = row[2];
@@ -308,6 +409,8 @@ class BatchedUnifiedInsert implements UnifiedInsert {
       params[offset + 5] = row[5];
       params[offset + 6] = row[6];
       params[offset + 7] = row[7];
+      params[offset + 8] = row[8];
+      params[offset + 9] = row[9];
     }
 
     this.statementFor(rows.length).run(...params);
@@ -326,10 +429,10 @@ class BatchedUnifiedInsert implements UnifiedInsert {
       return statement;
     }
 
-    const placeholders = Array.from({ length: rowCount }, () => '(?, ?, ?, ?, ?, ?, ?, ?)').join(', ');
+    const placeholders = Array.from({ length: rowCount }, () => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ');
     statement = this.db.prepare(`
       INSERT INTO ${quoteIdent(this.tableName)}
-        (cep, logradouro, complemento, bairro, municipio, municipio_cod_ibge, uf, nome)
+        (cep, logradouro, complemento, bairro, municipio, municipio_cod_ibge, uf, nome, localidade_situacao, localidade_tipo)
       VALUES ${placeholders}
     `);
     this.statements.set(rowCount, statement);
@@ -337,17 +440,25 @@ class BatchedUnifiedInsert implements UnifiedInsert {
   }
 }
 
+/** Imports DNE source files into a unified SQLite table with transactional source validation. */
 export class DneDatabaseWriter {
   private db: Database;
   private tableByOriginalName: Map<string, TableDefinition>;
   private unifiedTable: TableDefinition;
 
+  /**
+   * Opens or creates the SQLite destination for subsequent imports.
+   * @param databasePath - Destination path or `:memory:`.
+   * @param schema - Source mappings and one unified output table definition.
+   * @throws {Error} If the database cannot be opened or the unified table is missing.
+   */
   constructor(databasePath: string, schema: TableDefinition[]) {
     this.db = new Database(databasePath);
     this.tableByOriginalName = new Map(schema.map((table) => [table.originalName, table]));
     this.unifiedTable = getUnifiedTable(schema);
   }
 
+  /** Checkpoints and truncates the WAL, then closes the SQLite connection. */
   close() {
     this.db.run('PRAGMA locking_mode = NORMAL');
     // Disable persistent WAL (needed on macOS)
@@ -357,13 +468,23 @@ export class DneDatabaseWriter {
     this.db.close();
   }
 
+  /**
+   * Replaces the unified table contents and metadata in a single transaction.
+   * Schema changes, rejected rows, source errors, and callback failures roll back together.
+   * @param source - Complete DNE source with the files required by the configured schema.
+   * @param metadata - Caller provenance; generated schema and quality metadata take precedence.
+   * @param onProgress - Synchronous callback invoked when each import stage starts.
+   * @returns The number of CEP records committed.
+   * @throws {DneSourceQualityError} If validation rejects rows or the import produces no records.
+   * @throws {Error} If source access, SQLite operations, or a progress callback fails.
+   */
   async loadFromSource(source: DneDataSource, metadata: LoadMetadata = {}, onProgress: LoadProgress = () => {}) {
     const cepTable = this.unifiedTable;
     const quality = new LoadQualityTracker();
 
     this.configureBulkLoad();
     await this.transaction(async () => {
-      this.db.run(createTableSql(cepTable));
+      prepareTableForLoad(this.db, cepTable);
       this.createMetadataTable();
       this.db.run(`DELETE FROM ${quoteIdent(cepTable.name)}`);
       this.db.run(`DELETE FROM ${quoteIdent(SQLITE_METADATA_TABLE_NAME)}`);
@@ -397,6 +518,7 @@ export class DneDatabaseWriter {
         const report = quality.report(outputRows);
         this.writeMetadata({
           ...metadata,
+          schema_version: DATABASE_SCHEMA_VERSION,
           quality_report: JSON.stringify(report),
           quality_rows_accepted: String(report.totals.accepted),
           quality_rows_read: String(report.totals.read),
@@ -417,14 +539,16 @@ export class DneDatabaseWriter {
     await this.forEachSelectedRow(
       table,
       source,
-      getSourceFieldIndexes(table, ['locNu', 'uf', 'nome', 'cep', 'locNuSub', 'munNu']),
+      getSourceFieldIndexes(table, ['locNu', 'uf', 'nome', 'cep', 'situacao', 'tipo', 'locNuSub', 'munNu']),
       quality,
       (row, _file, counter) => {
-        const [locNu = null, uf = null, nome = null, cep = null, locNuSub = null, munNuRaw = null,] = row;
+        const [locNu = null, uf = null, nome = null, cep = null, situacao = null, tipoRaw = null, locNuSub = null, munNuRaw = null,] = row;
         const requiredProblem = missingRequiredField([
           ['locNu', locNu],
           ['uf', uf],
           ['nome', nome],
+          ['situacao', situacao],
+          ['tipo', tipoRaw],
         ]);
         if (requiredProblem || !locNu || !uf || !nome) {
           counter.reject(requiredProblem ?? 'invalid_structure');
@@ -442,6 +566,15 @@ export class DneDatabaseWriter {
           counter.reject('invalid_ibge');
           return;
         }
+        if (situacao !== '0' && situacao !== '1' && situacao !== '2' && situacao !== '3') {
+          counter.reject('invalid_localidade_situacao');
+          return;
+        }
+        const tipo = LOCALIDADE_TIPOS.find((value) => value === tipoRaw);
+        if (!tipo) {
+          counter.reject('invalid_localidade_tipo');
+          return;
+        }
         if (candidates.has(locNu)) {
           counter.reject('duplicate_localidade');
           return;
@@ -453,6 +586,8 @@ export class DneDatabaseWriter {
           cep,
           locNuSub,
           munNu: munNuRaw === null ? null : Number(munNuRaw),
+          situacao: Number(situacao) as LocalidadeSituacao,
+          tipo,
           quality: counter,
         });
       },
@@ -622,6 +757,8 @@ export class DneDatabaseWriter {
           municipality.munNu,
           uf,
           null,
+          localidade.situacao,
+          localidade.tipo,
         );
         counter.accept();
       },
@@ -631,7 +768,18 @@ export class DneDatabaseWriter {
   private insertLocalidades(insert: UnifiedInsert, localidades: Map<string, Localidade>) {
     for (const localidade of localidades.values()) {
       if (localidade.cep && localidade.locNuSub === null && localidade.munNu !== null) {
-        insert.run(localidade.cep, null, null, null, localidade.nome, localidade.munNu, localidade.uf, null);
+        insert.run(
+          localidade.cep,
+          null,
+          null,
+          null,
+          localidade.nome,
+          localidade.munNu,
+          localidade.uf,
+          null,
+          localidade.situacao,
+          localidade.tipo,
+        );
       }
     }
   }
@@ -640,7 +788,18 @@ export class DneDatabaseWriter {
     for (const localidade of localidades.values()) {
       const parent = localidade.locNuSub ? localidades.get(localidade.locNuSub) : undefined;
       if (localidade.cep && parent?.munNu !== null && parent?.munNu !== undefined) {
-        insert.run(localidade.cep, null, null, localidade.nome, parent.nome, parent.munNu, localidade.uf, null);
+        insert.run(
+          localidade.cep,
+          null,
+          null,
+          localidade.nome,
+          parent.nome,
+          parent.munNu,
+          localidade.uf,
+          null,
+          localidade.situacao,
+          localidade.tipo,
+        );
       }
     }
   }
@@ -695,7 +854,18 @@ export class DneDatabaseWriter {
         }
 
         const [logradouro, complemento,] = splitAddress(endereco);
-        insert.run(cep, logradouro, complemento, null, municipality.nome, municipality.munNu, uf, nome);
+        insert.run(
+          cep,
+          logradouro,
+          complemento,
+          null,
+          municipality.nome,
+          municipality.munNu,
+          uf,
+          nome,
+          localidade.situacao,
+          localidade.tipo,
+        );
         counter.accept();
       },
     );
@@ -795,7 +965,18 @@ export class DneDatabaseWriter {
         }
 
         const [logradouro, complemento,] = splitAddress(endereco);
-        insert.run(cep, logradouro, complemento, bairro.nome, municipality.nome, municipality.munNu, uf, nome);
+        insert.run(
+          cep,
+          logradouro,
+          complemento,
+          bairro.nome,
+          municipality.nome,
+          municipality.munNu,
+          uf,
+          nome,
+          localidade.situacao,
+          localidade.tipo,
+        );
         counter.accept();
       },
     );
@@ -891,10 +1072,44 @@ export class DneDatabaseWriter {
   }
 }
 
+/**
+ * Creates a generated table, replacing it when its column names, order, or types differ.
+ * Call inside a transaction: replacing the table discards its current contents and indexes.
+ * @param db - Writable SQLite connection owned by the caller.
+ * @param table - Expected generated table definition.
+ * @throws {Error} If catalog inspection or schema creation fails.
+ */
+export function prepareTableForLoad(db: Database, table: TableDefinition) {
+  const columns = db.query(`PRAGMA table_info(${quoteIdent(table.name)})`).all() as { name: string; type: string; }[];
+  const definition = db.query('SELECT sql FROM sqlite_master WHERE type = \'table\' AND name = ?').get(table.name) as {
+    sql: string;
+  } | null;
+  if (
+    columns.length && (
+      columns.length !== table.columns.length
+      || columns.some((column, index) => column.name !== table.columns[index]?.name || column.type !== table.columns[index]?.type)
+      || table.columns.some((column) => column.check && !definition?.sql.includes(`CHECK (${column.check})`))
+    )
+  ) {
+    db.run(`DROP TABLE ${quoteIdent(table.name)}`);
+  }
+  db.run(createTableSql(table));
+}
+
+/**
+ * Generates a single-line CREATE TABLE IF NOT EXISTS statement, including constraints.
+ * @param table - Trusted table and column definitions.
+ * @returns SQL using WITHOUT ROWID for a unified table.
+ */
 export function createTableSql(table: TableDefinition) {
   return createTableSqlWithSeparator(table, ', ');
 }
 
+/**
+ * Generates a multiline CREATE TABLE statement for display and documentation.
+ * @param table - Trusted table and column definitions.
+ * @returns The same schema as `createTableSql`, with one definition per line.
+ */
 export function createPrettyTableSql(table: TableDefinition) {
   return createTableSqlWithSeparator(table, ',\n  ');
 }
@@ -905,6 +1120,9 @@ function createTableSqlWithSeparator(table: TableDefinition, separator: string) 
     const parts = [quoteIdent(column.name), column.type];
     if (column.notNull || column.primaryKey) {
       parts.push('NOT NULL');
+    }
+    if (column.check) {
+      parts.push(`CHECK (${column.check})`);
     }
     if (column.comment) {
       parts.push(`/* ${column.comment} */`);
@@ -1014,6 +1232,12 @@ function qualityBreakdown(counts: MutableQualityBreakdown): LoadQualityBreakdown
   };
 }
 
+/**
+ * Extracts selected fields from one @-delimited DNE record.
+ * @param line - A decoded source record without its line terminator.
+ * @param indexes - Unique, ascending zero-based field positions.
+ * @returns Trimmed field values in index order; missing or empty values are null.
+ */
 export function selectDelimitedFields(line: string, indexes: number[]) {
   return selectDelimitedFieldsInRange(line, 0, line.length, indexes);
 }
@@ -1078,10 +1302,21 @@ function needsTrim(char: number) {
   return char <= 32 || char === 160;
 }
 
+/**
+ * Quotes a SQLite identifier, escaping embedded double quotes.
+ * @param value - One identifier, not a dotted SQL expression.
+ * @returns A double-quoted identifier safe to interpolate into SQL.
+ */
 export function quoteIdent(value: string) {
   return `"${value.replaceAll('"', '""')}"`;
 }
 
+/**
+ * Converts a supported SQLite URL to its path without resolving relative paths.
+ * @param value - Plain path, `:memory:`, or a URL beginning with `sqlite:///`.
+ * @returns The path after removing the supported URL prefix, without URI decoding.
+ * @throws {Error} If a different URL scheme is supplied.
+ */
 export function sqlitePathFromDatabaseUrl(value: string) {
   if (!value.startsWith('sqlite:///')) {
     if (value.includes('://')) {
@@ -1092,6 +1327,12 @@ export function sqlitePathFromDatabaseUrl(value: string) {
   return value.slice('sqlite:///'.length);
 }
 
+/**
+ * Reads SQLite load metadata using a temporary read-only connection.
+ * @param databasePath - Path to the SQLite database.
+ * @returns Metadata, or null if the file or metadata table is missing.
+ * @throws {Error} If an existing file cannot be opened or queried as SQLite.
+ */
 export async function readDatabaseMetadata(databasePath: string): Promise<LoadMetadata | null> {
   if (databasePath !== ':memory:' && !(await Bun.file(databasePath).exists())) {
     return null;
@@ -1114,6 +1355,13 @@ export async function readDatabaseMetadata(databasePath: string): Promise<LoadMe
   }
 }
 
+/**
+ * Checks for a SQLite table without creating a missing database.
+ * @param databasePath - Database file path; `:memory:` reports false.
+ * @param tableName - Physical table name to locate.
+ * @returns False for a missing database or table.
+ * @throws {Error} If an existing file cannot be opened or inspected.
+ */
 export async function hasTable(databasePath: string, tableName: string): Promise<boolean> {
   if (databasePath !== ':memory:' && !(await Bun.file(databasePath).exists())) {
     return false;

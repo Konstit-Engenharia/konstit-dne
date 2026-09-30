@@ -12,8 +12,17 @@ import {
   HTTP_FETCH_TIMEOUT_MS,
 } from './settings.ts';
 
+/**
+ * Headers that determine whether a download can be divided into byte ranges.
+ */
 type RemoteFileInfo = {
+  /**
+   * Raw Accept-Ranges header; null means range support is unknown.
+   */
   acceptRanges: string | null;
+  /**
+   * Expected complete resource length as decimal text, or null when unknown.
+   */
   contentLength: string | null;
 };
 
@@ -22,12 +31,33 @@ type ByteRange = {
   end: number;
 };
 
+/**
+ * Timeout, cancellation, and bounded retry settings for remote-source requests.
+ */
 export type HttpRequestOptions = {
+  /**
+   * Cancels requests and retry delays; the abort reason is propagated to the caller.
+   */
   signal?: AbortSignal;
+  /**
+   * Timeout per attempt in milliseconds; defaults to the configured HTTP timeout.
+   */
   timeoutMs?: number;
+  /**
+   * Maximum retries after the initial attempt; defaults to the configured retry count.
+   */
   maxRetries?: number;
+  /**
+   * Initial exponential-backoff delay in milliseconds.
+   */
   retryBaseDelayMs?: number;
+  /**
+   * Upper bound on exponential-backoff delays in milliseconds.
+   */
   retryMaxDelayMs?: number;
+  /**
+   * Upper bound on server-provided Retry-After delays in milliseconds.
+   */
   retryAfterMaxMs?: number;
 };
 
@@ -38,6 +68,14 @@ class RangeNotSupportedError extends Error {
   }
 }
 
+/**
+ * Downloads a resource to a file, using parallel byte ranges when supported and falling back to serial transfer.
+ * @param url - HTTP(S) resource URL.
+ * @param path - Destination path, which is created or truncated; failed downloads may leave partial contents.
+ * @param info - Previously inspected resource size and range-support headers.
+ * @param options - Retry, timeout, and cancellation settings.
+ * @throws {Error} If requests, range validation, or file writes fail after the applicable retries.
+ */
 export async function downloadRemoteFile(
   url: string,
   path: string,
@@ -191,6 +229,15 @@ async function downloadSerial(url: string, path: string, options: HttpRequestOpt
   }
 }
 
+/**
+ * Performs an HTTP request and consumes its response with bounded retries for transient failures.
+ * @param url - Request URL.
+ * @param init - Fetch options; the signal is managed through `options.signal` and per-attempt timeouts.
+ * @param consume - Consumes or cancels the response body. It can run more than once and must tolerate retries.
+ * @param options - Timeout, retry, and cancellation overrides.
+ * @returns The result of a successful response consumer.
+ * @throws {Error} If requests or consumption fail after retries; a custom abort reason may also be propagated.
+ */
 export async function requestWithRetry<T>(
   url: string,
   init: RequestInit,

@@ -2,12 +2,14 @@ node_modules/
 .zed/
 dist/
 coverage/
+/outputs/
 .*.fetch.lock
 
 .codegraph/
 .codegraph/**
 
 *.db
+*.bin
 
 dne.db
 dne.db-journal

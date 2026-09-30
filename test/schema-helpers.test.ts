@@ -50,7 +50,7 @@ describe('schema', () => {
     if (!table) {
       throw new Error('Missing localidade table');
     }
-    expect(getSourceFieldIndexes(table, ['locNu', 'uf', 'cep', 'munNu'])).toEqual([0, 1, 3, 8]);
+    expect(getSourceFieldIndexes(table, ['locNu', 'uf', 'cep', 'situacao', 'tipo', 'munNu'])).toEqual([0, 1, 3, 4, 5, 8]);
   });
 });
 

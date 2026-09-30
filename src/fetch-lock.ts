@@ -19,8 +19,17 @@ const FETCH_LOCK_TIMEOUT_MS = 30_000;
 const FETCH_LOCK_RETRY_MS = 50;
 const FETCH_LOCK_SIGNALS = ['SIGHUP', 'SIGINT', 'SIGTERM'] as const;
 
+/**
+ * Progress callback used while waiting for an exclusive database-update lock.
+ */
 type ProgressReporter = {
+  /**
+   * Displays a status message to the caller.
+   */
   (message: string): void;
+  /**
+   * Completes the currently displayed status message after waiting ends.
+   */
   finish(): void;
 };
 
@@ -29,6 +38,13 @@ type FetchLockOwner = {
   token: string;
 };
 
+/**
+ * Acquires an exclusive update lock, recovering stale owners and waiting up to 30 seconds for active ones.
+ * @param target - Absolute destination database path; its parent directory is created if needed.
+ * @param progress - Reporter used when another update holds the lock.
+ * @returns A lock handle with an idempotent `release()` method; call it in a finally block.
+ * @throws {UserError} With code `update-in-progress` if waiting times out. File-system failures may also propagate.
+ */
 export async function acquireFetchLock(
   target: string,
   progress: ProgressReporter,
@@ -88,6 +104,11 @@ export async function acquireFetchLock(
   }
 }
 
+/**
+ * Derives the current user's lock path for a destination database.
+ * @param target - Absolute database path, hashed exactly as provided.
+ * @returns A lock-directory path beneath the system temporary directory.
+ */
 export function fetchLockPath(target: string) {
   const targetHash = new Bun.CryptoHasher('sha256').update(target).digest('hex');
   return join(tmpdir(), `konstit-dne-${process.getuid?.() ?? 'unknown'}`, `fetch-${targetHash}.lock`);

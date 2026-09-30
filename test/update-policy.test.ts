@@ -18,6 +18,13 @@ const remote: RemoteDneSourceInfo = {
 };
 
 describe('remote update policy', () => {
+  test('requires a rebuild after a schema change even when the source is unchanged', () => {
+    const metadata = buildLoadMetadata(remote.url, remote, '1.2.3');
+    delete metadata.schema_version;
+    expect(remoteMetadataMatches(metadata, remote)).toBe(false);
+    expect(remoteMetadataMatches({ ...metadata, schema_version: '1' }, remote)).toBe(false);
+  });
+
   test('requires every available validator to match exactly', () => {
     const metadata = buildLoadMetadata(remote.url, remote, '1.2.3');
     expect(remoteMetadataMatches(metadata, remote)).toBe(true);

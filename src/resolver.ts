@@ -17,27 +17,68 @@ import {
 import type { TableDefinition } from './schema.ts';
 import { EDNE_DOWNLOAD_URL } from './settings.ts';
 
+/**
+ * Remote-source identity and raw HTTP validators obtained without downloading the full archive.
+ */
 export type RemoteDneSourceInfo = {
+  /**
+   * Source URL used for inspection and subsequent download.
+   */
   url: string;
+  /**
+   * Raw Last-Modified header, or null when absent.
+   */
   lastModified: string | null;
+  /**
+   * Raw ETag header, or null when absent.
+   */
   etag: string | null;
+  /**
+   * Total resource length in bytes as header text, or null when unknown.
+   */
   contentLength: string | null;
+  /**
+   * Raw Accept-Ranges header, or inferred byte-range support for a successful range probe.
+   */
   acceptRanges: string | null;
 };
 
+/**
+ * Optional progress reporting and reusable remote inspection information.
+ */
 export type DneResolverOptions = {
+  /**
+   * Receives synchronous human-readable source-resolution progress messages.
+   */
   onProgress?: (message: string) => void;
+  /**
+   * Previously inspected headers for this source, avoiding a repeated network probe.
+   */
   remoteInfo?: RemoteDneSourceInfo;
 };
 
+/**
+ * Resolves a directory, local ZIP, or remote ZIP and owns any temporary files created during resolution.
+ */
 export class DneResolver {
   private tempDir?: string;
 
+  /**
+   * Configures a source resolver without reading or downloading data.
+   * @param source - Directory, ZIP path, or HTTP(S) URL; omission selects the configured Correios source.
+   * @param options - Optional progress callback and remote-source headers.
+   */
   constructor(
     private source?: string,
     private options: DneResolverOptions = {},
   ) {}
 
+  /**
+   * Resolves and validates the required DNE source files.
+   * @param schema - Source definitions used to check required filenames.
+   * @returns A source that remains usable until `cleanup()` removes its temporary files.
+   * @throws {Error} If downloading, archive parsing, or source validation fails; temporary files are cleaned on failure.
+   */
   async resolve(schema: TableDefinition[]): Promise<DneDataSource> {
     try {
       return await this.resolveSource(
@@ -50,6 +91,11 @@ export class DneResolver {
     }
   }
 
+  /**
+   * Removes temporary files owned by this resolver.
+   * Call only after all consumers finish reading the resolved source. Repeated calls are safe.
+   * @throws {Error} If the temporary directory cannot be removed.
+   */
   async cleanup() {
     if (this.tempDir) {
       await rm(this.tempDir, { recursive: true, force: true });
@@ -105,6 +151,13 @@ export class DneResolver {
   }
 }
 
+/**
+ * Inspects HTTP validators using HEAD, with a one-byte range-request fallback.
+ * @param url - HTTP(S) URL of the source archive.
+ * @param options - Timeout, retry, and cancellation settings.
+ * @returns Source identity and available HTTP headers.
+ * @throws {Error} If both inspection strategies fail or the operation is aborted.
+ */
 export async function inspectRemoteDneSource(
   url: string,
   options: HttpRequestOptions = {},

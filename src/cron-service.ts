@@ -15,25 +15,68 @@ import { databasePath } from './database-service.ts';
 import { UserError } from './errors.ts';
 import { EDNE_DOWNLOAD_URL } from './settings.ts';
 
+/**
+ * Persisted configuration of one database-update schedule registered through Bun.cron.
+ */
 export type CronEntry = {
+  /**
+   * Shell-quoted command executed by the generated runner.
+   */
   command: string;
+  /** Local database path identifying the schedule. */
   database: string;
+  /** Cron expression interpreted by Bun.cron. */
   expression: string;
+  /**
+   * Stable schedule identifier derived from the absolute database path.
+   */
   id: string;
+  /**
+   * Package version pinned in the scheduled command.
+   */
   package_version: string;
+  /**
+   * Absolute path to the generated runner script.
+   */
   runner: string;
+  /**
+   * Source URL or absolute local source path stored for future runs.
+   */
   source: string;
+  /**
+   * Bun.cron title, equal to the stable schedule identifier.
+   */
   title: string;
 };
 
+/**
+ * Inputs for installing, updating, or previewing a database-update schedule.
+ */
 type InstallCronOptions = {
+  /** Local database path identifying the schedule. */
   database: string;
+  /**
+   * Returns a preview without registering a job or writing its state files.
+   */
   dryRun: boolean;
+  /** Cron expression interpreted by Bun.cron. */
   expression: string;
+  /**
+   * Package version to pin in the scheduled command.
+   */
   packageVersion: string;
+  /**
+   * Optional source override; omission retains the existing source or uses the configured default.
+   */
   source?: string;
 };
 
+/**
+ * Installs or updates the schedule for one database, or computes a preview.
+ * @param options - Database path, cron expression, package version, and optional source.
+ * @returns The schedule configuration, status, and next run time.
+ * @throws {UserError} If configuration or job registration fails. File-system errors may also propagate.
+ */
 export async function installCronSchedule(options: InstallCronOptions) {
   const database = cronDatabasePath(options.database);
   const previous = readCronEntry(database);
@@ -48,6 +91,12 @@ export async function installCronSchedule(options: InstallCronOptions) {
   return { ...entry, next_run: nextCronRun(entry.expression), status };
 }
 
+/**
+ * Reads the stored schedule associated with a database path.
+ * @param databaseInput - Local database path or supported SQLite URL.
+ * @returns Installed-state details and the next run time; absent schedule fields are null.
+ * @throws {UserError} If the path or stored configuration is invalid.
+ */
 export function showCronSchedule(databaseInput: string) {
   const database = cronDatabasePath(databaseInput);
   const title = cronTitle(database);
@@ -66,6 +115,12 @@ export function showCronSchedule(databaseInput: string) {
   };
 }
 
+/**
+ * Removes a database-update schedule and its generated local state files.
+ * @param databaseInput - Local database path or supported SQLite URL identifying the schedule.
+ * @returns The schedule identifier and whether local schedule state existed.
+ * @throws {UserError} If the database path is invalid or Bun.cron removal fails. File-system errors may also propagate.
+ */
 export async function removeCronSchedule(databaseInput: string) {
   const database = cronDatabasePath(databaseInput);
   const paths = cronEntryPaths(database);

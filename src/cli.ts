@@ -19,6 +19,7 @@ import {
   dirname,
   join,
 } from 'node:path';
+import { buildBinaryDatabase } from './binary-db-writer.ts';
 import {
   collectCepInputs,
   normalizeCep,
@@ -33,16 +34,15 @@ import {
   inspectDatabase,
   memoryDatabaseInspection,
   openReadyDatabase,
+  type DatabaseFormat,
   type DatabaseInspection,
 } from './database-service.ts';
 import {
   createPrettyTableSql,
-  createTableSql,
   DneDatabaseWriter,
   DneSourceQualityError,
-  hasTable,
+  prepareTableForLoad,
   quoteIdent,
-  readDatabaseMetadata,
   type DneRow,
 } from './db.ts';
 import { UserError } from './errors.ts';
@@ -91,7 +91,7 @@ const EXIT_NOT_FOUND = 3;
 const VERSION = await readPackageVersion();
 const databaseArgument = option('db', parsers.string, {
   default: SQLITE_FILE_NAME,
-  describe: 'Caminho da base SQLite.',
+  describe: 'Caminho da base; build binário usa a extensão .bin.',
   global: true,
   valueHint: 'file',
   valueName: 'CAMINHO',
@@ -107,11 +107,15 @@ const quietArgument = flag('quiet', {
 });
 const colorArgument = colorFlag('color');
 
+/**
+ * Configured command tree for building, querying, inspecting, and scheduling DNE databases.
+ */
 export const cli = command(BINARY_NAME, {
-  about: 'Criar e consultar uma base SQLite local com os CEPs do Brasil.',
+  about: 'Criar e consultar uma base local com os CEPs do Brasil.',
   afterHelp: [
     'Exemplos:',
     '  bunx @konstit/dne build --db ./dne.db',
+    '  bunx @konstit/dne build --format binary',
     '  bunx @konstit/dne get 01001-000 --db ./dne.db',
     '  bunx @konstit/dne status --db ./dne.db',
     '  bunx @konstit/dne cron install --db ./dne.db',
@@ -121,6 +125,11 @@ export const cli = command(BINARY_NAME, {
   subcommands: [
     command('build', {
       args: [
+        option('format', parsers.enum(['sqlite', 'binary'] as const), {
+          default: 'sqlite',
+          describe: 'Formato da base de saída.',
+          valueName: 'sqlite|binary',
+        }),
         option('source', parsers.string, {
           default: EDNE_DOWNLOAD_URL,
           describe: 'Diretório DNE, arquivo ZIP ou URL.',
@@ -133,7 +142,7 @@ export const cli = command(BINARY_NAME, {
           describe: 'Verificar a atualização da fonte sem alterar a base.',
         }),
       ],
-      about: 'Criar ou atualizar a base SQLite',
+      about: 'Criar ou atualizar a base SQLite ou binária',
       conflicts: [['force', 'check']],
       handler: (args, context) => fetchDatabase(args, globalOptions(context)),
     }),
@@ -247,6 +256,7 @@ type GlobalOptions = {
 type FetchOptions = {
   check: boolean;
   force: boolean;
+  format: DatabaseFormat;
   source: string;
 };
 
@@ -268,6 +278,11 @@ type LookupResult = {
   input: string;
 };
 
+/**
+ * Runs the CLI and renders localized text or structured JSON output.
+ * @param argv - Arguments excluding the runtime and script names; defaults to Bun.argv after those entries.
+ * @returns The process exit status. Expected command failures are rendered and converted to exit codes.
+ */
 export async function runCli(argv: readonly string[] = Bun.argv.slice(2)) {
   const jsonRequested = argv.includes('--json') || argv.includes('--jsonl');
   const stdoutUsesColor = process.stdout.isTTY === true && Bun.env['TERM'] !== 'dumb';
@@ -380,7 +395,11 @@ async function fetchDatabaseWithProgress(
   progress: ProgressReporter,
 ) {
   const startedAt = performance.now();
-  const target = databasePath(globals.database);
+  const target = databasePath(globals.database, options.format);
+
+  if (options.format === 'binary' && target === ':memory:') {
+    throw new UserError('invalid-format', 'O formato binário exige um caminho de arquivo.', EXIT_INVALID_INPUT);
+  }
 
   if (options.check || target === ':memory:') {
     return executeFetch(options, globals, progress, startedAt, target);
@@ -422,7 +441,7 @@ async function executeFetch(
     }
     const inspection = await inspectDatabase(target);
     const upToDate = remoteInfo && inspection.ready
-      ? await databaseIsCurrent(target, SQLITE_CEP_TABLE_NAME, remoteInfo)
+      ? await databaseIsCurrent(target, options.format, remoteInfo)
       : null;
     const result = {
       database: inspection,
@@ -437,7 +456,7 @@ async function executeFetch(
   if (
     !options.force
     && remoteInfo
-    && (await databaseIsCurrent(target, SQLITE_CEP_TABLE_NAME, remoteInfo))
+    && (await databaseIsCurrent(target, options.format, remoteInfo))
   ) {
     const inspection = await inspectDatabase(target);
     const result = {
@@ -462,7 +481,7 @@ async function executeFetch(
 
   try {
     const source = await resolver.resolve(schema);
-    progress('Carregando a base SQLite');
+    progress(options.format === 'binary' ? 'Carregando a base binária' : 'Carregando a base SQLite');
     rowCount = await writer.loadFromSource(
       source,
       buildLoadMetadata(sourceInput, remoteInfo, VERSION),
@@ -470,11 +489,18 @@ async function executeFetch(
     );
     writer.close();
     closed = true;
-    progress('Confirmando a base SQLite');
-    if (shouldUpdateInPlace) {
+    let outputPath = scratch.path;
+    if (options.format === 'binary') {
+      outputPath = `${scratch.path}.bin`;
+      progress('Compactando a base binária');
+      await buildBinaryDatabase(scratch.path, outputPath);
+      await rm(scratch.path, { force: true });
+    }
+    progress(options.format === 'binary' ? 'Confirmando a base binária' : 'Confirmando a base SQLite');
+    if (options.format === 'sqlite' && shouldUpdateInPlace) {
       await replaceTargetFromScratch(target, scratch.path, schema);
     } else {
-      await scratch.commit();
+      await scratch.commit(outputPath);
     }
     progress.finish();
   } finally {
@@ -543,7 +569,7 @@ async function lookupCep(options: LookupOptions, globals: GlobalOptions) {
   return hasMissing ? EXIT_NOT_FOUND : 0;
 
   function processInput(value: { cep: string; input: string; }) {
-    const address = reader.queryCep(SQLITE_CEP_TABLE_NAME, value.cep);
+    const address = reader.queryCep(value.cep);
     const result = {
       address,
       cep: value.cep,
@@ -575,19 +601,22 @@ async function showSchema(options: { expected: boolean; }, globals: GlobalOption
   const cepTable = getUnifiedTable(schema);
 
   let database: string | null = null;
-  let source: 'database' | 'declared' = 'declared';
+  let source: 'binary' | 'database' | 'declared' = 'declared';
   let sql = createPrettyTableSql(cepTable);
 
   if (!options.expected) {
     database = databasePath(globals.database);
     const reader = await openReadyDatabase(database);
     try {
-      sql = reader.tableSchema(SQLITE_CEP_TABLE_NAME)
-        ?? (() => {
-          throw new UserError('schema-not-found', `A tabela '${SQLITE_CEP_TABLE_NAME}' não possui um esquema armazenado.`);
-        })();
-      sql = formatTableSql(sql);
-      source = 'database';
+      if (!('tableSchema' in reader)) {
+        source = 'binary';
+      } else {
+        const storedSchema = reader.tableSchema(SQLITE_CEP_TABLE_NAME);
+        if (storedSchema) {
+          sql = formatTableSql(storedSchema);
+          source = 'database';
+        }
+      }
     } finally {
       reader.close();
     }
@@ -667,6 +696,9 @@ async function querySql(options: { limit: number; query: string; }, globals: Glo
   const database = databasePath(globals.database);
   const reader = await openReadyDatabase(database);
   try {
+    if (!('querySql' in reader)) {
+      throw new UserError('sql-unsupported', 'O comando sql exige uma base SQLite.', EXIT_INVALID_INPUT);
+    }
     const result = reader.querySql(options.query, options.limit);
     const output = {
       columns: result.rows[0] ? Object.keys(result.rows[0]) : [],
@@ -831,6 +863,7 @@ function writeLookupText(results: LookupResult[]) {
 
 function writeStatusText(inspection: DatabaseInspection) {
   console.log(`Base: ${inspection.path}`);
+  console.log(`Formato: ${inspection.format ?? '-'}`);
   console.log(`Existe: ${formatBoolean(inspection.exists)}`);
   console.log(`Pronta: ${formatBoolean(inspection.ready)}`);
   console.log(`Registros: ${inspection.row_count === null ? '-' : formatInteger(inspection.row_count)}`);
@@ -982,6 +1015,11 @@ function formatDateTime(value: string | undefined) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString(DISPLAY_LOCALE);
 }
 
+/**
+ * Formats elapsed milliseconds for display using Brazilian Portuguese number formatting.
+ * @param milliseconds - Elapsed time; negative values are clamped to zero.
+ * @returns A compact duration in milliseconds, seconds, minutes, or hours.
+ */
 export function formatDuration(milliseconds: number) {
   const normalized = Math.max(0, Math.round(milliseconds));
   if (normalized < 1_000) {
@@ -1070,7 +1108,7 @@ async function replaceTargetFromScratch(
     db.run(`ATTACH DATABASE ${quoteLiteral(attachPath)} AS fresh`);
     db.run('BEGIN IMMEDIATE');
     try {
-      db.run(createTableSql(cepTable));
+      prepareTableForLoad(db, cepTable);
       db.run(`
         CREATE TABLE IF NOT EXISTS ${quoteIdent(SQLITE_METADATA_TABLE_NAME)} (
           key TEXT PRIMARY KEY NOT NULL,
@@ -1104,19 +1142,14 @@ async function replaceTargetFromScratch(
 
 async function databaseIsCurrent(
   database: string,
-  cepTableName: string,
+  format: DatabaseFormat,
   remoteInfo: RemoteDneSourceInfo,
 ) {
-  if (!(await hasTable(database, cepTableName))) {
+  const inspection = await inspectDatabase(database);
+  if (!inspection.ready || inspection.format !== format || !inspection.metadata) {
     return false;
   }
-
-  const metadata = await readDatabaseMetadata(database);
-  if (!metadata) {
-    return false;
-  }
-
-  return remoteMetadataMatches(metadata, remoteInfo);
+  return remoteMetadataMatches(inspection.metadata, remoteInfo);
 }
 
 function looksLikeUrl(value: string) {
@@ -1216,6 +1249,12 @@ function renderSqlMarkdown(sql: string, color: boolean) {
   }).trimEnd();
 }
 
+/**
+ * Applies terminal syntax highlighting to SQL while preserving quoted strings and comments.
+ * @param sql - SQL text to render.
+ * @param color - Whether ANSI color sequences should be emitted.
+ * @returns The original text when color is disabled, or a highlighted string.
+ */
 export function renderSqlCodeBlock(sql: string, color: boolean) {
   if (!color) {
     return sql;
@@ -1239,7 +1278,7 @@ async function createScratchTarget(target: string) {
   if (target === ':memory:') {
     return {
       path: target,
-      commit: async () => {},
+      commit: async (_sourcePath?: string) => {},
       cleanup: async () => {},
     };
   }
@@ -1255,14 +1294,15 @@ async function createScratchTarget(target: string) {
   let committed = false;
   return {
     path: scratch,
-    commit: async () => {
-      await rename(scratch, target);
+    commit: async (sourcePath = scratch) => {
+      await rename(sourcePath, target);
       committed = true;
     },
     cleanup: async () => {
       if (!committed) {
         await rm(scratch, { force: true });
       }
+      await rm(`${scratch}.bin`, { force: true });
       await rm(`${scratch}-journal`, { force: true });
     },
   };
