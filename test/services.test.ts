@@ -15,6 +15,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { BINARY_DATABASE_MAGIC } from '../src/binary-db-format.ts';
 import {
   installCronSchedule,
   removeCronSchedule,
@@ -22,14 +23,21 @@ import {
 } from '../src/cron-service.ts';
 import {
   databasePath,
+  hasTable,
   inspectDatabase,
   memoryDatabaseInspection,
   openReadyDatabase,
+  readDatabaseMetadata,
 } from '../src/database-service.ts';
+import {
+  hasTable as hasSqliteTable,
+  readDatabaseMetadata as readSqliteMetadata,
+} from '../src/db.ts';
 import {
   acquireFetchLock,
   fetchLockPath,
 } from '../src/fetch-lock.ts';
+import { captureRejection } from './assertions.ts';
 
 const workDir = mkdtempSync(join(tmpdir(), 'dne-services-test-'));
 const originalCron = Bun.cron;
@@ -49,6 +57,39 @@ afterAll(() => {
 });
 
 describe('database service', () => {
+  test('reads metadata and table presence without creating missing databases', async () => {
+    const missing = join(workDir, 'missing-metadata.db');
+    expect(await readDatabaseMetadata(missing)).toBeNull();
+    expect(await readSqliteMetadata(missing)).toBeNull();
+    expect(await hasTable(missing, 'dne')).toBe(false);
+    expect(await hasSqliteTable(missing, 'dne')).toBe(false);
+    expect(await hasTable(':memory:', 'dne')).toBe(false);
+    expect(databasePath(':memory:')).toBe(':memory:');
+    expect(existsSync(missing)).toBe(false);
+    const path = join(workDir, 'metadata.db');
+    const db = new Database(path);
+    db.run('CREATE TABLE dne (cep TEXT)');
+    expect(await readDatabaseMetadata(path)).toBeNull();
+    expect(await hasTable(path, 'dne')).toBe(true);
+    expect(await hasTable(path, 'absent')).toBe(false);
+    db.run('CREATE TABLE edne_metadata (key TEXT, value TEXT)');
+    db.run('INSERT INTO edne_metadata VALUES (\'source_kind\', \'local\')');
+    db.close();
+    expect(await readDatabaseMetadata(path)).toEqual({ source_kind: 'local' });
+  });
+
+  test('distinguishes missing tables, invalid SQLite files, and truncated binary files', async () => {
+    const path = join(workDir, 'no-dne.db');
+    new Database(path).close();
+    expect(await captureRejection(openReadyDatabase(path))).toMatchObject({ code: 'database-not-ready' });
+    const broken = join(workDir, 'broken.db');
+    writeFileSync(broken, 'not a database');
+    expect(await inspectDatabase(broken)).toMatchObject({ exists: true, ready: false, error: expect.any(String) });
+    const truncated = join(workDir, 'truncated.bin');
+    writeFileSync(truncated, BINARY_DATABASE_MAGIC);
+    expect(await captureRejection(openReadyDatabase(truncated))).toMatchObject({ code: 'database-invalid' });
+  });
+
   test('resolves, inspects, and opens ready databases', async () => {
     const path = join(workDir, 'service.db');
     const db = new Database(path);

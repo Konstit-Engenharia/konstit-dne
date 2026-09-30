@@ -5,12 +5,44 @@ import {
 } from 'bun:test';
 import {
   cepToU32,
+  collectCepInputs,
   formatCep,
   normalizeCep,
   splitCepStream,
+  ufForCep,
 } from '../src/cep.ts';
+import { captureRejection } from './assertions.ts';
 
 describe('CEP input service', () => {
+  test.each(
+    [
+      ['01001-000', 'SP'],
+      [1_000_000, 'SP'],
+      [99_999_999, 'RS'],
+      [68_900_000, 'AP'],
+      [69_200_000, 'AM'],
+      [69_300_000, 'RR'],
+      [69_400_000, 'AM'],
+      [70_000_000, 'DF'],
+      [72_800_000, 'GO'],
+      [73_000_000, 'DF'],
+      [73_700_000, 'GO'],
+    ] as const,
+  )('finds UF for CEP %p', (value, expected) => {
+    expect(ufForCep(value)).toBe(expected);
+  });
+
+  test.each(['abc', Number.NaN, -1, 999_999, 78_900_000, 100_000_000])('has no UF for CEP %p', (value) => {
+    expect(ufForCep(value)).toBeUndefined();
+  });
+
+  test('reports a missing input file and does not read interactive stdin', async () => {
+    expect(await captureRejection(collectCepInputs([], '/missing/dne/ceps.txt', true)[Symbol.asyncIterator]().next())).toMatchObject({
+      code: 'input-file-not-found',
+    });
+    expect(await collectCepInputs([], undefined, true)[Symbol.asyncIterator]().next()).toMatchObject({ done: true });
+  });
+
   test('converts valid plain and separated CEPs to uint32', () => {
     expect(cepToU32('01001000')).toBe(1_001_000);
     expect(cepToU32('01001-000')).toBe(1_001_000);

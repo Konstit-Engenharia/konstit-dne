@@ -1,20 +1,65 @@
+import { Database } from 'bun:sqlite';
 import {
   describe,
   expect,
   test,
 } from 'bun:test';
 import {
+  prepareTableForLoad,
+  selectDelimitedFields,
+} from '../src/db.ts';
+import type { TableDefinition } from '../src/schema.ts';
+import {
   buildSchema,
   getSourceFieldIndexes,
   getTableFilesGlob,
   getUnifiedTable,
 } from '../src/schema.ts';
+import { captureRejection } from './assertions.ts';
 import {
   expectRejects,
   run,
 } from './helpers.ts';
 
 describe('schema', () => {
+  test('selects and trims delimited fields while preserving empty and missing values', () => {
+    expect(selectDelimitedFields(' left @ignored@@ right ', [0, 2, 3, 5])).toEqual(['left', null, 'right', null]);
+    expect(selectDelimitedFields('a@b', [])).toEqual([]);
+  });
+
+  test('retains compatible tables and replaces outdated columns and checks', () => {
+    const db = new Database(':memory:');
+    const table: TableDefinition = {
+      name: 'example',
+      originalName: 'example',
+      columns: [{ name: 'id', type: 'INTEGER', primaryKey: true }],
+    };
+    try {
+      prepareTableForLoad(db, table);
+      db.run('INSERT INTO example VALUES (1)');
+      prepareTableForLoad(db, table);
+      expect(db.query('SELECT * FROM example').all()).toEqual([{ id: 1 }]);
+      prepareTableForLoad(db, { ...table, columns: [{ name: 'id', type: 'INTEGER', check: 'id > 0' }] });
+      expect(db.query('SELECT * FROM example').all()).toEqual([]);
+      expect(() => db.run('INSERT INTO example VALUES (0)')).toThrow('CHECK');
+      prepareTableForLoad(db, { ...table, columns: [{ name: 'value', type: 'TEXT' }] });
+      db.run('INSERT INTO example VALUES (\'text\')');
+      expect(db.query('SELECT value FROM example').all()).toEqual([{ value: 'text' }]);
+      prepareTableForLoad(db, { ...table, columns: [...table.columns, { name: 'extra', type: 'TEXT' }] });
+      expect(db.query('PRAGMA table_info(example)').all()).toHaveLength(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('rejects missing schema definitions and source mappings', () => {
+    expect(() => getUnifiedTable([])).toThrow('Unified schema table not found');
+    const table = { name: 'source', originalName: 'source', columns: [] };
+    expect(() => getSourceFieldIndexes(table, ['cep'])).toThrow('Source fields for table \'source\' not found');
+    expect(() => getSourceFieldIndexes({ ...table, sourceFields: {} }, ['cep']))
+      .toThrow('Source field \'cep\' for table \'source\' not found');
+  });
+
   test('builds an independent schema with optional table names', () => {
     const unifiedOriginalName = getUnifiedTable(buildSchema()).originalName;
     const schema = buildSchema({ [unifiedOriginalName]: 'custom_cep' });
@@ -55,6 +100,12 @@ describe('schema', () => {
 });
 
 describe('test helpers', () => {
+  test('captureRejection preserves the rejection value and rejects a fulfilled promise', async () => {
+    const error = new Error('failure');
+    expect(await captureRejection(Promise.reject(error))).toBe(error);
+    expect(await captureRejection(captureRejection(Promise.resolve()))).toEqual(new Error('Expected promise to reject'));
+  });
+
   test('run reports a failed subprocess', () => {
     expect(() => run('bun', ['-e', 'process.exit(7)'])).toThrow('bun -e process.exit(7) failed');
   });

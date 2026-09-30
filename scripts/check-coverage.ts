@@ -2,8 +2,8 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 const COVERAGE_THRESHOLDS = {
-  functions: 0.75,
-  lines: 0.65,
+  functions: 1,
+  lines: 1,
 };
 const reportPath = resolve(Bun.argv[2] ?? 'coverage/lcov.info');
 const report = await readFile(reportPath, 'utf8');

@@ -250,6 +250,7 @@ export async function requestWithRetry<T>(
   const retryMaxDelayMs = options.retryMaxDelayMs ?? HTTP_FETCH_RETRY_MAX_DELAY_MS;
   const retryAfterMaxMs = options.retryAfterMaxMs ?? HTTP_FETCH_RETRY_AFTER_MAX_MS;
 
+  let result: T;
   for (let attempt = 0;; attempt++) {
     throwIfAborted(options.signal);
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
@@ -273,7 +274,8 @@ export async function requestWithRetry<T>(
         await abortableDelay(delayMs, options.signal);
         continue;
       }
-      return await consume(response);
+      result = await consume(response);
+      break;
     } catch (error) {
       if (options.signal?.aborted) {
         throw options.signal.reason ?? error;
@@ -285,6 +287,7 @@ export async function requestWithRetry<T>(
       await abortableDelay(delayMs, options.signal);
     }
   }
+  return result;
 }
 
 async function writeAll(file: FileHandle, content: Uint8Array, position: number) {

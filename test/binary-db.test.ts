@@ -18,10 +18,13 @@ import {
 import { DneBinaryDatabaseReader } from '../src/binary-db-reader.ts';
 import { buildBinaryDatabase } from '../src/binary-db-writer.ts';
 import {
+  hasTable,
   inspectDatabase,
   openReadyDatabase,
+  readDatabaseMetadata,
 } from '../src/database-service.ts';
 import { DneDatabaseReader } from '../src/db.ts';
+import { captureRejection } from './assertions.ts';
 import {
   createFixture,
   createLocalityFixture,
@@ -52,6 +55,10 @@ describe('binary database', () => {
     }
 
     await buildBinaryDatabase(sqlitePath, binaryPath);
+    expect(await readDatabaseMetadata(binaryPath)).toMatchObject({ source_kind: 'local' });
+    expect(await hasTable(binaryPath, 'dne')).toBe(true);
+    expect(await hasTable(binaryPath, 'missing')).toBe(false);
+    expect(await captureRejection(openReadyDatabase(binaryPath, 'missing'))).toMatchObject({ code: 'database-not-ready' });
     const reader = new DneBinaryDatabaseReader(binaryPath);
     try {
       expect(reader.rowCount()).toBe(47);

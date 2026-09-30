@@ -5,6 +5,7 @@ logLevel = "debug" # "debug" | "warn" | "error"
 root = 'test'
 coverageReporter = ["text", "lcov"]
 coverageDir = "coverage"
+coverageThreshold = { lines = 1.0, functions = 1.0 }
 
 [install]
 # Whether to set an exact version in package.json even if a range is specified

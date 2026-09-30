@@ -296,3 +296,27 @@ export function hasBinaryMagic(bytes: Uint8Array) {
   }
   return BINARY_DATABASE_MAGIC.every((value, index) => bytes[index] === value);
 }
+
+/**
+ * Writes a ten-bit CEP suffix into a packed column.
+ * @param target - Destination bytes sized for the full packed column.
+ * @param index - Zero-based value index within the column.
+ * @param value - Unsigned integer smaller than 1024.
+ * @throws {Error} If the value exceeds the ten-bit range.
+ */
+export function writePacked10(target: Uint8Array, index: number, value: number) {
+  if (value < 0 || value >= 1 << CEP_SUFFIX_BITS) {
+    throw new Error(`CEP suffix exceeds ${CEP_SUFFIX_BITS} bits: ${value}`);
+  }
+  const bitOffset = index * CEP_SUFFIX_BITS;
+  const byteIndex = bitOffset >>> 3;
+  const shift = bitOffset & 7;
+  const shifted = value << shift;
+  target[byteIndex] = (target[byteIndex] ?? 0) | (shifted & 0xff);
+  if (byteIndex + 1 < target.byteLength) {
+    target[byteIndex + 1] = (target[byteIndex + 1] ?? 0) | ((shifted >>> 8) & 0xff);
+  }
+  if (byteIndex + 2 < target.byteLength) {
+    target[byteIndex + 2] = (target[byteIndex + 2] ?? 0) | ((shifted >>> 16) & 0xff);
+  }
+}

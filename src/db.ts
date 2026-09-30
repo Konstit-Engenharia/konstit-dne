@@ -335,7 +335,11 @@ type LoadQualityCounter = {
 };
 
 class LoadQualityTracker {
-  private stages = new Map<string, MutableQualityStage>();
+  private stages: Map<string, MutableQualityStage>;
+
+  constructor() {
+    this.stages = new Map();
+  }
 
   counter(stageName: string, fileName: string): LoadQualityCounter {
     const stage = this.stage(stageName);

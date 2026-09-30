@@ -49,6 +49,7 @@ import {
 } from './db.ts';
 import { UserError } from './errors.ts';
 import { acquireFetchLock } from './fetch-lock.ts';
+import { readPackageVersion } from './package-version.ts';
 import {
   DneResolver,
   inspectRemoteDneSource,
@@ -1101,14 +1102,6 @@ function shellQuote(value: string) {
 function bunVersionIsCompatible(version: string) {
   const [major = 0, minor = 0,] = version.split('.').map(Number);
   return major > 1 || (major === 1 && minor >= 4);
-}
-
-async function readPackageVersion() {
-  const manifest = await Bun.file(new URL('../package.json', import.meta.url)).json() as { version?: unknown; };
-  if (typeof manifest.version !== 'string' || !manifest.version) {
-    throw new Error('package.json has no valid version');
-  }
-  return manifest.version;
 }
 
 function buildDneSchema() {

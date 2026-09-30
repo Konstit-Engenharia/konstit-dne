@@ -41,6 +41,33 @@ afterAll(() => {
 });
 
 describe('loader', () => {
+  test('loads buffered source text with CRLF, empty lines, and an unterminated final record', async () => {
+    const directory = join(workDir, 'buffered-source');
+    createLocalityFixture(directory);
+    const delimited = join(directory, 'Delimitado');
+    const source = new DirectoryDneSource(delimited);
+    const target = join(workDir, 'buffered.db');
+    const writer = new DneDatabaseWriter(target, buildSchema({ cep_unificado: SQLITE_CEP_TABLE_NAME }));
+    try {
+      expect(
+        await writer.loadFromSource({
+          matchingFiles: source.matchingFiles.bind(source),
+          readLines: source.readLines.bind(source),
+          readText: async (file) => `\n\r\n${readFileSync(join(delimited, file), 'latin1').replaceAll('\n', '\r\n')}`,
+        }),
+      ).toBe(20);
+    } finally {
+      writer.close();
+    }
+    const reader = new DneDatabaseReader(target);
+    try {
+      expect(reader.queryCep('21000000')?.logradouro).toBe('Rua Principal');
+      expect(reader.queryCep('11000000')?.localidade_tipo).toBe('distrito');
+    } finally {
+      reader.close();
+    }
+  });
+
   test('loads a fixture into the default unified SQLite table', () => {
     const dneDir = join(workDir, 'dne');
     const dbPath = join(workDir, 'dne.db');

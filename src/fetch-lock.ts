@@ -76,7 +76,6 @@ export async function acquireFetchLock(
   }
 
   let released = false;
-  let removeProcessHandlers = () => {};
   const release = () => {
     if (released) {
       return;
@@ -85,7 +84,7 @@ export async function acquireFetchLock(
     removeProcessHandlers();
     removeOwnedFetchLock(path, owner.token);
   };
-  removeProcessHandlers = installFetchLockProcessHandlers(release);
+  const removeProcessHandlers = installFetchLockProcessHandlers(release);
 
   return { release };
 

@@ -2,6 +2,7 @@ import {
   afterAll,
   describe,
   expect,
+  spyOn,
   test,
 } from 'bun:test';
 import {
@@ -11,11 +12,15 @@ import {
 import { open } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { downloadRemoteFile } from '../src/parallel-download.ts';
+import {
+  downloadRemoteFile,
+  requestWithRetry,
+} from '../src/parallel-download.ts';
 import {
   HTTP_FETCH_CHUNK_SIZE,
   HTTP_FETCH_CONCURRENCY,
 } from '../src/settings.ts';
+import { captureRejection } from './assertions.ts';
 
 const noRetryDelay = {
   retryBaseDelayMs: 0,
@@ -41,6 +46,55 @@ async function getRejection(promise: Promise<unknown>) {
 }
 
 describe('parallel download', () => {
+  test('retries transient network errors but preserves non-Error failures', async () => {
+    const fetch = spyOn(globalThis, 'fetch')
+      .mockRejectedValueOnce(new TypeError('network disconnected'))
+      .mockResolvedValueOnce(new Response('recovered'));
+    try {
+      expect(await requestWithRetry('https://example.test', {}, (response) => response.text(), noRetryDelay)).toBe('recovered');
+      expect(fetch).toHaveBeenCalledTimes(2);
+      fetch.mockRejectedValueOnce('opaque failure');
+      expect(await captureRejection(requestWithRetry('https://example.test', {}, (response) => response.text(), noRetryDelay))).toBe(
+        'opaque failure',
+      );
+      expect(fetch).toHaveBeenCalledTimes(3);
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+
+  test.each(['Wed, 01 Jan 2020 00:00:00 GMT', 'invalid date'])('handles Retry-After date %p', async (retryAfter) => {
+    const fetch = spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response('retry', { status: 503, headers: { 'retry-after': retryAfter } }))
+      .mockResolvedValueOnce(new Response('ready'));
+    try {
+      expect(await requestWithRetry('https://example.test', {}, (response) => response.text(), noRetryDelay)).toBe('ready');
+      expect(fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+
+  test('rejects before requesting when cancelled and handles cancellation before a retry delay', async () => {
+    const controller = new AbortController();
+    const reason = new Error('cancelled');
+    const body = new ReadableStream({
+      cancel() {
+        controller.abort(reason);
+      },
+    });
+    const fetch = spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(body, { status: 503 }));
+    try {
+      const options = { signal: controller.signal, retryBaseDelayMs: 10 };
+      expect(await captureRejection(requestWithRetry('https://example.test', {}, (response) => response.text(), options))).toBe(reason);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(await captureRejection(requestWithRetry('https://example.test', {}, (response) => response.text(), options))).toBe(reason);
+      expect(fetch).toHaveBeenCalledTimes(1);
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+
   test('downloads byte ranges with bounded concurrency', async () => {
     const chunkCount = HTTP_FETCH_CONCURRENCY + 2;
     const content = Buffer.alloc(HTTP_FETCH_CHUNK_SIZE * (chunkCount - 1) + 17);

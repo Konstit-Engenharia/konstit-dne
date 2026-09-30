@@ -26,6 +26,7 @@ import {
   SECTION_TABLE_OFFSET,
   SPARSE_RANK_ROWS,
   SPARSE_RANK_SHIFT,
+  writePacked10,
   writePackedInteger,
   type BinaryHeader,
   type BinaryRegion as Region,
@@ -658,23 +659,6 @@ function commonPrefixLength(left: Uint8Array, right: Uint8Array) {
 function setBitmapBit(bitmap: Uint8Array, index: number) {
   const byteIndex = index >>> 3;
   bitmap[byteIndex] = (bitmap[byteIndex] ?? 0) | (1 << (index & 7));
-}
-
-function writePacked10(target: Uint8Array, index: number, value: number) {
-  if (value < 0 || value >= 1 << CEP_SUFFIX_BITS) {
-    throw new Error(`CEP suffix exceeds ${CEP_SUFFIX_BITS} bits: ${value}`);
-  }
-  const bitOffset = index * CEP_SUFFIX_BITS;
-  const byteIndex = bitOffset >>> 3;
-  const shift = bitOffset & 7;
-  const shifted = value << shift;
-  target[byteIndex] = (target[byteIndex] ?? 0) | (shifted & 0xff);
-  if (byteIndex + 1 < target.byteLength) {
-    target[byteIndex + 1] = (target[byteIndex + 1] ?? 0) | ((shifted >>> 8) & 0xff);
-  }
-  if (byteIndex + 2 < target.byteLength) {
-    target[byteIndex + 2] = (target[byteIndex + 2] ?? 0) | ((shifted >>> 16) & 0xff);
-  }
 }
 
 function packIntegerColumn(values: Uint32Array, width: 1 | 2 | 3 | 4) {
