@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import {
   isBairroId,
   type DneBairro,
@@ -39,14 +40,14 @@ import {
   type ByteWidth,
 } from './binary-db-format.ts';
 import { cepToU32 } from './cep.ts';
-import type {
-  DneRow,
-  LoadMetadata,
-} from './db.ts';
 import {
   LOCALIDADE_TIPOS,
   type LocalidadeSituacao,
 } from './schema.ts';
+import type {
+  DneRow,
+  LoadMetadata,
+} from './types.ts';
 
 /** Error classes and discriminants used by this module's public operations. */
 export {
@@ -141,12 +142,12 @@ export class DneBinaryDatabaseReader {
 
   /**
    * Opens and validates a binary database using Bun's memory-mapping API.
-   * @param databasePath - Path to an existing binary database file.
+   * @param databasePath - Optional path to an existing binary database. Defaults to `data/dne.bin` inside this package.
    * @throws {DneBinaryDatabaseIOError} If the file cannot be mapped.
    * @throws {DneBinaryDatabaseVersionError} If the declared format version is unsupported.
    * @throws {DneBinaryDatabaseFormatError} If the header, layout, dictionaries, or metadata are invalid.
    */
-  constructor(databasePath: string) {
+  constructor(databasePath = fileURLToPath(new URL('../data/dne.bin', import.meta.url))) {
     let mapped: Uint8Array<ArrayBuffer>;
     try {
       mapped = Bun.mmap(databasePath, { shared: false });

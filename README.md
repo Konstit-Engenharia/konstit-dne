@@ -1,8 +1,8 @@
-# CLI para e-DNE dos Correios
+# CEPs do Brasil com e-DNE dos Correios
 
 Crie em segundos uma base local, em SQLite ou em formato binário compacto, pronta para consultar os CEPs do Brasil com dados do e-DNE dos Correios. Depois da carga, as consultas funcionam sem servidor e sem acesso à rede.
 
-O `@konstit/dne` recebe um diretório, um arquivo ZIP local ou o arquivo público mais recente do e-DNE. Os dados são processados em fluxo e gravados diretamente em uma única tabela `dne` indexada, sem tabelas brutas intermediárias.
+O `@konstit/dne` inclui uma base binária pronta para consultas em aplicações Bun. A CLI também recebe um diretório, um arquivo ZIP local ou o arquivo público mais recente do e-DNE para gerar bases próprias. Os dados são processados em fluxo e gravados nas tabelas `dne`, `bairros` e `bairro_faixas`, sem tabelas brutas intermediárias.
 
 Principais vantagens:
 
@@ -15,7 +15,7 @@ Principais vantagens:
 
 Nas mesmas condições do benchmark, `uvx edne-correios-loader load --database-url sqlite:///dne.db` levou 30 segundos e gerou uma base de 394 MiB sem `VACUUM`. Nessa comparação, o `@konstit/dne` foi 5,2 vezes mais rápido e usou 68,2% menos espaço em disco.
 
-Este pacote fornece somente uma CLI. Ele não expõe uma API pública de biblioteca.
+O pacote oferece uma API de leitura e mantém a CLI via `bunx @konstit/dne`.
 
 ## Requisitos
 
@@ -23,6 +23,35 @@ Este pacote fornece somente uma CLI. Ele não expõe uma API pública de bibliot
 - macOS ou Linux
 
 ## Início rápido
+
+Instale o pacote para consultar a base incluída:
+
+```sh
+bun add @konstit/dne
+```
+
+```typescript
+import {
+  DneBinaryDatabaseReader,
+  type DneRow,
+} from '@konstit/dne';
+
+const db = new DneBinaryDatabaseReader();
+try {
+  const endereco: DneRow | null = db.queryCep('01141-000');
+  const bairro = db.queryBairroPorCep('01141-000');
+  const faixas = bairro ? db.queryFaixasBairro(bairro.bairro_id) : [];
+  console.log({ endereco, bairro, faixas });
+} finally {
+  db.close();
+}
+```
+
+Sem argumentos, o leitor abre `data/dne.bin` dentro do pacote instalado, independentemente do diretório de trabalho. Nenhum download é feito na instalação ou na consulta. A base representa a fonte usada no empacotamento daquela versão; instale uma versão mais recente para receber outra cópia ou passe o caminho de uma base própria: `new DneBinaryDatabaseReader('/dados/dne.bin')`.
+
+Os tipos `DneRow`, `DneBairro`, `DneFaixaCep`, `LoadMetadata`, `LocalidadeTipo`, `LocalidadeSituacao` e `DneBinaryDatabaseErrorCode` são exportados na raiz do pacote. As classes `DneBinaryDatabaseError`, `DneBinaryDatabaseIOError`, `DneBinaryDatabaseFormatError`, `DneBinaryDatabaseVersionError` e `DneBinaryDatabaseClosedError` também estão disponíveis para tratamento de erros. Importar a biblioteca não executa a CLI.
+
+Para criar ou consultar suas próprias bases pela CLI:
 
 ```sh
 bunx @konstit/dne build --db ./dne.db
@@ -308,7 +337,7 @@ Este schema serve para consultar um banco criado pelo `@konstit/dne`. O Drizzle 
 
 ## Desenvolvimento
 
-O comando `zip` é necessário para os testes de desenvolvimento que usam fixtures e arquivos ZIP aninhados.
+O comando `zip` é necessário para os testes com arquivos ZIP aninhados. Os testes de distribuição também usam `npm` e `tar` para empacotar e instalar uma fixture isolada, sem baixar os dados reais.
 
 ```sh
 bun test
@@ -319,3 +348,15 @@ bun run benchmark:download
 ```
 
 Outros scripts de benchmark específicos estão listados em `package.json`.
+
+### Distribuição do pacote
+
+`bun run build` gera a CLI em `dist/index.js` e a biblioteca com declarações TypeScript em `dist/library.js` e `dist/library.d.ts`. `npm pack` e `bun pm pack` executam `prepack`: compilam essas entradas e geram `data/dne.bin` a partir da fonte pública dos Correios. A base completa acompanha o tarball; não há script de instalação para baixá-la. Os testes de publicação verificam a CLI e a leitura da base no pacote instalado.
+
+Para empacotar a partir de um diretório ou ZIP local, informe `DNE_PACKAGE_SOURCE`:
+
+```sh
+DNE_PACKAGE_SOURCE=/dados/eDNE_Basico.zip npm pack
+```
+
+`bun run build:package-database` prepara somente a base incluída. Os arquivos gerados permanecem fora do Git.

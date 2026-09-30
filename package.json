@@ -1,7 +1,7 @@
 {
   "name": "@konstit/dne",
   "version": "0.0.2",
-  "description": "Build, update and query a local SQLite database of Brazilian postal codes.",
+  "description": "Query bundled Brazilian postal codes or build and update local SQLite and binary databases.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Konstit-Engenharia/konstit-dne.git"
@@ -24,16 +24,28 @@
   ],
   "license": "MIT",
   "type": "module",
+  "main": "./dist/library.js",
+  "types": "./dist/library.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/library.d.ts",
+      "import": "./dist/library.js",
+      "default": "./dist/library.js"
+    }
+  },
   "bin": {
     "dne": "./dist/index.js"
   },
   "files": [
     "dist",
+    "data/dne.bin",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
     "build:database": "bun run src/index.ts build",
+    "build:package-database": "bun run scripts/build-package-database.ts",
+    "prepack": "bun run build >&2 && bun run build:package-database >&2",
     "get": "bun run src/index.ts get",
     "test": "bun test --dots --parallel",
     "benchmark": "bun run bench/benchmark.ts",
@@ -52,9 +64,10 @@
     "audit": "bun audit",
     "check": "bun run coverage && bun run --parallel tsc lint:biome lint:oxlint build audit",
     "build": "bun run build:artifacts",
-    "build:artifacts": "bun run build:clean && bun run --parallel build:js",
+    "build:artifacts": "bun run build:clean && bun run --parallel build:js build:library",
     "build:clean": "rm -rf ./dist",
-    "build:js": "bun build ./src/index.ts --outdir ./dist --target=bun --format=esm --sourcemap=external --minify --keep-names --splitting --chunk-naming 'chunks/[name]-[hash].[ext]'"
+    "build:js": "bun build ./src/index.ts --outdir ./dist --target=bun --format=esm --sourcemap=external --minify --keep-names --splitting --chunk-naming 'chunks/[name]-[hash].[ext]'",
+    "build:library": "bunx --bun tsc -p tsconfig.build.json"
   },
   "dependencies": {
     "@konstit/cli": "0.0.4"

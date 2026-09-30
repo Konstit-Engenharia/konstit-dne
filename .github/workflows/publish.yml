@@ -81,7 +81,16 @@ jobs:
           SMOKE_DIR="$(mktemp -d)"
           trap 'rm -rf "$SMOKE_DIR"' EXIT
           npm install --prefix "$SMOKE_DIR" "$GITHUB_WORKSPACE/$TARBALL" --ignore-scripts --no-audit --no-fund
-          "$SMOKE_DIR/node_modules/.bin/dne" --help
+          cd "$SMOKE_DIR"
+          bunx --no-install @konstit/dne --help
+          bun --eval '
+            import { DneBinaryDatabaseReader } from "@konstit/dne";
+            const reader = new DneBinaryDatabaseReader();
+            if (!reader.queryCep("01001000") || reader.rowCount() === 0) {
+              throw new Error("Bundled database lookup failed");
+            }
+            reader.close();
+          '
 
       - name: Add tarball to GitHub Release
         env:
