@@ -1,11 +1,25 @@
 /** Logical schema revision recorded in load metadata to invalidate outdated imports. */
 export const DATABASE_SCHEMA_VERSION = '4';
 /** DNE locality codes in the order used by the binary format: municipality, district, village. */
-export const LOCALIDADE_TIPOS = ['M', 'D', 'P'] as const;
-/** Original `LOC_IN_TIPO_LOC` code: municipality (`M`), district (`D`), or village (`P`). */
+export const LOCALIDADE_TIPO_CODIGOS = ['M', 'D', 'P'] as const;
+/** Original `LOC_IN_TIPO_LOC` values retained in DNE imports and SQLite storage. */
+export type LocalidadeTipoCodigo = (typeof LOCALIDADE_TIPO_CODIGOS)[number];
+/** Original `LOC_IN_SIT` values retained in DNE imports and SQLite storage. */
+export type LocalidadeSituacaoCodigo = 0 | 1 | 2 | 3;
+
+/** Descriptive locality types in the same order as `LOCALIDADE_TIPO_CODIGOS`. */
+export const LOCALIDADE_TIPOS = ['municipio', 'distrito', 'povoado'] as const;
+/** Descriptive classification of the originating locality returned by CEP lookups. */
 export type LocalidadeTipo = (typeof LOCALIDADE_TIPOS)[number];
-/** Original `LOC_IN_SIT`: no street coding (0), street coding (1), included district/village (2), or coding in progress (3). */
-export type LocalidadeSituacao = 0 | 1 | 2 | 3;
+/** Descriptive postal coding statuses indexed by the original `LOC_IN_SIT` code. */
+export const LOCALIDADE_SITUACOES = [
+  'sem_codificacao_por_logradouro',
+  'codificada_por_logradouro',
+  'inserida_na_codificacao_por_logradouro',
+  'em_codificacao_por_logradouro',
+] as const;
+/** Postal coding status of the originating locality returned by CEP lookups. */
+export type LocalidadeSituacao = (typeof LOCALIDADE_SITUACOES)[number];
 
 /** SQLite column declaration used to generate the unified database schema. */
 export type ColumnDefinition = {

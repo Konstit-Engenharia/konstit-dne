@@ -161,8 +161,8 @@ Each result contains these fields:
 | `municipio_cod_ibge` | `u24` in the municipality record |
 | `uf` | Municipality record followed by a dictionary lookup |
 | `nome` | Sparse dictionary ID; an unset bitmap bit means null |
-| `localidade_situacao` | Bits 0-1 of the row's locality byte; `0`, `1`, `2`, or `3` |
-| `localidade_tipo` | Bits 2-3 of the row's locality byte; `0` = `M`, `1` = `D`, `2` = `P` |
+| `localidade_situacao` | Bits 0-1 of the row's locality byte, mapped to the descriptive status below |
+| `localidade_tipo` | Bits 2-3 of the row's locality byte; `0` = `municipio`, `1` = `distrito`, `2` = `povoado` |
 
 Dictionary IDs are one-based. ID `1` identifies dictionary entry index `0`; ID `0` represents null where null is permitted.
 
@@ -171,6 +171,17 @@ Dictionary IDs are one-based. ID `1` identifies dictionary entry index `0`; ID `
 `localidadeFlags` is a dense array of `N` bytes in CEP order. Each byte is `(type_index << 2) | situation`. Bits 4-7 must be zero; situation must be in `0..3` and type index must be in `0..2`. Thus the valid bytes are `0..11`.
 
 The fields preserve `LOC_IN_SIT` and `LOC_IN_TIPO_LOC` from the originating DNE locality. Situation `0` means no street-level coding, `1` means street-level coding, `2` means a district or village included in the coding, and `3` means street-level coding is in progress. Situation `3` preserves both general and street CEPs during the transition, as documented in `Delimitado/Leiautes_delimitador.doc` from the [official e-DNE archive](https://www2.correios.com.br/sistemas/edne/download/eDNE_Basico.zip). The types are municipality (`M`), district (`D`), and village (`P`). These indicators belong to each CEP's source locality, while the municipality record still identifies the parent municipality for districts and villages. They must not be deduplicated by municipality ID.
+
+The TypeScript readers expose descriptive string unions in `DneRow`. The stored bytes and format version are unchanged; raw SQLite queries still return the original DNE codes.
+
+| Situation bits | `LocalidadeSituacao` |
+| --- | --- |
+| `0` | `sem_codificacao_por_logradouro` |
+| `1` | `codificada_por_logradouro` |
+| `2` | `inserida_na_codificacao_por_logradouro` |
+| `3` | `em_codificacao_por_logradouro` |
+
+`LocalidadeTipo` is `municipio`, `distrito`, or `povoado`, corresponding to the stored type indexes `0`, `1`, and `2` and the original codes `M`, `D`, and `P`.
 
 ## Metadata section
 
@@ -453,8 +464,13 @@ municipio = municipioDictionary[municipality_record.municipio_id]
 uf = ufDictionary[municipality_record.uf_id]
 
 flags = localidadeFlags[row]
-localidade_situacao = flags & 3
-localidade_tipo = ["M", "D", "P"][flags >> 2]
+localidade_situacao = [
+    "sem_codificacao_por_logradouro",
+    "codificada_por_logradouro",
+    "inserida_na_codificacao_por_logradouro",
+    "em_codificacao_por_logradouro",
+][flags & 3]
+localidade_tipo = ["municipio", "distrito", "povoado"][flags >> 2]
 
 nome = read_sparse_value(
     nomeBitmap,

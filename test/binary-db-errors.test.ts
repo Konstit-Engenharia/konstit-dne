@@ -155,11 +155,11 @@ describe('binary reader error contract', () => {
         if (query === 'cep') {
           reader.queryCep('10000000');
         } else if (query === 'bairro') {
-          reader.queryBairro(11);
+          reader.queryNeighborhood(11);
         } else if (query === 'bairro-cep') {
-          reader.queryBairroPorCep('21000000');
+          reader.queryNeighborhoodByCep('21000000');
         } else {
-          reader.queryFaixasBairro(11);
+          reader.queryNeighborhoodCepRanges(11);
         }
       } catch (caught) {
         error = caught;

@@ -32,17 +32,17 @@ import {
   type BinarySectionName as SectionName,
   type ByteWidth,
 } from './binary-db-format.ts';
-import type {
-  DneRow,
-  LoadMetadata,
-} from './db.ts';
-import { LOCALIDADE_TIPOS } from './schema.ts';
+import { LOCALIDADE_TIPO_CODIGOS } from './schema.ts';
 import {
   SQLITE_BAIRRO_FAIXAS_TABLE_NAME,
   SQLITE_BAIRROS_TABLE_NAME,
   SQLITE_CEP_TABLE_NAME,
   SQLITE_METADATA_TABLE_NAME,
 } from './settings.ts';
+import type {
+  LoadMetadata,
+  StoredDneRow,
+} from './types.ts';
 
 type BuiltDictionary = {
   bytes: Uint8Array;
@@ -61,7 +61,7 @@ type BuiltDictionaries = {
   uf: BuiltDictionary;
 };
 
-type RawDneRow = Omit<DneRow, 'bairro'> & {
+type RawDneRow = Omit<StoredDneRow, 'bairro'> & {
   bairro_id: number | null;
   localidade_nome: string | null;
 };
@@ -162,7 +162,7 @@ export async function buildBinaryDatabase(
       }
       previousCep = cep;
 
-      const tipo = LOCALIDADE_TIPOS.indexOf(row.localidade_tipo);
+      const tipo = LOCALIDADE_TIPO_CODIGOS.indexOf(row.localidade_tipo);
       if (tipo === -1 || ![0, 1, 2, 3].includes(row.localidade_situacao)) {
         throw new Error(`Invalid locality indicators for CEP: ${row.cep}`);
       }

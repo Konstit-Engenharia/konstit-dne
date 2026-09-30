@@ -4,6 +4,16 @@ Crie em segundos uma base local, em SQLite ou em formato binário compacto, pron
 
 O `@konstit/dne` inclui uma base binária pronta para consultas em aplicações Bun. A CLI também recebe um diretório, um arquivo ZIP local ou o arquivo público mais recente do e-DNE para gerar bases próprias. Os dados são processados em fluxo e gravados nas tabelas `dne`, `bairros` e `bairro_faixas`, sem tabelas brutas intermediárias.
 
+**3,11 milhões de consultas por segundo:** no benchmark de leitura, `DneBinaryDatabaseReader` consultou 100 mil CEPs em **32,16 ms**, sendo **30,6× mais rápido que o leitor SQLite** da biblioteca na mesma carga.
+
+| Métrica | Binário | SQLite |
+| --- | ---: | ---: |
+| Mediana por 100 mil consultas | **32,16 ms** | 984,34 ms |
+| Consultas por segundo, calculadas pela mediana | **3,11 milhões** | 101,6 mil |
+| Tamanho da base | **32,2 MB** | 109,2 MB |
+
+Medição realizada em **30/09/2026**, em um **Apple M4 com Bun 1.4.2**, usando [bench/binary-lookup.bench.ts](bench/binary-lookup.bench.ts) e uma base com 1.611.629 CEPs. Cada rodada executou 50 mil consultas a CEPs existentes e 50 mil a CEPs ausentes, com duas rodadas de aquecimento e nove medições. Ambos os leitores encontraram os 50 mil CEPs esperados. Os tempos incluem somente as consultas após aquecimento, sem a abertura da base; os tamanhos estão em MB decimais.
+
 Principais vantagens:
 
 - **Rápido e compacto:** em um benchmark de 10 execuções realizado em 2026-08-30, a geração completa a partir do arquivo público levou 5,73 segundos em média, incluindo o download. A base final continha 1.605.136 registros e ocupava 125,4 MiB.
@@ -39,8 +49,8 @@ import {
 const db = new DneBinaryDatabaseReader();
 try {
   const endereco: DneRow | null = db.queryCep('01141-000');
-  const bairro = db.queryBairroPorCep('01141-000');
-  const faixas = bairro ? db.queryFaixasBairro(bairro.bairro_id) : [];
+  const bairro = db.queryNeighborhoodByCep('01141-000');
+  const faixas = bairro ? db.queryNeighborhoodCepRanges(bairro.bairro_id) : [];
   console.log({ endereco, bairro, faixas });
 } finally {
   db.close();
@@ -49,7 +59,7 @@ try {
 
 Sem argumentos, o leitor abre `data/dne.bin` dentro do pacote instalado, independentemente do diretório de trabalho. Nenhum download é feito na instalação ou na consulta. A base representa a fonte usada no empacotamento daquela versão; instale uma versão mais recente para receber outra cópia ou passe o caminho de uma base própria: `new DneBinaryDatabaseReader('/dados/dne.bin')`.
 
-Os tipos `DneRow`, `DneBairro`, `DneFaixaCep`, `LoadMetadata`, `LocalidadeTipo`, `LocalidadeSituacao` e `DneBinaryDatabaseErrorCode` são exportados na raiz do pacote. As classes `DneBinaryDatabaseError`, `DneBinaryDatabaseIOError`, `DneBinaryDatabaseFormatError`, `DneBinaryDatabaseVersionError` e `DneBinaryDatabaseClosedError` também estão disponíveis para tratamento de erros. Importar a biblioteca não executa a CLI.
+Os tipos `DneRow`, `DneBairro`, `DneFaixaCep`, `LoadMetadata`, `UF`, `LocalidadeTipo`, `LocalidadeSituacao` e `DneBinaryDatabaseErrorCode` são exportados na raiz do pacote. As classes `DneBinaryDatabaseError`, `DneBinaryDatabaseIOError`, `DneBinaryDatabaseFormatError`, `DneBinaryDatabaseVersionError` e `DneBinaryDatabaseClosedError` também estão disponíveis para tratamento de erros. Importar a biblioteca não executa a CLI.
 
 Para criar ou consultar suas próprias bases pela CLI:
 
@@ -271,13 +281,27 @@ ORDER BY f.cep_inicial, f.cep_final;
 
 Os leitores `DneDatabaseReader` e `DneBinaryDatabaseReader` oferecem as mesmas consultas adicionais:
 
-- `queryBairro(bairroId)`: retorna `{ bairro_id, localidade_id, uf, nome, nome_abreviado }` pelo identificador original.
-- `queryBairroPorCep(cep)`: retorna o bairro efetivamente associado ao CEP, ou `null` quando ausente, inclusive nos CEPs gerais de distritos e povoados.
-- `queryFaixasBairro(bairroId)`: retorna `{ cep_inicial, cep_final }[]`, ordenado pelos limites, ou `[]` quando não há faixas.
+- `queryNeighborhood(bairroId)`: retorna `{ bairro_id, localidade_id, uf, nome, nome_abreviado }` pelo identificador original.
+- `queryNeighborhoodByCep(cep)`: retorna o bairro efetivamente associado ao CEP, ou `null` quando ausente, inclusive nos CEPs gerais de distritos e povoados.
+- `queryNeighborhoodCepRanges(bairroId)`: retorna `{ cep_inicial, cep_final }[]`, ordenado pelos limites, ou `[]` quando não há faixas.
 
 Identificadores inválidos ou desconhecidos retornam `null`/`[]`. No binário, o cadastro de bairros tem índices internos compactos e preserva os identificadores originais; os intervalos usam pares de inteiros de 32 bits e são convertidos para oito dígitos na leitura.
 
-`localidade_situacao` preserva `LOC_IN_SIT`: `0` indica localidade sem codificação por logradouro, `1` indica localidade codificada, `2` indica distrito ou povoado inserido na codificação e `3` indica localidade em fase de codificação por logradouro. Na situação `3`, o CEP geral e os CEPs de logradouros coexistem durante a transição, conforme `Delimitado/Leiautes_delimitador.doc` incluído no [arquivo oficial do e-DNE](https://www2.correios.com.br/sistemas/edne/download/eDNE_Basico.zip). `localidade_tipo` preserva `LOC_IN_TIPO_LOC`: `M` para município, `D` para distrito e `P` para povoado. Os indicadores pertencem à localidade de origem de cada CEP, inclusive nos registros de logradouros, caixas postais comunitárias, grandes usuários e unidades operacionais. Para distritos e povoados, `municipio` e `municipio_cod_ibge` continuam identificando o município superior.
+No SQLite, `localidade_situacao` preserva `LOC_IN_SIT` (`0`, `1`, `2` ou `3`) e `localidade_tipo` preserva `LOC_IN_TIPO_LOC` (`M`, `D` ou `P`). O binário mantém esses indicadores compactados em um byte por CEP. `queryCep()` converte os códigos para strings descritivas nos dois leitores; a CLI também retorna essas strings nas consultas `get`:
+
+| Campo | Código DNE | Valor retornado pela API |
+| --- | --- | --- |
+| `localidade_tipo` | `M` | `municipio` |
+| `localidade_tipo` | `D` | `distrito` |
+| `localidade_tipo` | `P` | `povoado` |
+| `localidade_situacao` | `0` | `sem_codificacao_por_logradouro` |
+| `localidade_situacao` | `1` | `codificada_por_logradouro` |
+| `localidade_situacao` | `2` | `inserida_na_codificacao_por_logradouro` |
+| `localidade_situacao` | `3` | `em_codificacao_por_logradouro` |
+
+`LocalidadeTipo` e `LocalidadeSituacao` são string unions desses valores. Consultas SQL diretas continuam usando os códigos originais. A conversão acontece na leitura e não exige reconstruir bases existentes do formato atual.
+
+Na situação `3`, o CEP geral e os CEPs de logradouros coexistem durante a transição, conforme `Delimitado/Leiautes_delimitador.doc` incluído no [arquivo oficial do e-DNE](https://www2.correios.com.br/sistemas/edne/download/eDNE_Basico.zip). Os indicadores pertencem à localidade de origem de cada CEP, inclusive nos registros de logradouros, caixas postais comunitárias, grandes usuários e unidades operacionais. Para distritos e povoados, `municipio` e `municipio_cod_ibge` continuam identificando o município superior.
 
 Para listar municípios com CEP único:
 
@@ -348,6 +372,17 @@ bun run benchmark:download
 ```
 
 Outros scripts de benchmark específicos estão listados em `package.json`.
+
+Para comparar consultas no binário e no SQLite usando os mesmos CEPs:
+
+```sh
+bun run bench/binary-lookup.bench.ts data/dne.bin 100000 ./dne.db
+bun run bench/binary-lookup.bench.ts ./dne.db 100000 ./dne.db
+```
+
+O terceiro argumento fornece a base SQLite usada para selecionar 50% de CEPs existentes e 50% de ausentes. O resultado inclui nove medições após duas rodadas de aquecimento. `memoryBytes` registra a memória antes de abrir a base, após abri-la, após o primeiro lote de consultas, após a coleta de lixo desse lote e ao final das medições, sempre antes de fechar o leitor. A coleta de lixo inicial e a do primeiro lote ficam fora das medições de tempo.
+
+Todos os valores de memória estão em bytes. `rss` é o consumo do processo reportado pelo Bun, incluindo o runtime e a lista de consultas; não representa apenas o banco. `heapUsed`, `heapTotal`, `external` e `arrayBuffers` são os valores originais de `process.memoryUsage()`. Não os some: há sobreposição, e o Bun pode incluir buffers externos em `heapUsed`. `heapObjectBytes` separa os objetos do heap de strings e buffers alocados externamente, usando `heapSize - extraMemorySize` de `bun:jsc`. Esse contador reflete a última coleta de lixo; compare `beforeOpen` com `afterFirstBatchGc` para avaliar os objetos que continuam ocupando memória. [Detalhes das métricas do Bun](https://bun.com/reference/bun/jsc/heapStats).
 
 ### Distribuição do pacote
 

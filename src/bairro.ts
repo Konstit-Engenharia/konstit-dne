@@ -1,3 +1,5 @@
+import type { UF } from './types.ts';
+
 /** A neighborhood from `LOG_BAIRRO.TXT`, identified independently of its name. */
 export type DneBairro = {
   /** Original positive `BAI_NU` identifier from the DNE source. */
@@ -9,7 +11,7 @@ export type DneBairro = {
   /** Abbreviated source name, or null when no abbreviation is supplied. */
   nome_abreviado: string | null;
   /** Two-letter Brazilian state abbreviation. */
-  uf: string;
+  uf: UF;
 };
 
 /** One inclusive CEP interval assigned to a neighborhood by the DNE source. */

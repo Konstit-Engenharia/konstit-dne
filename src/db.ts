@@ -12,9 +12,11 @@ import {
   getStoredTables,
   getTableFilesGlob,
   getUnifiedTable,
+  LOCALIDADE_SITUACOES,
+  LOCALIDADE_TIPO_CODIGOS,
   LOCALIDADE_TIPOS,
-  type LocalidadeSituacao,
-  type LocalidadeTipo,
+  type LocalidadeSituacaoCodigo,
+  type LocalidadeTipoCodigo,
   type TableDefinition,
 } from './schema.ts';
 import {
@@ -30,6 +32,7 @@ import {
 import type {
   DneRow,
   LoadMetadata,
+  StoredDneRow,
 } from './types.ts';
 
 /** Address records and provenance shared by SQLite and binary readers. */
@@ -112,26 +115,34 @@ export class DneDatabaseReader {
     }
     this.requireCurrentSchema();
     const row = this.db.query(`SELECT * FROM ${quoteIdent(cepViewName(SQLITE_CEP_TABLE_NAME))} WHERE cep = ?`)
-      .get(cep.length === 8 ? cep : `${cep.slice(0, 5)}${cep.slice(6)}`) as DneRow | null;
-    if (row && (row.localidade_situacao === undefined || row.localidade_tipo === undefined)) {
+      .get(cep.length === 8 ? cep : `${cep.slice(0, 5)}${cep.slice(6)}`) as StoredDneRow | null;
+    if (!row) {
+      return null;
+    }
+    if (row.localidade_situacao === undefined || row.localidade_tipo === undefined) {
       throw new Error('Database schema lacks locality indicators. Rebuild the database with build --force.');
     }
-    return row;
+    const situacao = LOCALIDADE_SITUACOES[row.localidade_situacao];
+    const tipo = LOCALIDADE_TIPOS[LOCALIDADE_TIPO_CODIGOS.indexOf(row.localidade_tipo)];
+    if (situacao === undefined || tipo === undefined) {
+      throw new Error('Database contains invalid locality indicators. Rebuild the database with build --force.');
+    }
+    return { ...row, localidade_situacao: situacao, localidade_tipo: tipo };
   }
 
   /**
    * Reads a neighborhood by its original DNE identifier.
-   * @param bairroId - Positive `BAI_NU` identifier.
+   * @param neighborhoodId - Positive `BAI_NU` identifier.
    * @returns The neighborhood, or null for an invalid or unknown identifier.
    * @throws {Error} If the database cannot be queried or requires rebuilding.
    */
-  queryBairro(bairroId: number): DneBairro | null {
-    if (!isBairroId(bairroId)) {
+  queryNeighborhood(neighborhoodId: number): DneBairro | null {
+    if (!isBairroId(neighborhoodId)) {
       return null;
     }
     this.requireCurrentSchema();
     return this.db.query(`SELECT * FROM ${quoteIdent(SQLITE_BAIRROS_TABLE_NAME)} WHERE bairro_id = ?`)
-      .get(bairroId) as DneBairro | null;
+      .get(neighborhoodId) as DneBairro | null;
   }
 
   /**
@@ -140,7 +151,7 @@ export class DneDatabaseReader {
    * @returns The neighborhood, or null for an invalid, unknown, or neighborhood-free CEP.
    * @throws {Error} If the database cannot be queried or requires rebuilding.
    */
-  queryBairroPorCep(cep: string): DneBairro | null {
+  queryNeighborhoodByCep(cep: string): DneBairro | null {
     if (Number.isNaN(cepToU32(cep))) {
       return null;
     }
@@ -154,19 +165,19 @@ export class DneDatabaseReader {
 
   /**
    * Lists a neighborhood's original CEP intervals without merging gaps.
-   * @param bairroId - Positive `BAI_NU` identifier.
+   * @param neighborhoodId - Positive `BAI_NU` identifier.
    * @returns Intervals sorted by their lower and upper bounds; an empty array for invalid, unknown, or rangeless neighborhoods.
    * @throws {Error} If the database cannot be queried or requires rebuilding.
    */
-  queryFaixasBairro(bairroId: number): DneFaixaCep[] {
-    if (!isBairroId(bairroId)) {
+  queryNeighborhoodCepRanges(neighborhoodId: number): DneFaixaCep[] {
+    if (!isBairroId(neighborhoodId)) {
       return [];
     }
     this.requireCurrentSchema();
     return this.db.query(`
       SELECT cep_inicial, cep_final FROM ${quoteIdent(SQLITE_BAIRRO_FAIXAS_TABLE_NAME)}
       WHERE bairro_id = ? ORDER BY cep_inicial, cep_final
-    `).all(bairroId) as DneFaixaCep[];
+    `).all(neighborhoodId) as DneFaixaCep[];
   }
 
   private requireCurrentSchema() {
@@ -244,8 +255,8 @@ type UnifiedInsertRow = [
   municipioCodIbge: number,
   uf: string,
   nome: string | null,
-  localidadeSituacao: LocalidadeSituacao,
-  localidadeTipo: LocalidadeTipo,
+  localidadeSituacao: LocalidadeSituacaoCodigo,
+  localidadeTipo: LocalidadeTipoCodigo,
 ];
 
 type Localidade = {
@@ -254,8 +265,8 @@ type Localidade = {
   cep: string | null;
   locNuSub: string | null;
   munNu: number | null;
-  situacao: LocalidadeSituacao;
-  tipo: LocalidadeTipo;
+  situacao: LocalidadeSituacaoCodigo;
+  tipo: LocalidadeTipoCodigo;
 };
 
 type LocalidadeCandidate = Localidade & {
@@ -617,7 +628,7 @@ export class DneDatabaseWriter {
           counter.reject('invalid_localidade_situacao');
           return;
         }
-        const tipo = LOCALIDADE_TIPOS.find((value) => value === tipoRaw);
+        const tipo = LOCALIDADE_TIPO_CODIGOS.find((value) => value === tipoRaw);
         if (!tipo) {
           counter.reject('invalid_localidade_tipo');
           return;
@@ -633,7 +644,7 @@ export class DneDatabaseWriter {
           cep,
           locNuSub,
           munNu: munNuRaw === null ? null : Number(munNuRaw),
-          situacao: Number(situacao) as LocalidadeSituacao,
+          situacao: Number(situacao) as LocalidadeSituacaoCodigo,
           tipo,
           quality: counter,
         });

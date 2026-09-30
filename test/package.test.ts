@@ -74,8 +74,12 @@ describe('published package', () => {
       const reader = new DneBinaryDatabaseReader();
       assert.equal(reader.rowCount(), 20);
       assert.equal(reader.queryCep('21000000').bairro, 'Centro');
-      assert.equal(reader.queryBairroPorCep('21000000').bairro_id, 11);
-      assert.equal(reader.queryFaixasBairro(11).length, 2);
+      assert.equal(reader.queryCep('21000000').localidade_tipo, 'municipio');
+      assert.equal(reader.queryCep('21000000').localidade_situacao, 'codificada_por_logradouro');
+      assert.equal(reader.queryCep('13000000').localidade_tipo, 'distrito');
+      assert.equal(reader.queryCep('13000000').localidade_situacao, 'em_codificacao_por_logradouro');
+      assert.equal(reader.queryNeighborhoodByCep('21000000').bairro_id, 11);
+      assert.equal(reader.queryNeighborhoodCepRanges(11).length, 2);
       reader.close();
       assert.throws(() => reader.queryCep('21000000'), DneBinaryDatabaseClosedError);
       assert.throws(() => new DneBinaryDatabaseReader('./missing.bin'), DneBinaryDatabaseIOError);
@@ -101,16 +105,35 @@ describe('published package', () => {
       import {
         DneBinaryDatabaseReader, DneBinaryDatabaseError, DneBinaryDatabaseClosedError,
         DneBinaryDatabaseIOError, DneBinaryDatabaseFormatError, DneBinaryDatabaseVersionError,
-        type DneRow, type DneBairro, type DneFaixaCep, type LoadMetadata,
+        type DneRow, type DneBairro, type DneFaixaCep, type LoadMetadata, type UF,
         type LocalidadeTipo, type LocalidadeSituacao, type DneBinaryDatabaseErrorCode,
       } from '@konstit/dne';
       const reader = new DneBinaryDatabaseReader();
       const row: DneRow | null = reader.queryCep('21000000');
-      const bairro: DneBairro | null = reader.queryBairroPorCep('21000000');
-      const ranges: DneFaixaCep[] = reader.queryFaixasBairro(11);
+      const bairro: DneBairro | null = reader.queryNeighborhoodByCep('21000000');
+      const rowUf: UF | undefined = row?.uf;
+      const bairroUf: UF | undefined = bairro?.uf;
+      // @ts-expect-error Address UFs must be supported Brazilian state abbreviations.
+      const invalidRowUf: DneRow['uf'] = 'XX';
+      // @ts-expect-error Neighborhood UFs must be supported Brazilian state abbreviations.
+      const invalidBairroUf: DneBairro['uf'] = 'XX';
+      const ranges: DneFaixaCep[] = reader.queryNeighborhoodCepRanges(11);
       const metadata: LoadMetadata = reader.metadata();
       const tipo: LocalidadeTipo | undefined = row?.localidade_tipo;
       const situacao: LocalidadeSituacao | undefined = row?.localidade_situacao;
+      const tipos: LocalidadeTipo[] = ['municipio', 'distrito', 'povoado'];
+      const situacoes: LocalidadeSituacao[] = [
+        'sem_codificacao_por_logradouro', 'codificada_por_logradouro',
+        'inserida_na_codificacao_por_logradouro', 'em_codificacao_por_logradouro',
+      ];
+      // @ts-expect-error Original DNE codes are not public locality types.
+      const tipoCodigo: LocalidadeTipo = 'M';
+      // @ts-expect-error Original DNE status numbers are not public coding statuses.
+      const situacaoCodigo: LocalidadeSituacao = 3;
+      // @ts-expect-error Locality types are a closed string union.
+      const tipoDesconhecido: LocalidadeTipo = 'outro';
+      // @ts-expect-error Coding statuses are a closed string union.
+      const situacaoDesconhecida: LocalidadeSituacao = 'outra';
       const error: DneBinaryDatabaseError = new DneBinaryDatabaseClosedError();
       const code: DneBinaryDatabaseErrorCode = error.code;
       new DneBinaryDatabaseIOError('missing');
@@ -119,10 +142,11 @@ describe('published package', () => {
       // @ts-expect-error CEP lookups require a string.
       reader.queryCep(21000000);
       // @ts-expect-error Original neighborhood identifiers are numeric.
-      reader.queryBairro('11');
+      reader.queryNeighborhood('11');
       // @ts-expect-error Endpoints retain their leading zeroes as strings.
       const endpoint: number = ranges[0].cep_inicial;
-      void [row, bairro, ranges, metadata, tipo, situacao, code, endpoint];
+      void [row, bairro, ranges, metadata, tipo, situacao, tipos, situacoes, tipoCodigo, situacaoCodigo,
+        tipoDesconhecido, situacaoDesconhecida, code, endpoint, rowUf, bairroUf, invalidRowUf, invalidBairroUf];
       reader.close();
     `,
     );

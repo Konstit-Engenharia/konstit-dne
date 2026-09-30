@@ -48,27 +48,27 @@ describe('normalized neighborhoods', () => {
     const readers = [new DneDatabaseReader(sqlite), new DneBinaryDatabaseReader(binary)];
     for (const reader of readers) {
       try {
-        expect(reader.queryBairro(11)).toEqual({ bairro_id: 11, localidade_id: 1, uf: 'SP', nome: 'Centro', nome_abreviado: 'Ctr' });
-        expect(reader.queryBairro(12)).toMatchObject({ bairro_id: 12, localidade_id: 2, nome: 'Centro', nome_abreviado: null });
-        expect(reader.queryBairro(999)).toMatchObject({ bairro_id: 999, localidade_id: 1, nome: 'Centro' });
-        expect(reader.queryFaixasBairro(999)).toEqual([]);
-        expect(reader.queryBairroPorCep('21000-000')).toEqual(reader.queryBairro(11));
-        expect(reader.queryBairroPorCep('24000000')).toEqual(reader.queryBairro(14));
-        expect(reader.queryBairroPorCep('25000000')).toEqual(reader.queryBairro(15));
-        expect(reader.queryFaixasBairro(11)).toEqual([
+        expect(reader.queryNeighborhood(11)).toEqual({ bairro_id: 11, localidade_id: 1, uf: 'SP', nome: 'Centro', nome_abreviado: 'Ctr' });
+        expect(reader.queryNeighborhood(12)).toMatchObject({ bairro_id: 12, localidade_id: 2, nome: 'Centro', nome_abreviado: null });
+        expect(reader.queryNeighborhood(999)).toMatchObject({ bairro_id: 999, localidade_id: 1, nome: 'Centro' });
+        expect(reader.queryNeighborhoodCepRanges(999)).toEqual([]);
+        expect(reader.queryNeighborhoodByCep('21000-000')).toEqual(reader.queryNeighborhood(11));
+        expect(reader.queryNeighborhoodByCep('24000000')).toEqual(reader.queryNeighborhood(14));
+        expect(reader.queryNeighborhoodByCep('25000000')).toEqual(reader.queryNeighborhood(15));
+        expect(reader.queryNeighborhoodCepRanges(11)).toEqual([
           { cep_inicial: '01000000', cep_final: '01000010' },
           { cep_inicial: '21000000', cep_final: '21000000' },
         ]);
         for (const [cep, name,] of [['11000000', 'Distrito Unico'], ['14000000', 'Povoado em Codificacao']] as const) {
-          expect(reader.queryBairroPorCep(cep)).toBeNull();
+          expect(reader.queryNeighborhoodByCep(cep)).toBeNull();
           expect(reader.queryCep(cep)?.bairro).toBe(name);
         }
         for (const id of [0, -1, 1.5, NaN, Infinity, 0x1_0000_0000, 13]) {
-          expect(reader.queryBairro(id)).toBeNull();
-          expect(reader.queryFaixasBairro(id)).toEqual([]);
+          expect(reader.queryNeighborhood(id)).toBeNull();
+          expect(reader.queryNeighborhoodCepRanges(id)).toEqual([]);
         }
         for (const cep of ['invalid', '99999999', '10000000', '41000000']) {
-          expect(reader.queryBairroPorCep(cep)).toBeNull();
+          expect(reader.queryNeighborhoodByCep(cep)).toBeNull();
         }
       } finally {
         reader.close();
@@ -110,8 +110,8 @@ describe('normalized neighborhoods', () => {
     }
     const reader = new DneDatabaseReader(sqlite);
     try {
-      expect(reader.queryBairro(11)?.nome).toBe('Centro');
-      expect(reader.queryFaixasBairro(11)).toHaveLength(2);
+      expect(reader.queryNeighborhood(11)?.nome).toBe('Centro');
+      expect(reader.queryNeighborhoodCepRanges(11)).toHaveLength(2);
       expect(reader.queryCep('21000000')?.bairro).toBe('Centro');
       expect(reader.metadata()?.['marker']).toBe('original');
     } finally {
@@ -124,14 +124,14 @@ describe('normalized neighborhoods', () => {
     fetchDatabase(sqlite, source);
     const reader = new DneDatabaseReader(sqlite);
     try {
-      expect(reader.queryBairro(11)?.nome).toBe('Centro');
+      expect(reader.queryNeighborhood(11)?.nome).toBe('Centro');
       const bairrosPath = join(source, 'LOG_BAIRRO.TXT');
       writeFileSync(bairrosPath, readFileSync(bairrosPath, 'latin1').replace('Centro@Ctr', 'Changed@New'), 'latin1');
       appendFileSync(join(source, 'LOG_FAIXA_BAIRRO.TXT'), '\n11@02000000@02000010', 'latin1');
       fetchDatabase(sqlite, source);
-      expect(reader.queryBairro(11)?.nome).toBe('Changed');
+      expect(reader.queryNeighborhood(11)?.nome).toBe('Changed');
       expect(reader.queryCep('21000000')?.bairro).toBe('Changed');
-      expect(reader.queryFaixasBairro(11)).toHaveLength(3);
+      expect(reader.queryNeighborhoodCepRanges(11)).toHaveLength(3);
     } finally {
       reader.close();
     }
@@ -147,8 +147,8 @@ describe('normalized neighborhoods', () => {
       expect(() => reader.queryCep('21000000')).toThrow('build --force');
       fetchDatabase(sqlite, source);
       expect(reader.queryCep('21000000')?.bairro).toBe('Centro');
-      expect(reader.queryBairroPorCep('21000000')?.bairro_id).toBe(11);
-      expect(reader.queryFaixasBairro(11)).toHaveLength(2);
+      expect(reader.queryNeighborhoodByCep('21000000')?.bairro_id).toBe(11);
+      expect(reader.queryNeighborhoodCepRanges(11)).toHaveLength(2);
     } finally {
       reader.close();
     }
@@ -173,9 +173,9 @@ describe('normalized neighborhoods', () => {
     await buildBinaryDatabase(sqlite, binary);
     const reader = new DneBinaryDatabaseReader(binary);
     try {
-      expect(reader.queryBairroPorCep('21000000')?.bairro_id).toBe(65_629);
+      expect(reader.queryNeighborhoodByCep('21000000')?.bairro_id).toBe(65_629);
       expect(reader.queryCep('21000000')?.bairro).toBe('Centro');
-      expect(reader.queryBairro(65_629)?.nome_abreviado).toBeNull();
+      expect(reader.queryNeighborhood(65_629)?.nome_abreviado).toBeNull();
     } finally {
       reader.close();
     }
@@ -190,8 +190,8 @@ describe('normalized neighborhoods', () => {
     await buildBinaryDatabase(sqlite, binary);
     const reader = new DneBinaryDatabaseReader(binary);
     try {
-      expect(reader.queryBairro(11)).toBeNull();
-      expect(reader.queryFaixasBairro(11)).toEqual([]);
+      expect(reader.queryNeighborhood(11)).toBeNull();
+      expect(reader.queryNeighborhoodCepRanges(11)).toEqual([]);
       expect(reader.queryCep('11000000')?.bairro).toBe('Distrito Unico');
     } finally {
       reader.close();
@@ -226,10 +226,10 @@ describe('normalized neighborhoods', () => {
     reader.close();
     for (
       const query of [
-        () => reader.queryBairro(11),
-        () => reader.queryBairro(NaN),
-        () => reader.queryBairroPorCep('invalid'),
-        () => reader.queryFaixasBairro(11),
+        () => reader.queryNeighborhood(11),
+        () => reader.queryNeighborhood(NaN),
+        () => reader.queryNeighborhoodByCep('invalid'),
+        () => reader.queryNeighborhoodCepRanges(11),
       ]
     ) {
       expect(query).toThrow(DneBinaryDatabaseClosedError);

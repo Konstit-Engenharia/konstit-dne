@@ -21,10 +21,7 @@ import {
   inspectDatabase,
   openReadyDatabase,
 } from '../src/database-service.ts';
-import {
-  DneDatabaseReader,
-  type DneRow,
-} from '../src/db.ts';
+import { DneDatabaseReader } from '../src/db.ts';
 import {
   createFixture,
   createLocalityFixture,
@@ -62,8 +59,8 @@ describe('binary database', () => {
         bairro: 'Bairro 1',
         cep: '30000001',
         complemento: null,
-        localidade_situacao: 1,
-        localidade_tipo: 'M',
+        localidade_situacao: 'codificada_por_logradouro',
+        localidade_tipo: 'municipio',
         logradouro: 'Rua Endereco 1',
         municipio: 'Municipio 1',
         municipio_cod_ibge: 3500001,
@@ -107,17 +104,29 @@ describe('binary database', () => {
     createLocalityFixture(sourcePath);
     fetchDatabase(sqlitePath, sourcePath);
     await buildBinaryDatabase(sqlitePath, binaryPath);
+    const bytes = new Uint8Array(await Bun.file(binaryPath).arrayBuffer());
+    const directoryOffset = SECTION_TABLE_OFFSET + BINARY_SECTION_NAMES.indexOf('localidadeFlags') * 8;
+    const flagsOffset = new DataView(bytes.buffer).getUint32(directoryOffset, true);
+    expect([...bytes.subarray(flagsOffset, flagsOffset + 8)]).toEqual([0, 4, 3, 7, 11, 1, 10, 5]);
     const reader = new DneBinaryDatabaseReader(binaryPath);
     try {
       expectAllRowsMatch(reader, sqlitePath);
+      expect(reader.queryCep('10000000')).toMatchObject({
+        localidade_situacao: 'sem_codificacao_por_logradouro',
+        localidade_tipo: 'municipio',
+      });
+      expect(reader.queryCep('11000000')).toMatchObject({
+        localidade_situacao: 'sem_codificacao_por_logradouro',
+        localidade_tipo: 'distrito',
+      });
       expect(reader.queryCep('64000000')).toMatchObject({
-        localidade_situacao: 2,
-        localidade_tipo: 'P',
+        localidade_situacao: 'inserida_na_codificacao_por_logradouro',
+        localidade_tipo: 'povoado',
         municipio: 'Municipio Codificado',
       });
-      for (const [cep, tipo,] of [['12000000', 'M'], ['13000000', 'D'], ['14000000', 'P']] as const) {
+      for (const [cep, tipo,] of [['12000000', 'municipio'], ['13000000', 'distrito'], ['14000000', 'povoado']] as const) {
         expect(reader.queryCep(cep)).toMatchObject({
-          localidade_situacao: 3,
+          localidade_situacao: 'em_codificacao_por_logradouro',
           localidade_tipo: tipo,
           municipio: 'Municipio em Codificacao',
           municipio_cod_ibge: 3500006,
@@ -239,16 +248,14 @@ describe('binary database', () => {
 
 function expectAllRowsMatch(reader: DneBinaryDatabaseReader, sqlitePath: string) {
   const sqlite = new Database(sqlitePath, { readonly: true });
+  const sqliteReader = new DneDatabaseReader(sqlitePath);
   try {
-    const rows = sqlite.query(`
-      SELECT cep, logradouro, complemento, bairro, municipio, municipio_cod_ibge, uf, nome, localidade_situacao, localidade_tipo
-      FROM dne_consulta
-      ORDER BY cep
-    `).all() as DneRow[];
-    for (const row of rows) {
-      expect(reader.queryCep(row.cep)).toEqual(row);
+    const rows = sqlite.query('SELECT cep FROM dne_consulta ORDER BY cep').all() as { cep: string; }[];
+    for (const { cep } of rows) {
+      expect(reader.queryCep(cep)).toEqual(sqliteReader.queryCep(cep));
     }
   } finally {
+    sqliteReader.close();
     sqlite.close();
   }
 }

@@ -41,12 +41,14 @@ import {
 } from './binary-db-format.ts';
 import { cepToU32 } from './cep.ts';
 import {
+  LOCALIDADE_SITUACOES,
   LOCALIDADE_TIPOS,
-  type LocalidadeSituacao,
 } from './schema.ts';
-import type {
-  DneRow,
-  LoadMetadata,
+import {
+  parseState,
+  type DneRow,
+  type LoadMetadata,
+  type UF,
 } from './types.ts';
 
 /** Error classes and discriminants used by this module's public operations. */
@@ -97,7 +99,7 @@ type BinaryBairros = {
 type DecodedMunicipality = {
   codigoIbge: number;
   municipio: string;
-  uf: string;
+  uf: UF;
 };
 
 const textDecoder = new TextDecoder();
@@ -159,7 +161,7 @@ export class DneBinaryDatabaseReader {
       const header = readHeader(data);
       validateHeader(data, header);
       const dictionaries = readDictionaries(data, header);
-      const bairros = readBairros(data, header, dictionaries);
+      const bairros = readNeighborhoods(data, header, dictionaries);
       validateLayout(data, header, dictionaries, bairros);
       const metadata = parseMetadata(mapped, header.sections.metadata);
 
@@ -217,15 +219,15 @@ export class DneBinaryDatabaseReader {
 
   /**
    * Reads a neighborhood by its original DNE identifier, independent of duplicate names.
-   * @param bairroId - Positive `BAI_NU` identifier.
+   * @param neighborhoodId - Positive `BAI_NU` identifier.
    * @returns The neighborhood, or null for an invalid or unknown identifier.
    * @throws {DneBinaryDatabaseClosedError} If the reader is closed, including for invalid input.
    * @throws {DneBinaryDatabaseFormatError} If an index, record, or string cannot be decoded.
    */
-  queryBairro(bairroId: number): DneBairro | null {
+  queryNeighborhood(neighborhoodId: number): DneBairro | null {
     return this.readSafely(() => {
-      const index = this.findBairroIndex(bairroId);
-      return index === 0 ? null : this.readBairro(index);
+      const index = this.findNeighborhoodIndex(neighborhoodId);
+      return index === 0 ? null : this.readNeighborhood(index);
     });
   }
 
@@ -236,27 +238,27 @@ export class DneBinaryDatabaseReader {
    * @throws {DneBinaryDatabaseClosedError} If the reader is closed, including for invalid input.
    * @throws {DneBinaryDatabaseFormatError} If the CEP or neighborhood data is invalid.
    */
-  queryBairroPorCep(cep: string): DneBairro | null {
+  queryNeighborhoodByCep(cep: string): DneBairro | null {
     return this.readSafely(() => {
       const row = this.findCepIndex(cep);
       if (row === -1) {
         return null;
       }
-      const index = this.readBairroIndex(row);
-      return index === 0 ? null : this.readBairro(index);
+      const index = this.readNeighborhoodIndex(row);
+      return index === 0 ? null : this.readNeighborhood(index);
     });
   }
 
   /**
    * Reads a neighborhood's original inclusive CEP intervals without merging gaps.
-   * @param bairroId - Positive `BAI_NU` identifier.
+   * @param neighborhoodId - Positive `BAI_NU` identifier.
    * @returns Intervals sorted by lower and upper bounds, or an empty array for an invalid, unknown, or rangeless neighborhood.
    * @throws {DneBinaryDatabaseClosedError} If the reader is closed, including for invalid input.
    * @throws {DneBinaryDatabaseFormatError} If the interval directory or bounds are invalid.
    */
-  queryFaixasBairro(bairroId: number): DneFaixaCep[] {
+  queryNeighborhoodCepRanges(neighborhoodId: number): DneFaixaCep[] {
     return this.readSafely(() => {
-      const index = this.findBairroIndex(bairroId);
+      const index = this.findNeighborhoodIndex(neighborhoodId);
       if (index === 0) {
         return [];
       }
@@ -332,8 +334,8 @@ export class DneBinaryDatabaseReader {
     return low;
   }
 
-  private findBairroIndex(bairroId: number): number {
-    if (!isBairroId(bairroId)) {
+  private findNeighborhoodIndex(neighborhoodId: number): number {
+    if (!isBairroId(neighborhoodId)) {
       return 0;
     }
     let low = 0;
@@ -341,7 +343,7 @@ export class DneBinaryDatabaseReader {
     while (low < high) {
       const middle = low + ((high - low) >>> 1);
       const id = this.readPackedInteger(this.bairros.recordsOffset + middle * this.bairros.recordWidth, this.bairros.originalIdWidth);
-      if (id < bairroId) {
+      if (id < neighborhoodId) {
         low = middle + 1;
       } else {
         high = middle;
@@ -351,10 +353,10 @@ export class DneBinaryDatabaseReader {
       return 0;
     }
     const id = this.readPackedInteger(this.bairros.recordsOffset + low * this.bairros.recordWidth, this.bairros.originalIdWidth);
-    return id === bairroId ? low + 1 : 0;
+    return id === neighborhoodId ? low + 1 : 0;
   }
 
-  private readBairroIndex(row: number): number {
+  private readNeighborhoodIndex(row: number): number {
     const index = this.readPackedInteger(this.header.sections.bairroIds.offset + row * this.bairros.idWidth, this.bairros.idWidth);
     if (index > this.bairros.count) {
       throw new DneBinaryDatabaseFormatError(`Invalid binary neighborhood index: ${index}`);
@@ -362,7 +364,7 @@ export class DneBinaryDatabaseReader {
     return index;
   }
 
-  private readBairro(index: number): DneBairro {
+  private readNeighborhood(index: number): DneBairro {
     const { originalIdWidth, localidadeIdWidth, recordsOffset, recordWidth } = this.bairros;
     let offset = recordsOffset + (index - 1) * recordWidth;
     const bairro_id = this.readPackedInteger(offset, originalIdWidth);
@@ -380,7 +382,9 @@ export class DneBinaryDatabaseReader {
       this.readPackedInteger(offset, this.dictionaries.bairroAbreviado.idWidth),
     );
     offset += this.dictionaries.bairroAbreviado.idWidth;
-    const uf = this.readRequiredDictionaryString(this.dictionaries.uf, this.readPackedInteger(offset, this.dictionaries.uf.idWidth), 'uf');
+    const uf = parseState(
+      this.readRequiredDictionaryString(this.dictionaries.uf, this.readPackedInteger(offset, this.dictionaries.uf.idWidth), 'uf'),
+    );
     return { bairro_id, localidade_id, nome, nome_abreviado, uf };
   }
 
@@ -395,12 +399,12 @@ export class DneBinaryDatabaseReader {
     }
     const municipality = this.readMunicipality(municipalityId);
     const flags = this.requireData().getUint8(sections.localidadeFlags.offset + index);
-    const situacao = flags & 3;
+    const situacao = LOCALIDADE_SITUACOES[flags & 3];
     const tipo = LOCALIDADE_TIPOS[flags >>> 2];
-    if (tipo === undefined) {
+    if (situacao === undefined || tipo === undefined) {
       throw new DneBinaryDatabaseFormatError(`Invalid binary locality indicators: ${flags}`);
     }
-    const bairroIndex = this.readBairroIndex(index);
+    const bairroIndex = this.readNeighborhoodIndex(index);
     const localidadeNomeId = this.readSparseId(
       sections.localidadeNomeBitmap,
       sections.localidadeNomeRanks,
@@ -408,7 +412,7 @@ export class DneBinaryDatabaseReader {
       index,
       this.dictionaries.bairro.idWidth,
     );
-    if (localidadeNomeId !== 0 && (bairroIndex !== 0 || tipo === 'M')) {
+    if (localidadeNomeId !== 0 && (bairroIndex !== 0 || tipo === 'municipio')) {
       throw new DneBinaryDatabaseFormatError('Invalid binary subordinate locality name');
     }
     const bairroNameId = bairroIndex === 0
@@ -439,7 +443,7 @@ export class DneBinaryDatabaseReader {
           this.dictionaries.complemento.idWidth,
         ),
       ),
-      localidade_situacao: situacao as LocalidadeSituacao,
+      localidade_situacao: situacao,
       localidade_tipo: tipo,
       logradouro: this.readDictionaryString(
         this.dictionaries.logradouro,
@@ -479,7 +483,7 @@ export class DneBinaryDatabaseReader {
     const municipality = {
       codigoIbge: this.readPackedInteger(offset, 3),
       municipio: this.readRequiredDictionaryString(this.dictionaries.municipio, municipioId, 'municipio'),
-      uf: this.readRequiredDictionaryString(this.dictionaries.uf, ufId, 'uf'),
+      uf: parseState(this.readRequiredDictionaryString(this.dictionaries.uf, ufId, 'uf')),
     };
     this.municipalityCache[id] = municipality;
     return municipality;
@@ -779,7 +783,7 @@ function readDictionary(data: DataView, region: Region, name: string): BinaryDic
   return dictionary;
 }
 
-function readBairros(data: DataView, header: BinaryHeader, dictionaries: BinaryDictionaries): BinaryBairros {
+function readNeighborhoods(data: DataView, header: BinaryHeader, dictionaries: BinaryDictionaries): BinaryBairros {
   const region = header.sections.bairros;
   if (region.length < BINARY_BAIRRO_HEADER_SIZE) {
     throw new DneBinaryDatabaseFormatError('Binary neighborhood table is truncated');
@@ -814,7 +818,7 @@ function readBairros(data: DataView, header: BinaryHeader, dictionaries: BinaryD
   return { count, idWidth: integerByteWidth(count), originalIdWidth, localidadeIdWidth, recordsOffset, recordWidth };
 }
 
-function validateBairroRanges(data: DataView, header: BinaryHeader, bairros: BinaryBairros) {
+function validateNeighborhoodRanges(data: DataView, header: BinaryHeader, bairros: BinaryBairros) {
   const { bairroFaixaOffsets: offsets, bairroFaixas: ranges } = header.sections;
   assertRegionLength(offsets, (bairros.count + 1) * 4, 'neighborhood range offsets');
   if (ranges.length % 8 !== 0 || data.getUint32(offsets.offset, true) !== 0) {
@@ -863,7 +867,7 @@ function validateLayout(data: DataView, header: BinaryHeader, dictionaries: Bina
   validateSparseLayout(data, sections.complementoRanks, sections.complementoIds, dictionaries.complemento.idWidth, 'complemento');
   validateSparseLayout(data, sections.nomeRanks, sections.nomeIds, dictionaries.nome.idWidth, 'nome');
   validateSparseLayout(data, sections.localidadeNomeRanks, sections.localidadeNomeIds, dictionaries.bairro.idWidth, 'localidade_nome');
-  validateBairroRanges(data, header, bairros);
+  validateNeighborhoodRanges(data, header, bairros);
 
   const firstPrefix = readPackedIntegerFromData(data, sections.cepPrefixOffsets.offset, header.cepPrefixOffsetWidth);
   const lastPrefix = readPackedIntegerFromData(

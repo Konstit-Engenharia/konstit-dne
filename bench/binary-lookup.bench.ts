@@ -1,3 +1,4 @@
+import { heapStats } from 'bun:jsc';
 import { Database } from 'bun:sqlite';
 import { stat } from 'node:fs/promises';
 import { openReadyDatabase } from '../src/database-service.ts';
@@ -20,9 +21,21 @@ const workload = querySource
       (_, index) => String(30_000_001 + (index % 100_000)).padStart(8, '0'),
     ),
   };
+// Exclude unreachable allocations from workload preparation from the baseline.
+Bun.gc(true);
+const memoryBeforeOpen = readMemory();
 const reader = await openReadyDatabase(databasePath);
+const memoryAfterOpen = readMemory();
+let memoryAfterFirstBatch: ReturnType<typeof readMemory> | undefined;
+let memoryAfterFirstBatchGc: ReturnType<typeof readMemory> | undefined;
 for (let warmup = 0; warmup < 2; warmup++) {
   runQueries(reader, workload.queries);
+  if (warmup === 0) {
+    // Capture exactly queryCount lookups, before the remaining warmup and timed batches.
+    memoryAfterFirstBatch = readMemory();
+    Bun.gc(true);
+    memoryAfterFirstBatchGc = readMemory();
+  }
 }
 
 const samples: number[] = [];
@@ -35,6 +48,7 @@ for (let run = 0; run < 9; run++) {
     throw new Error(`Benchmark found an unexpected number of rows: ${found}`);
   }
 }
+const memoryAfterMeasurements = readMemory();
 reader.close();
 
 samples.sort((left, right) => left - right);
@@ -47,12 +61,28 @@ console.log(JSON.stringify({
   database: databasePath,
   databaseBytes: (await stat(databasePath)).size,
   found,
+  measuredBatches: samples.length,
   medianMs: samples[4],
+  memoryBytes: {
+    beforeOpen: memoryBeforeOpen,
+    afterOpen: memoryAfterOpen,
+    afterFirstBatch: memoryAfterFirstBatch,
+    afterFirstBatchGc: memoryAfterFirstBatchGc,
+    afterMeasurements: memoryAfterMeasurements,
+  },
   p95Ms: samples[Math.ceil(samples.length * 0.95) - 1],
   queryCount,
   samplesMs: samples,
+  warmupBatches: 2,
   workload: workload.kind,
 }));
+
+function readMemory() {
+  const memory = process.memoryUsage();
+  const { heapSize, extraMemorySize } = heapStats();
+  // JavaScriptCore accounts for live cells at the last GC; external strings and buffers are excluded here.
+  return { ...memory, heapObjectBytes: heapSize - extraMemorySize };
+}
 
 function runQueries(reader: { queryCep(cep: string): unknown; }, queries: string[]) {
   let found = 0;
