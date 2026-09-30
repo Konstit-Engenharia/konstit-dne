@@ -45,7 +45,7 @@ import {
   LOCALIDADE_TIPOS,
 } from './schema.ts';
 import {
-  parseState,
+  parseUF,
   type DneRow,
   type LoadMetadata,
   type UF,
@@ -382,7 +382,7 @@ export class DneBinaryDatabaseReader {
       this.readPackedInteger(offset, this.dictionaries.bairroAbreviado.idWidth),
     );
     offset += this.dictionaries.bairroAbreviado.idWidth;
-    const uf = parseState(
+    const uf = parseUF(
       this.readRequiredDictionaryString(this.dictionaries.uf, this.readPackedInteger(offset, this.dictionaries.uf.idWidth), 'uf'),
     );
     return { bairro_id, localidade_id, nome, nome_abreviado, uf };
@@ -483,7 +483,7 @@ export class DneBinaryDatabaseReader {
     const municipality = {
       codigoIbge: this.readPackedInteger(offset, 3),
       municipio: this.readRequiredDictionaryString(this.dictionaries.municipio, municipioId, 'municipio'),
-      uf: parseState(this.readRequiredDictionaryString(this.dictionaries.uf, ufId, 'uf')),
+      uf: parseUF(this.readRequiredDictionaryString(this.dictionaries.uf, ufId, 'uf')),
     };
     this.municipalityCache[id] = municipality;
     return municipality;

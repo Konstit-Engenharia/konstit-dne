@@ -40,7 +40,7 @@ export const stateCodes = {
 export type UF = keyof typeof stateCodes;
 
 /** All supported Brazilian federative units in `stateCodes` order. */
-export const ALL_UFS = Object.keys(stateCodes).map(parseState);
+export const ALL_UFS = Object.keys(stateCodes).map(parseUF);
 
 /** String-valued provenance and quality metadata stored alongside the imported CEP rows. */
 export type LoadMetadata = Record<string, string> & {
@@ -99,7 +99,7 @@ export type StoredDneRow = Omit<DneRow, 'localidade_situacao' | 'localidade_tipo
  * @returns The canonical supported state abbreviation.
  * @throws {Error} If `value` is not a supported federative unit.
  */
-export function parseState(value: string): UF {
+export function parseUF(value: string): UF {
   const state = value.trim().toUpperCase();
   if (!Object.hasOwn(stateCodes, state)) {
     throw new Error(`Unknown UF: ${value}`);

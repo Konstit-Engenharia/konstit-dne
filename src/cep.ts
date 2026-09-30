@@ -4,7 +4,7 @@ import type { UF } from './types.ts';
 const CEP_SEPARATOR_PATTERN = /[\s,;]/;
 
 // Inclusive CEP ranges.
-export const cepRanges: readonly (readonly [number, number, UF])[] = [
+export const CEP_RANGES: readonly (readonly [number, number, UF])[] = [
   [1000000, 19999999, 'SP'],
   [20000000, 28999999, 'RJ'],
   [29000000, 29999999, 'ES'],
@@ -50,7 +50,7 @@ export function ufForCep(cep: number | string): UF | undefined {
   if (Number.isNaN(cep)) {
     return undefined;
   }
-  for (const [first, last, uf,] of cepRanges) {
+  for (const [first, last, uf,] of CEP_RANGES) {
     if (cep >= first && cep <= last) {
       return uf;
     }
@@ -107,21 +107,43 @@ export function cepToU32(value: string): number {
 /**
  * Trims and normalizes a CEP for storage or lookup.
  * @param value - A plain or hyphenated CEP, optionally surrounded by whitespace.
- * @returns Exactly eight ASCII digits, including leading zeros.
- * @throws {UserError} With code `invalid-cep` when the trimmed value is invalid.
+ * @returns Exactly eight ASCII digits, including leading zeros, or `undefined` for invalid syntax.
  */
-export function normalizeCep(value: string) {
+export function normalizeCep(value: string): string | undefined {
   const trimmed = value.trim();
   const parsed = cepToU32(trimmed);
   if (Number.isNaN(parsed)) {
-    throw new UserError(
-      'invalid-cep',
-      `CEP inválido '${value}'. Use 01001000 ou 01001-000.`,
-      2,
-      { input: value },
-    );
+    return undefined;
   }
   return String(parsed).padStart(8, '0');
+}
+
+/**
+ * Formats a CEP as `NNNNN-NNN`, preserving or restoring leading zeros.
+ * Validates syntax only; it does not check whether the CEP exists.
+ * @param value - Eight ASCII digits or `NNNNN-NNN`, optionally surrounded by whitespace,
+ * or an integer from 0 through 99999999. Only numeric inputs are padded with leading zeros.
+ * @returns Eight digits separated by a single hyphen after the fifth digit,
+ * or `undefined` when the string syntax or numeric value is invalid.
+ * @example
+ * formatCep(1_001_000); // '01001-000'
+ * formatCep(' 01001-000 '); // '01001-000'
+ * formatCep('invalid'); // undefined
+ */
+export function formatCep(value: string | number): string | undefined {
+  if (typeof value === 'number') {
+    if (!Number.isInteger(value) || value < 0 || value > 99_999_999) {
+      return undefined;
+    }
+    value = String(value).padStart(8, '0');
+  } else {
+    const normalized = normalizeCep(value);
+    if (normalized === undefined) {
+      return undefined;
+    }
+    value = normalized;
+  }
+  return `${value.slice(0, 5)}-${value.slice(5)}`;
 }
 
 /**

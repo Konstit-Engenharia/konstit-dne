@@ -543,7 +543,7 @@ async function lookupCep(options: LookupOptions, globals: GlobalOptions) {
     throw new UserError('missing-input', 'Informe um CEP, --file CAMINHO ou uma entrada em stdin.', EXIT_INVALID_INPUT);
   }
 
-  const firstInput = { input: first.value, cep: normalizeCep(first.value) };
+  const firstInput = parseInput(first.value);
   const database = databasePath(globals.database);
   const reader = await openReadyDatabase(database);
   const results: LookupResult[] = [];
@@ -557,7 +557,7 @@ async function lookupCep(options: LookupOptions, globals: GlobalOptions) {
       if (next.done) {
         break;
       }
-      processInput({ input: next.value, cep: normalizeCep(next.value) });
+      processInput(parseInput(next.value));
     }
   } finally {
     reader.close();
@@ -574,6 +574,19 @@ async function lookupCep(options: LookupOptions, globals: GlobalOptions) {
   }
 
   return hasMissing ? EXIT_NOT_FOUND : 0;
+
+  function parseInput(input: string) {
+    const cep = normalizeCep(input);
+    if (cep === undefined) {
+      throw new UserError(
+        'invalid-cep',
+        `CEP inválido '${input}'. Use 01001000 ou 01001-000.`,
+        EXIT_INVALID_INPUT,
+        { input },
+      );
+    }
+    return { cep, input };
+  }
 
   function processInput(value: { cep: string; input: string; }) {
     const address = reader.queryCep(value.cep);

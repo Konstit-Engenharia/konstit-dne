@@ -263,6 +263,16 @@ describe('CLI contract', () => {
     });
   });
 
+  test('reports invalid CEPs after valid inputs in a batch', () => {
+    const result = runCli(['get', '30000001', 'abc', '--db', databasePath, '--json']);
+    expect(result.status).toBe(2);
+    expect(result.stdout).toBe('');
+    expect(parseJson(result.stderr)).toMatchObject({
+      ok: false,
+      error: { code: 'invalid-cep', details: { input: 'abc' } },
+    });
+  });
+
   test('supports JSONL bulk input from arguments, files, and stdin', () => {
     const argumentsResult = runCli([
       'get',
