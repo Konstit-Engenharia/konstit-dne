@@ -49,7 +49,8 @@ describe('binary database', () => {
     const sqliteReader = new DneDatabaseReader(sqlitePath);
     try {
       expect(sqliteReader.queryCep('30000-001')?.cep).toBe('30000001');
-      expect(sqliteReader.queryCep('3000A001')).toBeNull();
+      expect(sqliteReader.queryCep('3000A001')).toBeUndefined();
+      expect(sqliteReader.queryCep('99999999')).toBeUndefined();
     } finally {
       sqliteReader.close();
     }
@@ -75,8 +76,8 @@ describe('binary database', () => {
         uf: 'BA',
       });
       expect(reader.queryCep('30000-001')?.cep).toBe('30000001');
-      expect(reader.queryCep('99999999')).toBeNull();
-      expect(reader.queryCep('3000A001')).toBeNull();
+      expect(reader.queryCep('99999999')).toBeUndefined();
+      expect(reader.queryCep('3000A001')).toBeUndefined();
       expect(reader.metadata()).toMatchObject({ source_kind: 'local' });
 
       expectAllRowsMatch(reader, sqlitePath);

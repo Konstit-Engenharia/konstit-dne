@@ -75,11 +75,11 @@ describe('binary reader error contract', () => {
     }
   });
 
-  test('keeps invalid and absent CEPs as normal null results', () => {
+  test('keeps invalid and absent CEPs as normal undefined results', () => {
     const reader = new DneBinaryDatabaseReader(binaryPath);
     try {
-      expect(reader.queryCep('invalid')).toBeNull();
-      expect(reader.queryCep('99999999')).toBeNull();
+      expect(reader.queryCep('invalid')).toBeUndefined();
+      expect(reader.queryCep('99999999')).toBeUndefined();
       expect(reader.queryCep('10000-000')?.cep).toBe('10000000');
     } finally {
       reader.close();

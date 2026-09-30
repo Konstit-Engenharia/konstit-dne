@@ -88,11 +88,11 @@ export class DneDatabaseReader {
 
   /**
    * Reads the import metadata table.
-   * @returns A new metadata map, or null when the metadata table is absent.
+   * @returns A new metadata map, or undefined when the metadata table is absent.
    */
-  metadata(): LoadMetadata | null {
+  metadata(): LoadMetadata | undefined {
     if (!this.hasTable(SQLITE_METADATA_TABLE_NAME)) {
-      return null;
+      return undefined;
     }
 
     const rows = this.db.query(`SELECT key, value FROM ${quoteIdent(SQLITE_METADATA_TABLE_NAME)}`).all() as {
@@ -105,19 +105,19 @@ export class DneDatabaseReader {
   /**
    * Looks up a plain or hyphenated CEP in the default unified table.
    * @param cep - Eight ASCII digits or `NNNNN-NNN`, without surrounding whitespace.
-   * @returns The matching address, or null for invalid input or a missing CEP.
+   * @returns The matching address, or undefined for invalid input or a missing CEP.
    * @throws {Error} If the database cannot be queried or the matched row lacks the current locality fields.
    */
-  queryCep(cep: string): DneRow | null {
+  queryCep(cep: string): DneRow | undefined {
     const parsed = cepToU32(cep);
     if (Number.isNaN(parsed)) {
-      return null;
+      return undefined;
     }
     this.requireCurrentSchema();
     const row = this.db.query(`SELECT * FROM ${quoteIdent(cepViewName(SQLITE_CEP_TABLE_NAME))} WHERE cep = ?`)
       .get(cep.length === 8 ? cep : `${cep.slice(0, 5)}${cep.slice(6)}`) as StoredDneRow | null;
     if (!row) {
-      return null;
+      return undefined;
     }
     if (row.localidade_situacao === undefined || row.localidade_tipo === undefined) {
       throw new Error('Database schema lacks locality indicators. Rebuild the database with build --force.');
@@ -133,34 +133,36 @@ export class DneDatabaseReader {
   /**
    * Reads a neighborhood by its original DNE identifier.
    * @param neighborhoodId - Positive `BAI_NU` identifier.
-   * @returns The neighborhood, or null for an invalid or unknown identifier.
+   * @returns The neighborhood, or undefined for an invalid or unknown identifier.
    * @throws {Error} If the database cannot be queried or requires rebuilding.
    */
-  queryNeighborhood(neighborhoodId: number): DneBairro | null {
+  queryNeighborhood(neighborhoodId: number): DneBairro | undefined {
     if (!isBairroId(neighborhoodId)) {
-      return null;
+      return undefined;
     }
     this.requireCurrentSchema();
-    return this.db.query(`SELECT * FROM ${quoteIdent(SQLITE_BAIRROS_TABLE_NAME)} WHERE bairro_id = ?`)
+    const row = this.db.query(`SELECT * FROM ${quoteIdent(SQLITE_BAIRROS_TABLE_NAME)} WHERE bairro_id = ?`)
       .get(neighborhoodId) as DneBairro | null;
+    return row ?? undefined;
   }
 
   /**
    * Resolves the actual neighborhood attached to a CEP, without treating a district or village as a neighborhood.
    * @param cep - Eight ASCII digits or `NNNNN-NNN`.
-   * @returns The neighborhood, or null for an invalid, unknown, or neighborhood-free CEP.
+   * @returns The neighborhood, or undefined for an invalid, unknown, or neighborhood-free CEP.
    * @throws {Error} If the database cannot be queried or requires rebuilding.
    */
-  queryNeighborhoodByCep(cep: string): DneBairro | null {
+  queryNeighborhoodByCep(cep: string): DneBairro | undefined {
     if (Number.isNaN(cepToU32(cep))) {
-      return null;
+      return undefined;
     }
     this.requireCurrentSchema();
-    return this.db.query(`
+    const row = this.db.query(`
       SELECT b.* FROM ${quoteIdent(SQLITE_CEP_TABLE_NAME)} d
       JOIN ${quoteIdent(SQLITE_BAIRROS_TABLE_NAME)} b ON b.bairro_id = d.bairro_id
       WHERE d.cep = ?
     `).get(cep.replace('-', '')) as DneBairro | null;
+    return row ?? undefined;
   }
 
   /**
@@ -206,13 +208,13 @@ export class DneDatabaseReader {
   /**
    * Reads a table's stored CREATE statement without reconstructing it from the declared schema.
    * @param tableName - Physical table name.
-   * @returns The catalog SQL, or null when no SQL definition is available.
+   * @returns The catalog SQL, or undefined when no SQL definition is available.
    */
   tableSchema(tableName: string) {
     const row = this.db.query('SELECT sql FROM sqlite_master WHERE type = \'table\' AND name = ?').get(tableName) as {
       sql: string | null;
     } | null;
-    return row?.sql ?? null;
+    return row?.sql ?? undefined;
   }
 
   /**
@@ -1512,19 +1514,19 @@ export function sqlitePathFromDatabaseUrl(value: string) {
 /**
  * Reads SQLite load metadata using a temporary read-only connection.
  * @param databasePath - Path to the SQLite database.
- * @returns Metadata, or null if the file or metadata table is missing.
+ * @returns Metadata, or undefined if the file or metadata table is missing.
  * @throws {Error} If an existing file cannot be opened or queried as SQLite.
  */
-export async function readDatabaseMetadata(databasePath: string): Promise<LoadMetadata | null> {
+export async function readDatabaseMetadata(databasePath: string): Promise<LoadMetadata | undefined> {
   if (databasePath !== ':memory:' && !(await Bun.file(databasePath).exists())) {
-    return null;
+    return undefined;
   }
 
   const db = new Database(databasePath, { readonly: true });
   try {
     const hasMetadata = db.query('SELECT 1 FROM sqlite_master WHERE type = \'table\' AND name = ?').get(SQLITE_METADATA_TABLE_NAME);
     if (!hasMetadata) {
-      return null;
+      return undefined;
     }
 
     const rows = db.query(`SELECT key, value FROM ${quoteIdent(SQLITE_METADATA_TABLE_NAME)}`).all() as {

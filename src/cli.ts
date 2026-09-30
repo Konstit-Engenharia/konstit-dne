@@ -590,7 +590,7 @@ async function lookupCep(options: LookupOptions, globals: GlobalOptions) {
   }
 
   function processInput(value: { cep: string; input: string; }) {
-    const address = reader.queryCep(value.cep);
+    const address = reader.queryCep(value.cep) ?? null;
     const result = {
       address,
       cep: value.cep,
@@ -634,7 +634,7 @@ async function showSchema(options: { expected: boolean; }, globals: GlobalOption
         source = 'binary';
       } else {
         const statements = storedTables.map((table) => reader.tableSchema(table.name))
-          .filter((value): value is string => value !== null).map(formatTableSql);
+          .filter((value): value is string => value !== undefined).map(formatTableSql);
         const view = reader.querySql(
           `SELECT sql FROM sqlite_master WHERE type = 'view' AND name = ${quoteLiteral(cepViewName(cepTable.name))}`,
           1,

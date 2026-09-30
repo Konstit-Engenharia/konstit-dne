@@ -109,8 +109,9 @@ describe('published package', () => {
         type LocalidadeTipo, type LocalidadeSituacao, type DneBinaryDatabaseErrorCode,
       } from '@konstit/dne';
       const reader = new DneBinaryDatabaseReader();
-      const row: DneRow | null = reader.queryCep('21000000');
-      const bairro: DneBairro | null = reader.queryNeighborhoodByCep('21000000');
+      const row: DneRow | undefined = reader.queryCep('21000000');
+      const bairro: DneBairro | undefined = reader.queryNeighborhoodByCep('21000000');
+      const neighborhood: DneBairro | undefined = reader.queryNeighborhood(11);
       const rowUf: UF | undefined = row?.uf;
       const bairroUf: UF | undefined = bairro?.uf;
       // @ts-expect-error Address UFs must be supported Brazilian state abbreviations.
@@ -146,7 +147,7 @@ describe('published package', () => {
       // @ts-expect-error Endpoints retain their leading zeroes as strings.
       const endpoint: number = ranges[0].cep_inicial;
       void [row, bairro, ranges, metadata, tipo, situacao, tipos, situacoes, tipoCodigo, situacaoCodigo,
-        tipoDesconhecido, situacaoDesconhecida, code, endpoint, rowUf, bairroUf, invalidRowUf, invalidBairroUf];
+        tipoDesconhecido, situacaoDesconhecida, code, endpoint, rowUf, bairroUf, invalidRowUf, invalidBairroUf, neighborhood];
       reader.close();
     `,
     );

@@ -48,7 +48,7 @@ import {
 
 const db = new DneBinaryDatabaseReader();
 try {
-  const endereco: DneRow | null = db.queryCep('01141-000');
+  const endereco: DneRow | undefined = db.queryCep('01141-000');
   const bairro = db.queryNeighborhoodByCep('01141-000');
   const faixas = bairro ? db.queryNeighborhoodCepRanges(bairro.bairro_id) : [];
   console.log({ endereco, bairro, faixas });
@@ -58,6 +58,8 @@ try {
 ```
 
 Sem argumentos, o leitor abre `data/dne.bin` dentro do pacote instalado, independentemente do diretório de trabalho. Nenhum download é feito na instalação ou na consulta. A base representa a fonte usada no empacotamento daquela versão; instale uma versão mais recente para receber outra cópia ou passe o caminho de uma base própria: `new DneBinaryDatabaseReader('/dados/dne.bin')`.
+
+Nos dois leitores, `queryCep`, `queryNeighborhood` e `queryNeighborhoodByCep` retornam `undefined` para entradas inválidas ou resultados ausentes. No leitor SQLite, `metadata` e `tableSchema` também retornam `undefined` quando os metadados ou a definição da tabela estão ausentes.
 
 Os tipos `DneRow`, `DneBairro`, `DneFaixaCep`, `LoadMetadata`, `UF`, `LocalidadeTipo`, `LocalidadeSituacao` e `DneBinaryDatabaseErrorCode` são exportados na raiz do pacote. As classes `DneBinaryDatabaseError`, `DneBinaryDatabaseIOError`, `DneBinaryDatabaseFormatError`, `DneBinaryDatabaseVersionError` e `DneBinaryDatabaseClosedError` também estão disponíveis para tratamento de erros. Importar a biblioteca não executa a CLI.
 
@@ -282,10 +284,10 @@ ORDER BY f.cep_inicial, f.cep_final;
 Os leitores `DneDatabaseReader` e `DneBinaryDatabaseReader` oferecem as mesmas consultas adicionais:
 
 - `queryNeighborhood(bairroId)`: retorna `{ bairro_id, localidade_id, uf, nome, nome_abreviado }` pelo identificador original.
-- `queryNeighborhoodByCep(cep)`: retorna o bairro efetivamente associado ao CEP, ou `null` quando ausente, inclusive nos CEPs gerais de distritos e povoados.
+- `queryNeighborhoodByCep(cep)`: retorna o bairro efetivamente associado ao CEP, ou `undefined` quando ausente, inclusive nos CEPs gerais de distritos e povoados.
 - `queryNeighborhoodCepRanges(bairroId)`: retorna `{ cep_inicial, cep_final }[]`, ordenado pelos limites, ou `[]` quando não há faixas.
 
-Identificadores inválidos ou desconhecidos retornam `null`/`[]`. No binário, o cadastro de bairros tem índices internos compactos e preserva os identificadores originais; os intervalos usam pares de inteiros de 32 bits e são convertidos para oito dígitos na leitura.
+Identificadores inválidos ou desconhecidos retornam `undefined`/`[]`. No binário, o cadastro de bairros tem índices internos compactos e preserva os identificadores originais; os intervalos usam pares de inteiros de 32 bits e são convertidos para oito dígitos na leitura.
 
 No SQLite, `localidade_situacao` preserva `LOC_IN_SIT` (`0`, `1`, `2` ou `3`) e `localidade_tipo` preserva `LOC_IN_TIPO_LOC` (`M`, `D` ou `P`). O binário mantém esses indicadores compactados em um byte por CEP. `queryCep()` converte os códigos para strings descritivas nos dois leitores; a CLI também retorna essas strings nas consultas `get`:
 

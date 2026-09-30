@@ -129,7 +129,7 @@ export async function isBinaryDatabase(path: string): Promise<boolean> {
  *
  * Construction validates the file layout; individual records are decoded and checked on demand.
  * Keep the underlying file immutable while the reader is open. Call `close()` when finished.
- * All operational errors extend {@link DneBinaryDatabaseError}; invalid or absent CEPs return `null`.
+ * All operational errors extend {@link DneBinaryDatabaseError}; invalid or absent CEPs return `undefined`.
  */
 export class DneBinaryDatabaseReader {
   private bairroCache: (string | undefined)[];
@@ -206,46 +206,46 @@ export class DneBinaryDatabaseReader {
   /**
    * Looks up a CEP and decodes its address, including the originating locality indicators.
    * @param cep - Eight ASCII digits or the form `NNNNN-NNN`; surrounding whitespace is not accepted.
-   * @returns An address with an eight-digit CEP, or `null` when the input is invalid or absent from the database.
+   * @returns An address with an eight-digit CEP, or `undefined` when the input is invalid or absent from the database.
    * @throws {DneBinaryDatabaseClosedError} If called after `close()`, including for invalid CEP input.
    * @throws {DneBinaryDatabaseFormatError} If the lookup encounters invalid indexes or record data.
    */
-  queryCep(cep: string): DneRow | null {
+  queryCep(cep: string): DneRow | undefined {
     return this.readSafely(() => {
       const index = this.findCepIndex(cep);
-      return index === -1 ? null : this.readRow(index, cep.replace('-', ''));
+      return index === -1 ? undefined : this.readRow(index, cep.replace('-', ''));
     });
   }
 
   /**
    * Reads a neighborhood by its original DNE identifier, independent of duplicate names.
    * @param neighborhoodId - Positive `BAI_NU` identifier.
-   * @returns The neighborhood, or null for an invalid or unknown identifier.
+   * @returns The neighborhood, or undefined for an invalid or unknown identifier.
    * @throws {DneBinaryDatabaseClosedError} If the reader is closed, including for invalid input.
    * @throws {DneBinaryDatabaseFormatError} If an index, record, or string cannot be decoded.
    */
-  queryNeighborhood(neighborhoodId: number): DneBairro | null {
+  queryNeighborhood(neighborhoodId: number): DneBairro | undefined {
     return this.readSafely(() => {
       const index = this.findNeighborhoodIndex(neighborhoodId);
-      return index === 0 ? null : this.readNeighborhood(index);
+      return index === 0 ? undefined : this.readNeighborhood(index);
     });
   }
 
   /**
    * Resolves the actual neighborhood of a CEP, preserving the distinction from districts and villages.
    * @param cep - Eight ASCII digits or `NNNNN-NNN`.
-   * @returns The neighborhood, or null for an invalid, unknown, or neighborhood-free CEP.
+   * @returns The neighborhood, or undefined for an invalid, unknown, or neighborhood-free CEP.
    * @throws {DneBinaryDatabaseClosedError} If the reader is closed, including for invalid input.
    * @throws {DneBinaryDatabaseFormatError} If the CEP or neighborhood data is invalid.
    */
-  queryNeighborhoodByCep(cep: string): DneBairro | null {
+  queryNeighborhoodByCep(cep: string): DneBairro | undefined {
     return this.readSafely(() => {
       const row = this.findCepIndex(cep);
       if (row === -1) {
-        return null;
+        return undefined;
       }
       const index = this.readNeighborhoodIndex(row);
-      return index === 0 ? null : this.readNeighborhood(index);
+      return index === 0 ? undefined : this.readNeighborhood(index);
     });
   }
 

@@ -60,15 +60,15 @@ describe('normalized neighborhoods', () => {
           { cep_inicial: '21000000', cep_final: '21000000' },
         ]);
         for (const [cep, name,] of [['11000000', 'Distrito Unico'], ['14000000', 'Povoado em Codificacao']] as const) {
-          expect(reader.queryNeighborhoodByCep(cep)).toBeNull();
+          expect(reader.queryNeighborhoodByCep(cep)).toBeUndefined();
           expect(reader.queryCep(cep)?.bairro).toBe(name);
         }
         for (const id of [0, -1, 1.5, NaN, Infinity, 0x1_0000_0000, 13]) {
-          expect(reader.queryNeighborhood(id)).toBeNull();
+          expect(reader.queryNeighborhood(id)).toBeUndefined();
           expect(reader.queryNeighborhoodCepRanges(id)).toEqual([]);
         }
         for (const cep of ['invalid', '99999999', '10000000', '41000000']) {
-          expect(reader.queryNeighborhoodByCep(cep)).toBeNull();
+          expect(reader.queryNeighborhoodByCep(cep)).toBeUndefined();
         }
       } finally {
         reader.close();
@@ -190,7 +190,7 @@ describe('normalized neighborhoods', () => {
     await buildBinaryDatabase(sqlite, binary);
     const reader = new DneBinaryDatabaseReader(binary);
     try {
-      expect(reader.queryNeighborhood(11)).toBeNull();
+      expect(reader.queryNeighborhood(11)).toBeUndefined();
       expect(reader.queryNeighborhoodCepRanges(11)).toEqual([]);
       expect(reader.queryCep('11000000')?.bairro).toBe('Distrito Unico');
     } finally {

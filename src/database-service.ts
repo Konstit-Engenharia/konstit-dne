@@ -147,11 +147,11 @@ export async function inspectDatabase(
       return {
         exists: true,
         format: binary ? 'binary' : 'sqlite',
-        metadata: reader.metadata(),
+        metadata: reader.metadata() ?? null,
         path,
         ready,
         row_count: ready ? (binaryReader ? reader.rowCount() : reader.rowCount(tableName)) : null,
-        schema: ready && !binaryReader ? reader.tableSchema(tableName) : null,
+        schema: ready && !binaryReader ? reader.tableSchema(tableName) ?? null : null,
         size_bytes: size,
       };
     } finally {
@@ -182,13 +182,13 @@ export function memoryDatabaseInspection(rowCount: number): DatabaseInspection {
 /**
  * Reads import metadata after detecting SQLite or binary storage.
  * @param path - Local database path.
- * @returns Metadata, or null for a missing file or absent SQLite metadata table.
+ * @returns Metadata, or undefined for a missing file or absent SQLite metadata table.
  * @throws {DneBinaryDatabaseError} If a binary database cannot be accessed or decoded.
  * @throws {Error} If SQLite metadata cannot be read.
  */
-export async function readDatabaseMetadata(path: string): Promise<LoadMetadata | null> {
+export async function readDatabaseMetadata(path: string): Promise<LoadMetadata | undefined> {
   if (path !== ':memory:' && !(await Bun.file(path).exists())) {
-    return null;
+    return undefined;
   }
   return await isBinaryDatabase(path)
     ? readBinaryDatabaseMetadata(path)

@@ -59,8 +59,8 @@ afterAll(() => {
 describe('database service', () => {
   test('reads metadata and table presence without creating missing databases', async () => {
     const missing = join(workDir, 'missing-metadata.db');
-    expect(await readDatabaseMetadata(missing)).toBeNull();
-    expect(await readSqliteMetadata(missing)).toBeNull();
+    expect(await readDatabaseMetadata(missing)).toBeUndefined();
+    expect(await readSqliteMetadata(missing)).toBeUndefined();
     expect(await hasTable(missing, 'dne')).toBe(false);
     expect(await hasSqliteTable(missing, 'dne')).toBe(false);
     expect(await hasTable(':memory:', 'dne')).toBe(false);
@@ -69,7 +69,7 @@ describe('database service', () => {
     const path = join(workDir, 'metadata.db');
     const db = new Database(path);
     db.run('CREATE TABLE dne (cep TEXT)');
-    expect(await readDatabaseMetadata(path)).toBeNull();
+    expect(await readDatabaseMetadata(path)).toBeUndefined();
     expect(await hasTable(path, 'dne')).toBe(true);
     expect(await hasTable(path, 'absent')).toBe(false);
     db.run('CREATE TABLE edne_metadata (key TEXT, value TEXT)');
