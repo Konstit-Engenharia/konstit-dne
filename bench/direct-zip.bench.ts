@@ -10,7 +10,6 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DneDatabaseWriter } from '../src/db.ts';
 import {
   resolveDirectoryDneSource,
   resolveZipDneSource,
@@ -21,6 +20,7 @@ import {
   getTableFilesGlob,
   type TableDefinition,
 } from '../src/schema.ts';
+import { DneDatabaseWriter } from '../src/sqlite-db-writer.ts';
 
 const rows = Number(Bun.argv[2] ?? '5000');
 const workDir = mkdtempSync(join(tmpdir(), 'edne-direct-zip-benchmark-'));

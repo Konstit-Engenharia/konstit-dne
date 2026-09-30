@@ -8,15 +8,15 @@ import {
   isBinaryDatabase,
   readBinaryDatabaseMetadata,
 } from './binary-db-reader.ts';
+import { UserError } from './errors.ts';
+import { SQLITE_CEP_TABLE_NAME } from './settings.ts';
 import {
   DneDatabaseReader,
   hasTable as hasSqliteTable,
   readDatabaseMetadata as readSqliteDatabaseMetadata,
   sqlitePathFromDatabaseUrl,
-  type LoadMetadata,
-} from './db.ts';
-import { UserError } from './errors.ts';
-import { SQLITE_CEP_TABLE_NAME } from './settings.ts';
+} from './sqlite-db-reader.ts';
+import type { LoadMetadata } from './types.ts';
 
 /**
  * Storage formats supported by the CLI and format-detecting database services.

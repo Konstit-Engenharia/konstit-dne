@@ -1,10 +1,10 @@
-import { DneDatabaseWriter } from '../src/db.ts';
 import {
   resolveBufferedZipDneSource,
   resolveZipDneSource,
 } from '../src/dne-source.ts';
 import { buildSchema } from '../src/schema.ts';
 import { SQLITE_CEP_TABLE_NAME } from '../src/settings.ts';
+import { DneDatabaseWriter } from '../src/sqlite-db-writer.ts';
 
 const [mode, zipPath, databasePath, nestedZipPath,] = Bun.argv.slice(2);
 if (

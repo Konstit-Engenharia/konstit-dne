@@ -60,6 +60,8 @@ describe('published package', () => {
     expect(packedFiles).toContain('dist/library.js');
     expect(packedFiles).toContain('dist/library.d.ts');
     expect(packedFiles).toContain('dist/binary-db-reader.d.ts');
+    expect(packedFiles).toContain('dist/sqlite-db-reader.d.ts');
+    expect(packedFiles).toContain('dist/sqlite-db-errors.d.ts');
     expect(packedFiles).toContain('dist/index.js');
     expect(packedFiles.some((path) => path.startsWith('src/') || path.endsWith('.db'))).toBe(false);
   });
@@ -69,6 +71,8 @@ describe('published package', () => {
       '--eval',
       `
       import { DneBinaryDatabaseReader, DneBinaryDatabaseClosedError, DneBinaryDatabaseIOError } from '@konstit/dne';
+      import { DneDatabaseReader, DneDatabaseClosedError, DneDatabaseIOError } from '@konstit/dne';
+      import { Database } from 'bun:sqlite';
       import { strict as assert } from 'node:assert';
       assert.equal(process.exitCode, undefined);
       const reader = new DneBinaryDatabaseReader();
@@ -83,6 +87,20 @@ describe('published package', () => {
       reader.close();
       assert.throws(() => reader.queryCep('21000000'), DneBinaryDatabaseClosedError);
       assert.throws(() => new DneBinaryDatabaseReader('./missing.bin'), DneBinaryDatabaseIOError);
+      const sqlite = new Database('./reader.db');
+      sqlite.run('CREATE TABLE sample (value INTEGER); INSERT INTO sample VALUES (42)');
+      sqlite.close();
+      const sqliteReader = new DneDatabaseReader('./reader.db');
+      try {
+        assert.equal(sqliteReader.rowCount('sample'), 1);
+        assert.deepEqual(sqliteReader.querySql('SELECT * FROM sample', 10), {
+          rows: [{ value: 42 }], truncated: false,
+        });
+      } finally {
+        sqliteReader.close();
+      }
+      assert.throws(() => sqliteReader.rowCount('sample'), DneDatabaseClosedError);
+      assert.throws(() => new DneDatabaseReader('./missing.db'), DneDatabaseIOError);
       console.log('library-ok');
     `,
     ], otherCwd);
@@ -105,6 +123,8 @@ describe('published package', () => {
       import {
         DneBinaryDatabaseReader, DneBinaryDatabaseError, DneBinaryDatabaseClosedError,
         DneBinaryDatabaseIOError, DneBinaryDatabaseFormatError, DneBinaryDatabaseVersionError,
+        DneDatabaseReader, DneDatabaseError, DneDatabaseClosedError, DneDatabaseIOError,
+        DneDatabaseSchemaError, DneDatabaseDataError, DneDatabaseQueryError, type DneDatabaseErrorCode,
         type DneRow, type DneBairro, type DneFaixaCep, type LoadMetadata, type UF,
         type LocalidadeTipo, type LocalidadeSituacao, type DneBinaryDatabaseErrorCode,
       } from '@konstit/dne';
@@ -140,6 +160,19 @@ describe('published package', () => {
       new DneBinaryDatabaseIOError('missing');
       new DneBinaryDatabaseFormatError('invalid');
       new DneBinaryDatabaseVersionError(2, 1);
+      const sqliteReader = new DneDatabaseReader('./dne.db');
+      const sqliteRow: DneRow | undefined = sqliteReader.queryCep('21000000');
+      const sqliteBairro: DneBairro | undefined = sqliteReader.queryNeighborhoodByCep('21000000');
+      const sqliteNeighborhood: DneBairro | undefined = sqliteReader.queryNeighborhood(11);
+      const sqliteMetadata: LoadMetadata | undefined = sqliteReader.metadata();
+      const sqliteSchema: string | undefined = sqliteReader.tableSchema('dne');
+      const sqliteError: DneDatabaseError = new DneDatabaseClosedError();
+      const sqliteCode: DneDatabaseErrorCode = sqliteError.code;
+      new DneDatabaseIOError('missing');
+      new DneDatabaseSchemaError('invalid schema');
+      new DneDatabaseDataError('invalid data');
+      new DneDatabaseQueryError('invalid query');
+      sqliteReader.close();
       // @ts-expect-error CEP lookups require a string.
       reader.queryCep(21000000);
       // @ts-expect-error Original neighborhood identifiers are numeric.
@@ -147,7 +180,8 @@ describe('published package', () => {
       // @ts-expect-error Endpoints retain their leading zeroes as strings.
       const endpoint: number = ranges[0].cep_inicial;
       void [row, bairro, ranges, metadata, tipo, situacao, tipos, situacoes, tipoCodigo, situacaoCodigo,
-        tipoDesconhecido, situacaoDesconhecida, code, endpoint, rowUf, bairroUf, invalidRowUf, invalidBairroUf, neighborhood];
+        tipoDesconhecido, situacaoDesconhecida, code, endpoint, rowUf, bairroUf, invalidRowUf, invalidBairroUf,
+        neighborhood, sqliteRow, sqliteBairro, sqliteNeighborhood, sqliteMetadata, sqliteSchema, sqliteCode];
       reader.close();
     `,
     );

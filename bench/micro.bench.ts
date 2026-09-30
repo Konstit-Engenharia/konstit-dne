@@ -3,7 +3,7 @@ import {
   run,
   summary,
 } from 'mitata';
-import { selectDelimitedFields } from '../src/db.ts';
+import { selectDelimitedFields } from '../src/dne-source-parser.ts';
 
 const logradouroLine = [
   '300001',

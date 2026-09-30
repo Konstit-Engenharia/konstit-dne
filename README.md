@@ -59,9 +59,11 @@ try {
 
 Sem argumentos, o leitor abre `data/dne.bin` dentro do pacote instalado, independentemente do diretório de trabalho. Nenhum download é feito na instalação ou na consulta. A base representa a fonte usada no empacotamento daquela versão; instale uma versão mais recente para receber outra cópia ou passe o caminho de uma base própria: `new DneBinaryDatabaseReader('/dados/dne.bin')`.
 
+Para consultar uma base SQLite existente, importe `DneDatabaseReader` de `@konstit/dne` e informe seu caminho: `new DneDatabaseReader('/dados/dne.db')`.
+
 Nos dois leitores, `queryCep`, `queryNeighborhood` e `queryNeighborhoodByCep` retornam `undefined` para entradas inválidas ou resultados ausentes. No leitor SQLite, `metadata` e `tableSchema` também retornam `undefined` quando os metadados ou a definição da tabela estão ausentes.
 
-Os tipos `DneRow`, `DneBairro`, `DneFaixaCep`, `LoadMetadata`, `UF`, `LocalidadeTipo`, `LocalidadeSituacao` e `DneBinaryDatabaseErrorCode` são exportados na raiz do pacote. As classes `DneBinaryDatabaseError`, `DneBinaryDatabaseIOError`, `DneBinaryDatabaseFormatError`, `DneBinaryDatabaseVersionError` e `DneBinaryDatabaseClosedError` também estão disponíveis para tratamento de erros. Importar a biblioteca não executa a CLI.
+Os tipos `DneRow`, `DneBairro`, `DneFaixaCep`, `LoadMetadata`, `UF`, `LocalidadeTipo`, `LocalidadeSituacao`, `DneBinaryDatabaseErrorCode` e `DneDatabaseErrorCode` são exportados na raiz do pacote. As classes `DneBinaryDatabaseError`, `DneBinaryDatabaseIOError`, `DneBinaryDatabaseFormatError`, `DneBinaryDatabaseVersionError` e `DneBinaryDatabaseClosedError` também estão disponíveis para tratamento de erros, assim como as exceções tipadas do leitor SQLite descritas abaixo. Importar a biblioteca não executa a CLI.
 
 Para criar ou consultar suas próprias bases pela CLI:
 
@@ -289,6 +291,18 @@ Os leitores `DneDatabaseReader` e `DneBinaryDatabaseReader` oferecem as mesmas c
 
 Identificadores inválidos ou desconhecidos retornam `undefined`/`[]`. No binário, o cadastro de bairros tem índices internos compactos e preserva os identificadores originais; os intervalos usam pares de inteiros de 32 bits e são convertidos para oito dígitos na leitura.
 
+O leitor SQLite e suas exceções são exportados pela raiz de `@konstit/dne`. Internamente, ficam em [`src/sqlite-db-reader.ts`](src/sqlite-db-reader.ts), também disponíveis pelos imports existentes de `src/db.ts`. Todas as exceções do leitor herdam de `DneDatabaseError` e expõem um `code` estável:
+
+| Classe                   | `code`           | Situação                                                                  |
+| ------------------------ | ---------------- | ------------------------------------------------------------------------- |
+| `DneDatabaseIOError`     | `IO_ERROR`       | Falha ao abrir, configurar ou fechar a conexão; `path` identifica a base. |
+| `DneDatabaseSchemaError` | `INVALID_SCHEMA` | Esquema sem a view normalizada ou os campos de localidade necessários.    |
+| `DneDatabaseDataError`   | `INVALID_DATA`   | Indicadores de localidade inválidos no registro consultado.               |
+| `DneDatabaseQueryError`  | `QUERY_ERROR`    | Falha do SQLite ao preparar ou executar uma consulta.                     |
+| `DneDatabaseClosedError` | `READER_CLOSED`  | Operação de leitura após `close()`, inclusive com entrada inválida.       |
+
+Falhas encapsuladas preservam o erro original em `cause`. É seguro chamar `close()` mais de uma vez.
+
 No SQLite, `localidade_situacao` preserva `LOC_IN_SIT` (`0`, `1`, `2` ou `3`) e `localidade_tipo` preserva `LOC_IN_TIPO_LOC` (`M`, `D` ou `P`). O binário mantém esses indicadores compactados em um byte por CEP. `queryCep()` converte os códigos para strings descritivas nos dois leitores; a CLI também retorna essas strings nas consultas `get`:
 
 | Campo | Código DNE | Valor retornado pela API |
@@ -363,10 +377,24 @@ Este schema serve para consultar um banco criado pelo `@konstit/dne`. O Drizzle 
 
 ## Desenvolvimento
 
+A implementação SQLite segue a separação entre leitura e escrita usada pelo formato binário:
+
+| Arquivo                     | Responsabilidade                                              |
+| --------------------------- | ------------------------------------------------------------- |
+| `src/sqlite-db-reader.ts`   | Consultas, metadados e inspeção de arquivos SQLite.           |
+| `src/sqlite-db-errors.ts`   | Exceções tipadas do leitor.                                   |
+| `src/sqlite-db-writer.ts`   | Importação, validação dos registros e transações.             |
+| `src/sqlite-db-insert.ts`   | Inserção de endereços em lotes e reutilização de statements.  |
+| `src/sqlite-db-schema.ts`   | Geração de SQL, tabelas, views e identificadores.             |
+| `src/dne-source-parser.ts`  | Leitura dos arquivos delimitados e seleção de campos.         |
+| `src/dne-source-quality.ts` | Contadores, motivos de rejeição e relatório de qualidade.     |
+| `src/db.ts`                 | Reexportações para compatibilidade com os imports existentes. |
+
 O comando `zip` é necessário para os testes com arquivos ZIP aninhados. Os testes de distribuição também usam `npm` e `tar` para empacotar e instalar uma fixture isolada, sem baixar os dados reais.
 
 ```sh
 bun test
+bun run coverage
 bun run lint
 bun run fmt
 bun run benchmark

@@ -37,16 +37,7 @@ import {
   type DatabaseFormat,
   type DatabaseInspection,
 } from './database-service.ts';
-import {
-  cepViewName,
-  createCepViewSql,
-  createPrettyTableSql,
-  DneDatabaseWriter,
-  DneSourceQualityError,
-  prepareDatabaseForLoad,
-  quoteIdent,
-  type DneRow,
-} from './db.ts';
+import { DneSourceQualityError } from './dne-source-quality.ts';
 import { UserError } from './errors.ts';
 import { acquireFetchLock } from './fetch-lock.ts';
 import { readPackageVersion } from './package-version.ts';
@@ -67,6 +58,15 @@ import {
   SQLITE_FILE_NAME,
   SQLITE_METADATA_TABLE_NAME,
 } from './settings.ts';
+import {
+  cepViewName,
+  createCepViewSql,
+  createPrettyTableSql,
+  prepareDatabaseForLoad,
+  quoteIdent,
+} from './sqlite-db-schema.ts';
+import { DneDatabaseWriter } from './sqlite-db-writer.ts';
+import type { DneRow } from './types.ts';
 import {
   buildLoadMetadata,
   remoteMetadataMatches,

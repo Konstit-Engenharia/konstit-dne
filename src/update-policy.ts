@@ -1,6 +1,6 @@
-import type { LoadMetadata } from './db.ts';
 import type { RemoteDneSourceInfo } from './resolver.ts';
 import { DATABASE_SCHEMA_VERSION } from './schema.ts';
+import type { LoadMetadata } from './types.ts';
 
 /**
  * Determines whether a database uses the current schema and matches every available remote validator.

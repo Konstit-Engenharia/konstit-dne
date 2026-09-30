@@ -5,6 +5,7 @@ import {
   test,
 } from 'bun:test';
 import {
+  prepareDatabaseForLoad,
   prepareTableForLoad,
   selectDelimitedFields,
 } from '../src/db.ts';
@@ -22,6 +23,19 @@ import {
 } from './helpers.ts';
 
 describe('schema', () => {
+  test('rejects a missing neighborhood definition before modifying the database', () => {
+    const db = new Database(':memory:');
+    db.run('CREATE TABLE preserved (id INTEGER)');
+    db.run('INSERT INTO preserved VALUES (1)');
+    const schema = buildSchema().filter((table) => table.originalName !== 'bairros');
+    try {
+      expect(() => prepareDatabaseForLoad(db, schema)).toThrow('Neighborhood table definition is missing');
+      expect(db.query('SELECT * FROM preserved').all()).toEqual([{ id: 1 }]);
+    } finally {
+      db.close();
+    }
+  });
+
   test('selects and trims delimited fields while preserving empty and missing values', () => {
     expect(selectDelimitedFields(' left @ignored@@ right ', [0, 2, 3, 5])).toEqual(['left', null, 'right', null]);
     expect(selectDelimitedFields('a@b', [])).toEqual([]);
