@@ -1,4 +1,4 @@
-// Experimental decoder inserted into a private reader snapshot by fsst-experiment.py.
+// Experimental decoder for private reader snapshots of the version 3 format.
 type Dictionary = {
   blockOffsetsOffset: number;
   count: number;

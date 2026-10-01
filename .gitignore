@@ -5,6 +5,7 @@ coverage/
 /outputs/
 .*.fetch.lock
 
+data/
 .codegraph/
 .codegraph/**
 
