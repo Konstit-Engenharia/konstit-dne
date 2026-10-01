@@ -217,7 +217,7 @@ Todas as exceções binárias herdam de `DneBinaryDatabaseError`.
 | Classe                          | `code`                | Situação                                                                                                       |
 | ------------------------------- | --------------------- | -------------------------------------------------------------------------------------------------------------- |
 | `DneBinaryDatabaseIOError`      | `IO_ERROR`            | O arquivo não pôde ser aberto, mapeado ou lido. A propriedade `path` identifica o caminho.                     |
-| `DneBinaryDatabaseFormatError`  | `INVALID_FORMAT`      | O cabeçalho mínimo, o tamanho declarado ou o checksum violam o formato durante a abertura.                    |
+| `DneBinaryDatabaseFormatError`  | `INVALID_FORMAT`      | O cabeçalho mínimo, o tamanho declarado ou o checksum violam o formato durante a abertura.                     |
 | `DneBinaryDatabaseVersionError` | `UNSUPPORTED_VERSION` | O arquivo declara uma versão que o leitor não suporta. `actualVersion` e `supportedVersion` ficam disponíveis. |
 | `DneBinaryDatabaseClosedError`  | `READER_CLOSED`       | Uma consulta foi feita depois de `close()`.                                                                    |
 
