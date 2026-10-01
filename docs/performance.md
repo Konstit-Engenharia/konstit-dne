@@ -168,6 +168,43 @@ bun bench/fsst-startup.bench.ts outputs/compression-followup/fsst-ts-source/src/
 
 As opções exploratórias são `DNE_FSST_COPY=bytes`, `DNE_FSST_TEXT=buffer` e `DNE_FSST_PAIRS=1`. Todas permanecem em `bench/`; o leitor de produção v3 continua sem FSST.
 
+### CPU profiling do decoder FSST
+
+As otimizações anteriores foram escolhidas por benchmarks de tempo. Depois foi coletado CPU profiling com [`bun --cpu-prof --cpu-prof-md`](https://bun.com/docs/project/benchmarking#cpu-profiling), comparando os decoders TypeScript original e otimizado do commit `a0a322d`.
+
+Foram quatro processos sequenciais: original e otimizado, cada um com carga de existentes e carga mista. Cada processo fez três aquecimentos de 100 mil consultas e **10 milhões de consultas perfiladas**. A seleção dos CEPs no SQLite ocorreu em outro processo. Os resumos recortam a janela entre a primeira e a última amostra com `profileLookups` na pilha, excluindo preparação e aquecimento. Os totais encontrados e os checksums coincidiram entre os decoders.
+
+Percentual do **tempo próprio amostrado** por função, agrupando as posições de código atribuídas pelo JIT:
+
+| Função | Existentes: original | Existentes: otimizado | Mista: original | Mista: otimizado |
+| --- | ---: | ---: | ---: | ---: |
+| `readFsstString` | **43,06%** | **36,76%** | **37,90%** | **30,91%** |
+| `findCepIndex` | 16,40% | 17,23% | 21,28% | 22,66% |
+| `readBairroRunIndex` | 11,28% | 12,46% | 7,96% | 9,89% |
+| `decode`, nativo | 8,26% | 10,16% | 6,74% | 9,78% |
+| `cepToU32` | 3,69% | 4,60% | 10,44% | 10,08% |
+| `subarray`, nativo | 2,58% | 2,45% | 2,44% | 2,11% |
+
+O decoder continua sendo o maior custo individual. Na carga de existentes da versão otimizada, busca de CEP e índice de bairros somam 29,69%, e a conversão nativa de texto responde por 10,16%. Isso orienta as próximas investigações para a expansão dos símbolos/reconstrução do front coding e para os índices. O perfil por função não distingue qual operação dentro do laço domina.
+
+O JIT concentra muitas amostras de `readFsstString` na linha de entrada da função; isso não significa que o teste de ID nulo seja o gargalo. A conversão nativa de texto pode aparecer diretamente abaixo de `readRow`, devido ao inlining, e inclui conversões de outros dicionários. Percentuais relativos maiores também não provam que uma função ficou mais lenta. A classificação usa tempo próprio para evitar somar tempos inclusivos sobrepostos.
+
+O intervalo solicitado foi de 1 ms. As janelas úteis tiveram 4.568 e 3.966 amostras nos existentes, e 2.675 e 2.352 na carga mista. Esses perfis servem para localizar custos; os ganhos de tempo continuam sendo os medidos sem profiler na seção anterior. O [resumo completo](benchmarks/fsst-cpu-profile.json) inclui contagens, tempos amostrados, checksums e hashes dos perfis brutos.
+
+Perfis brutos preservados: [original/existentes](benchmarks/cpu-profiles/fsst-original-hits.cpuprofile), [otimizado/existentes](benchmarks/cpu-profiles/fsst-optimized-hits.cpuprofile), [original/mista](benchmarks/cpu-profiles/fsst-original-mixed.cpuprofile) e [otimizado/mista](benchmarks/cpu-profiles/fsst-optimized-mixed.cpuprofile).
+
+Para reproduzir, depois de gerar os snapshots FSST:
+
+```sh
+mkdir -p outputs/compression-followup/profiles
+bun bench/prepare-profile-queries.ts ./dne.db outputs/compression-followup/profiles/queries.json
+bun --cpu-prof --cpu-prof-md --cpu-prof-name=original-hits --cpu-prof-dir=outputs/compression-followup/profiles bench/fsst-profile.ts outputs/compression-followup/fsst-source/src/binary-db-reader.ts outputs/compression-followup/fsst-suffix.bin outputs/compression-followup/profiles/queries.json hits
+bun --cpu-prof --cpu-prof-md --cpu-prof-name=optimized-hits --cpu-prof-dir=outputs/compression-followup/profiles bench/fsst-profile.ts outputs/compression-followup/fsst-ts-source/src/binary-db-reader.ts outputs/compression-followup/fsst-suffix.bin outputs/compression-followup/profiles/queries.json hits
+python3 bench/summarize-cpu-profile.py outputs/compression-followup/profiles/original-hits.cpuprofile outputs/compression-followup/profiles/optimized-hits.cpuprofile
+```
+
+Troque o último argumento por `mixed` e use outros nomes de arquivo para a carga mista. O Bun salva tanto `.md` quanto `.cpuprofile`; este último pode ser carregado na aba Performance do Chrome DevTools.
+
 ## Importação a partir da fonte pública
 
 Medição histórica de **30/08/2026**, com **10 execuções** do `@konstit/dne`. A geração completa levou **5,73 segundos em média**, incluindo o download, e produziu uma base com **1.605.136 registros**. Os tamanhos desta comparação estão em **MiB**.

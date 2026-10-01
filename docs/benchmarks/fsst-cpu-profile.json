@@ -1,0 +1,814 @@
+{
+  "measuredOn": "2026-09-30 America/Sao_Paulo",
+  "implementationCommit": "a0a322d",
+  "runtime": "Bun 1.4.2",
+  "cpu": "Apple M4",
+  "documentation": "https://bun.com/docs/project/benchmarking#cpu-profiling",
+  "flags": [
+    "--cpu-prof",
+    "--cpu-prof-md"
+  ],
+  "requestedSamplingIntervalUs": 1000,
+  "queriesFixtureSha256": "c268df86832bef8b11d0e1446c688e98fbac91cbe4a6c22e6e0b73b72dff94e6",
+  "protocol": {
+    "queriesPerProcess": 10000000,
+    "warmupQueries": 300000,
+    "existingQueriesPerMixedProcess": 5000000,
+    "preparation": "SQLite query selection happens in a separate process before profiling",
+    "summaryWindow": "First through last sample descended from profileLookups, keeping every intervening sample",
+    "aggregation": "Leaf time grouped by function name and URL, ignoring source-position splits",
+    "timingCaveat": "Profiler timings do not replace unprofiled paired benchmarks"
+  },
+  "runs": {
+    "original-hits": {
+      "runtime": "1.4.2",
+      "modulePath": "outputs/compression-followup/fsst-source/src/binary-db-reader.ts",
+      "databasePath": "outputs/compression-followup/fsst-suffix.bin",
+      "fixturePath": "outputs/compression-followup/profiles/queries.json",
+      "workload": "hits",
+      "passes": 100,
+      "queries": 10000000,
+      "elapsedMs": 5800.771125,
+      "found": 10000000,
+      "checksum": 197021400
+    },
+    "optimized-hits": {
+      "runtime": "1.4.2",
+      "modulePath": "outputs/compression-followup/fsst-ts-source/src/binary-db-reader.ts",
+      "databasePath": "outputs/compression-followup/fsst-suffix.bin",
+      "fixturePath": "outputs/compression-followup/profiles/queries.json",
+      "workload": "hits",
+      "passes": 100,
+      "queries": 10000000,
+      "elapsedMs": 5078.6887910000005,
+      "found": 10000000,
+      "checksum": 197021400
+    },
+    "original-mixed": {
+      "runtime": "1.4.2",
+      "modulePath": "outputs/compression-followup/fsst-source/src/binary-db-reader.ts",
+      "databasePath": "outputs/compression-followup/fsst-suffix.bin",
+      "fixturePath": "outputs/compression-followup/profiles/queries.json",
+      "workload": "mixed",
+      "passes": 100,
+      "queries": 10000000,
+      "elapsedMs": 3379.882291,
+      "found": 5000000,
+      "checksum": 103236700
+    },
+    "optimized-mixed": {
+      "runtime": "1.4.2",
+      "modulePath": "outputs/compression-followup/fsst-ts-source/src/binary-db-reader.ts",
+      "databasePath": "outputs/compression-followup/fsst-suffix.bin",
+      "fixturePath": "outputs/compression-followup/profiles/queries.json",
+      "workload": "mixed",
+      "passes": 100,
+      "queries": 10000000,
+      "elapsedMs": 2980.9170000000004,
+      "found": 5000000,
+      "checksum": 103236700
+    }
+  },
+  "profiles": [
+    {
+      "profile": "outputs/compression-followup/profiles/original-hits.cpuprofile",
+      "allSamples": 4823,
+      "workloadSamples": 4568,
+      "workloadSampledMs": 5797.966,
+      "firstSampleIndex": 254,
+      "lastSampleIndex": 4821,
+      "samplesWithoutWorkloadAncestor": 0,
+      "functions": [
+        {
+          "function": "readFsstString",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-source/src/fsst-decoder.ts",
+          "selfSamples": 1972,
+          "selfUs": 2496392,
+          "inclusiveUs": 2599898,
+          "selfPercent": 43.05634079261589,
+          "inclusivePercent": 44.84155305498515
+        },
+        {
+          "function": "findCepIndex",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-source/src/binary-db-reader.ts",
+          "selfSamples": 744,
+          "selfUs": 950982,
+          "inclusiveUs": 1168960,
+          "selfPercent": 16.401993388715972,
+          "inclusivePercent": 20.16155320676251
+        },
+        {
+          "function": "readBairroRunIndex",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-source/src/bairro-runs.ts",
+          "selfSamples": 515,
+          "selfUs": 654108,
+          "inclusiveUs": 654108,
+          "selfPercent": 11.28168050657765,
+          "inclusivePercent": 11.28168050657765
+        },
+        {
+          "function": "decode",
+          "url": "",
+          "selfSamples": 377,
+          "selfUs": 478712,
+          "inclusiveUs": 478712,
+          "selfPercent": 8.256550659317423,
+          "inclusivePercent": 8.256550659317423
+        },
+        {
+          "function": "readRow",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-source/src/binary-db-reader.ts",
+          "selfSamples": 335,
+          "selfUs": 426490,
+          "inclusiveUs": 4484389,
+          "selfPercent": 7.35585548449232,
+          "inclusivePercent": 77.34417552638287
+        },
+        {
+          "function": "cepToU32",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-source/src/cep.ts",
+          "selfSamples": 165,
+          "selfUs": 214035,
+          "inclusiveUs": 214035,
+          "selfPercent": 3.6915532102119952,
+          "inclusivePercent": 3.6915532102119952
+        },
+        {
+          "function": "subarray",
+          "url": "",
+          "selfSamples": 118,
+          "selfUs": 149593,
+          "inclusiveUs": 149593,
+          "selfPercent": 2.580094467611573,
+          "inclusivePercent": 2.580094467611573
+        },
+        {
+          "function": "readSparseId",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-source/src/binary-db-reader.ts",
+          "selfSamples": 82,
+          "selfUs": 103082,
+          "inclusiveUs": 103082,
+          "selfPercent": 1.7778993529799934,
+          "inclusivePercent": 1.7778993529799934
+        },
+        {
+          "function": "(anonymous)",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-source/src/binary-db-reader.ts",
+          "selfSamples": 64,
+          "selfUs": 79633,
+          "inclusiveUs": 1248593,
+          "selfPercent": 1.3734644183839644,
+          "inclusivePercent": 21.535017625146473
+        },
+        {
+          "function": "readDictionaryString",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-source/src/binary-db-reader.ts",
+          "selfSamples": 64,
+          "selfUs": 79587,
+          "inclusiveUs": 186380,
+          "selfPercent": 1.372671036704941,
+          "inclusivePercent": 3.214575594268749
+        },
+        {
+          "function": "set",
+          "url": "",
+          "selfSamples": 48,
+          "selfUs": 60706,
+          "inclusiveUs": 60706,
+          "selfPercent": 1.0470223523214865,
+          "inclusivePercent": 1.0470223523214865
+        },
+        {
+          "function": "readSafely",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-source/src/binary-db-reader.ts",
+          "selfSamples": 39,
+          "selfUs": 49303,
+          "inclusiveUs": 5782285,
+          "selfPercent": 0.8503499330627327,
+          "inclusivePercent": 99.72954308459208
+        },
+        {
+          "function": "readMunicipality",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-source/src/binary-db-reader.ts",
+          "selfSamples": 15,
+          "selfUs": 19260,
+          "inclusiveUs": 19260,
+          "selfPercent": 0.3321854595214943,
+          "inclusivePercent": 0.3321854595214943
+        },
+        {
+          "function": "readNeighborhoodIndex",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-source/src/binary-db-reader.ts",
+          "selfSamples": 11,
+          "selfUs": 13267,
+          "inclusiveUs": 667375,
+          "selfPercent": 0.22882162468700232,
+          "inclusivePercent": 11.510502131264653
+        },
+        {
+          "function": "queryCep",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-source/src/binary-db-reader.ts",
+          "selfSamples": 11,
+          "selfUs": 13219,
+          "inclusiveUs": 5612434,
+          "selfPercent": 0.2279937481523693,
+          "inclusivePercent": 96.80005022450977
+        },
+        {
+          "function": "readCachedDictionaryString",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-source/src/binary-db-reader.ts",
+          "selfSamples": 6,
+          "selfUs": 7135,
+          "inclusiveUs": 7135,
+          "selfPercent": 0.12306039738763559,
+          "inclusivePercent": 0.12306039738763559
+        },
+        {
+          "function": "profileLookups",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/bench/fsst-profile.ts",
+          "selfSamples": 2,
+          "selfUs": 2462,
+          "inclusiveUs": 5797966,
+          "selfPercent": 0.04246316725555134,
+          "inclusivePercent": 100.0
+        },
+        {
+          "function": "(module)",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/bench/fsst-profile.ts",
+          "selfSamples": 0,
+          "selfUs": 0,
+          "inclusiveUs": 5797966,
+          "selfPercent": 0.0,
+          "inclusivePercent": 100.0
+        },
+        {
+          "function": "(root)",
+          "url": "",
+          "selfSamples": 0,
+          "selfUs": 0,
+          "inclusiveUs": 5797966,
+          "selfPercent": 0.0,
+          "inclusivePercent": 100.0
+        }
+      ]
+    },
+    {
+      "profile": "outputs/compression-followup/profiles/optimized-hits.cpuprofile",
+      "allSamples": 4225,
+      "workloadSamples": 3966,
+      "workloadSampledMs": 5077.974,
+      "firstSampleIndex": 257,
+      "lastSampleIndex": 4222,
+      "samplesWithoutWorkloadAncestor": 0,
+      "functions": [
+        {
+          "function": "readFsstString",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-ts-source/src/fsst-decoder.ts",
+          "selfSamples": 1462,
+          "selfUs": 1866417,
+          "inclusiveUs": 1951632,
+          "selfPercent": 36.755150774698734,
+          "inclusivePercent": 38.43328067453673
+        },
+        {
+          "function": "findCepIndex",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-ts-source/src/binary-db-reader.ts",
+          "selfSamples": 685,
+          "selfUs": 874736,
+          "inclusiveUs": 1113430,
+          "selfPercent": 17.22608268573254,
+          "inclusivePercent": 21.92665815145962
+        },
+        {
+          "function": "readBairroRunIndex",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-ts-source/src/bairro-runs.ts",
+          "selfSamples": 497,
+          "selfUs": 632788,
+          "inclusiveUs": 632788,
+          "selfPercent": 12.46142654531118,
+          "inclusivePercent": 12.46142654531118
+        },
+        {
+          "function": "decode",
+          "url": "",
+          "selfSamples": 404,
+          "selfUs": 516069,
+          "inclusiveUs": 516069,
+          "selfPercent": 10.162891735956112,
+          "inclusivePercent": 10.162891735956112
+        },
+        {
+          "function": "readRow",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-ts-source/src/binary-db-reader.ts",
+          "selfSamples": 300,
+          "selfUs": 382112,
+          "inclusiveUs": 3829343,
+          "selfPercent": 7.524890832446168,
+          "inclusivePercent": 75.41084298580498
+        },
+        {
+          "function": "cepToU32",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-ts-source/src/cep.ts",
+          "selfSamples": 182,
+          "selfUs": 233487,
+          "inclusiveUs": 233487,
+          "selfPercent": 4.598034570480274,
+          "inclusivePercent": 4.598034570480274
+        },
+        {
+          "function": "readSparseId",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-ts-source/src/binary-db-reader.ts",
+          "selfSamples": 95,
+          "selfUs": 129792,
+          "inclusiveUs": 129792,
+          "selfPercent": 2.5559800030484596,
+          "inclusivePercent": 2.5559800030484596
+        },
+        {
+          "function": "subarray",
+          "url": "",
+          "selfSamples": 95,
+          "selfUs": 124249,
+          "inclusiveUs": 124249,
+          "selfPercent": 2.4468222956635857,
+          "inclusivePercent": 2.4468222956635857
+        },
+        {
+          "function": "readDictionaryString",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-ts-source/src/binary-db-reader.ts",
+          "selfSamples": 64,
+          "selfUs": 87855,
+          "inclusiveUs": 187935,
+          "selfPercent": 1.730119138065693,
+          "inclusivePercent": 3.700983896333459
+        },
+        {
+          "function": "(anonymous)",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-ts-source/src/binary-db-reader.ts",
+          "selfSamples": 49,
+          "selfUs": 61153,
+          "inclusiveUs": 1174583,
+          "selfPercent": 1.2042795020218693,
+          "inclusivePercent": 23.13093765348149
+        },
+        {
+          "function": "set",
+          "url": "",
+          "selfSamples": 47,
+          "selfUs": 61046,
+          "inclusiveUs": 61046,
+          "selfPercent": 1.2021723624421867,
+          "inclusivePercent": 1.2021723624421867
+        },
+        {
+          "function": "readSafely",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-ts-source/src/binary-db-reader.ts",
+          "selfSamples": 42,
+          "selfUs": 53162,
+          "inclusiveUs": 5057088,
+          "selfPercent": 1.0469135919167762,
+          "inclusivePercent": 99.58869423120323
+        },
+        {
+          "function": "queryCep",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-ts-source/src/binary-db-reader.ts",
+          "selfSamples": 16,
+          "selfUs": 19806,
+          "inclusiveUs": 4891455,
+          "selfPercent": 0.3900374440672599,
+          "inclusivePercent": 96.32690124053413
+        },
+        {
+          "function": "readMunicipality",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-ts-source/src/binary-db-reader.ts",
+          "selfSamples": 11,
+          "selfUs": 13933,
+          "inclusiveUs": 13933,
+          "selfPercent": 0.2743810819039247,
+          "inclusivePercent": 0.2743810819039247
+        },
+        {
+          "function": "readNeighborhoodIndex",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-ts-source/src/binary-db-reader.ts",
+          "selfSamples": 9,
+          "selfUs": 12083,
+          "inclusiveUs": 644871,
+          "selfPercent": 0.23794922935800772,
+          "inclusivePercent": 12.699375774669189
+        },
+        {
+          "function": "readCachedDictionaryString",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-ts-source/src/binary-db-reader.ts",
+          "selfSamples": 7,
+          "selfUs": 8206,
+          "inclusiveUs": 8206,
+          "selfPercent": 0.1615998821577267,
+          "inclusivePercent": 0.1615998821577267
+        },
+        {
+          "function": "profileLookups",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/bench/fsst-profile.ts",
+          "selfSamples": 1,
+          "selfUs": 1080,
+          "inclusiveUs": 5077974,
+          "selfPercent": 0.021268324729508264,
+          "inclusivePercent": 100.0
+        },
+        {
+          "function": "(module)",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/bench/fsst-profile.ts",
+          "selfSamples": 0,
+          "selfUs": 0,
+          "inclusiveUs": 5077974,
+          "selfPercent": 0.0,
+          "inclusivePercent": 100.0
+        },
+        {
+          "function": "(root)",
+          "url": "",
+          "selfSamples": 0,
+          "selfUs": 0,
+          "inclusiveUs": 5077974,
+          "selfPercent": 0.0,
+          "inclusivePercent": 100.0
+        }
+      ]
+    },
+    {
+      "profile": "outputs/compression-followup/profiles/original-mixed.cpuprofile",
+      "allSamples": 2797,
+      "workloadSamples": 2675,
+      "workloadSampledMs": 3379.566,
+      "firstSampleIndex": 122,
+      "lastSampleIndex": 2796,
+      "samplesWithoutWorkloadAncestor": 0,
+      "functions": [
+        {
+          "function": "readFsstString",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-source/src/fsst-decoder.ts",
+          "selfSamples": 1009,
+          "selfUs": 1281009,
+          "inclusiveUs": 1346565,
+          "selfPercent": 37.90454158906795,
+          "inclusivePercent": 39.84431728807782
+        },
+        {
+          "function": "findCepIndex",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-source/src/binary-db-reader.ts",
+          "selfSamples": 573,
+          "selfUs": 719327,
+          "inclusiveUs": 1072276,
+          "selfPercent": 21.284596897944887,
+          "inclusivePercent": 31.728215989863788
+        },
+        {
+          "function": "cepToU32",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-source/src/cep.ts",
+          "selfSamples": 277,
+          "selfUs": 352949,
+          "inclusiveUs": 352949,
+          "selfPercent": 10.443619091918903,
+          "inclusivePercent": 10.443619091918903
+        },
+        {
+          "function": "readBairroRunIndex",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-source/src/bairro-runs.ts",
+          "selfSamples": 215,
+          "selfUs": 268898,
+          "inclusiveUs": 268898,
+          "selfPercent": 7.956583774366294,
+          "inclusivePercent": 7.956583774366294
+        },
+        {
+          "function": "decode",
+          "url": "",
+          "selfSamples": 183,
+          "selfUs": 227689,
+          "inclusiveUs": 227689,
+          "selfPercent": 6.73722602251295,
+          "inclusivePercent": 6.73722602251295
+        },
+        {
+          "function": "readRow",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-source/src/binary-db-reader.ts",
+          "selfSamples": 159,
+          "selfUs": 200560,
+          "inclusiveUs": 2207238,
+          "selfPercent": 5.934489813189031,
+          "inclusivePercent": 65.31128553192926
+        },
+        {
+          "function": "subarray",
+          "url": "",
+          "selfSamples": 65,
+          "selfUs": 82338,
+          "inclusiveUs": 82338,
+          "selfPercent": 2.436348335851408,
+          "inclusivePercent": 2.436348335851408
+        },
+        {
+          "function": "readSparseId",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-source/src/binary-db-reader.ts",
+          "selfSamples": 41,
+          "selfUs": 52280,
+          "inclusiveUs": 52280,
+          "selfPercent": 1.5469441934260197,
+          "inclusivePercent": 1.5469441934260197
+        },
+        {
+          "function": "(anonymous)",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-source/src/binary-db-reader.ts",
+          "selfSamples": 38,
+          "selfUs": 48078,
+          "inclusiveUs": 1120354,
+          "selfPercent": 1.4226087018273943,
+          "inclusivePercent": 33.150824691691184
+        },
+        {
+          "function": "set",
+          "url": "",
+          "selfSamples": 30,
+          "selfUs": 38704,
+          "inclusiveUs": 38704,
+          "selfPercent": 1.1452358083848635,
+          "inclusivePercent": 1.1452358083848635
+        },
+        {
+          "function": "readDictionaryString",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-source/src/binary-db-reader.ts",
+          "selfSamples": 29,
+          "selfUs": 36313,
+          "inclusiveUs": 91799,
+          "selfPercent": 1.074487079110158,
+          "inclusivePercent": 2.716295524336557
+        },
+        {
+          "function": "readSafely",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-source/src/binary-db-reader.ts",
+          "selfSamples": 21,
+          "selfUs": 27154,
+          "inclusiveUs": 3354746,
+          "selfPercent": 0.8034759492786944,
+          "inclusivePercent": 99.26558617289912
+        },
+        {
+          "function": "queryCep",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-source/src/binary-db-reader.ts",
+          "selfSamples": 15,
+          "selfUs": 18475,
+          "inclusiveUs": 3246081,
+          "selfPercent": 0.5466678265789158,
+          "inclusivePercent": 96.05023248547299
+        },
+        {
+          "function": "readNeighborhoodIndex",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-source/src/binary-db-reader.ts",
+          "selfSamples": 8,
+          "selfUs": 10779,
+          "inclusiveUs": 279677,
+          "selfPercent": 0.31894627890090027,
+          "inclusivePercent": 8.275530053267195
+        },
+        {
+          "function": "profileLookups",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/bench/fsst-profile.ts",
+          "selfSamples": 5,
+          "selfUs": 6345,
+          "inclusiveUs": 3379566,
+          "selfPercent": 0.18774600052196053,
+          "inclusivePercent": 100.0
+        },
+        {
+          "function": "readMunicipality",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-source/src/binary-db-reader.ts",
+          "selfSamples": 4,
+          "selfUs": 4787,
+          "inclusiveUs": 4787,
+          "selfPercent": 0.14164540654036642,
+          "inclusivePercent": 0.14164540654036642
+        },
+        {
+          "function": "readCachedDictionaryString",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-source/src/binary-db-reader.ts",
+          "selfSamples": 3,
+          "selfUs": 3881,
+          "inclusiveUs": 3881,
+          "selfPercent": 0.11483723057931108,
+          "inclusivePercent": 0.11483723057931108
+        },
+        {
+          "function": "(module)",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/bench/fsst-profile.ts",
+          "selfSamples": 0,
+          "selfUs": 0,
+          "inclusiveUs": 3379566,
+          "selfPercent": 0.0,
+          "inclusivePercent": 100.0
+        },
+        {
+          "function": "(root)",
+          "url": "",
+          "selfSamples": 0,
+          "selfUs": 0,
+          "inclusiveUs": 3379566,
+          "selfPercent": 0.0,
+          "inclusivePercent": 100.0
+        }
+      ]
+    },
+    {
+      "profile": "outputs/compression-followup/profiles/optimized-mixed.cpuprofile",
+      "allSamples": 2481,
+      "workloadSamples": 2352,
+      "workloadSampledMs": 2979.607,
+      "firstSampleIndex": 129,
+      "lastSampleIndex": 2480,
+      "samplesWithoutWorkloadAncestor": 0,
+      "functions": [
+        {
+          "function": "readFsstString",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-ts-source/src/fsst-decoder.ts",
+          "selfSamples": 723,
+          "selfUs": 921107,
+          "inclusiveUs": 966648,
+          "selfPercent": 30.913707747364,
+          "inclusivePercent": 32.44213079107413
+        },
+        {
+          "function": "findCepIndex",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-ts-source/src/binary-db-reader.ts",
+          "selfSamples": 529,
+          "selfUs": 675122,
+          "inclusiveUs": 976794,
+          "selfPercent": 22.658088801643974,
+          "inclusivePercent": 32.78264549653696
+        },
+        {
+          "function": "cepToU32",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-ts-source/src/cep.ts",
+          "selfSamples": 240,
+          "selfUs": 300447,
+          "inclusiveUs": 300447,
+          "selfPercent": 10.083443890419105,
+          "inclusivePercent": 10.083443890419105
+        },
+        {
+          "function": "readBairroRunIndex",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-ts-source/src/bairro-runs.ts",
+          "selfSamples": 237,
+          "selfUs": 294635,
+          "inclusiveUs": 294635,
+          "selfPercent": 9.888384609111203,
+          "inclusivePercent": 9.888384609111203
+        },
+        {
+          "function": "decode",
+          "url": "",
+          "selfSamples": 232,
+          "selfUs": 291490,
+          "inclusiveUs": 291490,
+          "selfPercent": 9.782833776400714,
+          "inclusivePercent": 9.782833776400714
+        },
+        {
+          "function": "readRow",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-ts-source/src/binary-db-reader.ts",
+          "selfSamples": 149,
+          "selfUs": 189809,
+          "inclusiveUs": 1907070,
+          "selfPercent": 6.3702696362305495,
+          "inclusivePercent": 64.00407839020382
+        },
+        {
+          "function": "readSparseId",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-ts-source/src/binary-db-reader.ts",
+          "selfSamples": 55,
+          "selfUs": 68153,
+          "inclusiveUs": 68153,
+          "selfPercent": 2.287315072088366,
+          "inclusivePercent": 2.287315072088366
+        },
+        {
+          "function": "subarray",
+          "url": "",
+          "selfSamples": 50,
+          "selfUs": 62780,
+          "inclusiveUs": 62780,
+          "selfPercent": 2.1069892774449785,
+          "inclusivePercent": 2.1069892774449785
+        },
+        {
+          "function": "(anonymous)",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-ts-source/src/binary-db-reader.ts",
+          "selfSamples": 45,
+          "selfUs": 58319,
+          "inclusiveUs": 1035113,
+          "selfPercent": 1.9572715462139807,
+          "inclusivePercent": 34.73991704275094
+        },
+        {
+          "function": "readDictionaryString",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-ts-source/src/binary-db-reader.ts",
+          "selfSamples": 28,
+          "selfUs": 36996,
+          "inclusiveUs": 83816,
+          "selfPercent": 1.2416402565841735,
+          "inclusivePercent": 2.812988424312334
+        },
+        {
+          "function": "set",
+          "url": "",
+          "selfSamples": 23,
+          "selfUs": 29581,
+          "inclusiveUs": 29581,
+          "selfPercent": 0.9927819339933084,
+          "inclusivePercent": 0.9927819339933084
+        },
+        {
+          "function": "queryCep",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-ts-source/src/binary-db-reader.ts",
+          "selfSamples": 14,
+          "selfUs": 17709,
+          "inclusiveUs": 2865550,
+          "selfPercent": 0.594340126063605,
+          "inclusivePercent": 96.17207906948802
+        },
+        {
+          "function": "readSafely",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-ts-source/src/binary-db-reader.ts",
+          "selfSamples": 14,
+          "selfUs": 17472,
+          "inclusiveUs": 2959655,
+          "selfPercent": 0.5863860569531486,
+          "inclusivePercent": 99.3303814899079
+        },
+        {
+          "function": "readMunicipality",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-ts-source/src/binary-db-reader.ts",
+          "selfSamples": 8,
+          "selfUs": 10202,
+          "inclusiveUs": 10202,
+          "selfPercent": 0.342394147953069,
+          "inclusivePercent": 0.342394147953069
+        },
+        {
+          "function": "readNeighborhoodIndex",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-ts-source/src/binary-db-reader.ts",
+          "selfSamples": 2,
+          "selfUs": 2368,
+          "inclusiveUs": 297003,
+          "selfPercent": 0.07947356815848533,
+          "inclusivePercent": 9.967858177269687
+        },
+        {
+          "function": "profileLookups",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/bench/fsst-profile.ts",
+          "selfSamples": 2,
+          "selfUs": 2243,
+          "inclusiveUs": 2979607,
+          "selfPercent": 0.07527838402849772,
+          "inclusivePercent": 100.0
+        },
+        {
+          "function": "readCachedDictionaryString",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/outputs/compression-followup/fsst-ts-source/src/binary-db-reader.ts",
+          "selfSamples": 1,
+          "selfUs": 1174,
+          "inclusiveUs": 1174,
+          "selfPercent": 0.039401169348843655,
+          "inclusivePercent": 0.039401169348843655
+        },
+        {
+          "function": "(module)",
+          "url": "file:///Users/konstit/.codex/worktrees/compression-followup/konstit-dne/bench/fsst-profile.ts",
+          "selfSamples": 0,
+          "selfUs": 0,
+          "inclusiveUs": 2979607,
+          "selfPercent": 0.0,
+          "inclusivePercent": 100.0
+        },
+        {
+          "function": "(root)",
+          "url": "",
+          "selfSamples": 0,
+          "selfUs": 0,
+          "inclusiveUs": 2979607,
+          "selfPercent": 0.0,
+          "inclusivePercent": 100.0
+        }
+      ]
+    }
+  ],
+  "hashes": {
+    "original-hits.cpuprofile": "d738e056e0c22ddcdbb5376cdae6a0ce1ab24721147e9bd3732d012fc372dea0",
+    "optimized-hits.cpuprofile": "348ef2b31dedfbdd631ef31dabcecb9791d05162b41dd6d5554b99db5a5b7352",
+    "original-mixed.cpuprofile": "c3112750a65daa9995edbd0011ccdfec7ee737f73f99126c5e894c5ac005feaf",
+    "optimized-mixed.cpuprofile": "cef1a90cadc3828fc406ca0c7d5d3386b40278f49fccc826fa3eec93fefdfcd9"
+  },
+  "rawProfiles": {
+    "original-hits": "cpu-profiles/fsst-original-hits.cpuprofile",
+    "optimized-hits": "cpu-profiles/fsst-optimized-hits.cpuprofile",
+    "original-mixed": "cpu-profiles/fsst-original-mixed.cpuprofile",
+    "optimized-mixed": "cpu-profiles/fsst-optimized-mixed.cpuprofile"
+  }
+}
