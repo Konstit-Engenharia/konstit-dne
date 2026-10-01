@@ -123,6 +123,11 @@ test('rejects training an empty dictionary', () => {
   expect(() => encodeFsstSuffixes([])).toThrow('Cannot train FSST with an empty dictionary');
 });
 
+test('rejects a suffix exceeding the compressed byte limit', () => {
+  expect(() => encodeFsstSuffixes([new Uint8Array(4_096).fill(65)]))
+    .toThrow('FSST compressed suffix exceeds 510 bytes');
+});
+
 type Fixture = {
   bytes: Uint8Array;
   data: DataView;

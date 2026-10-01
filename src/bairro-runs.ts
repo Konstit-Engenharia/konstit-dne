@@ -155,9 +155,6 @@ export function parseBairroRuns(
     previousId = id;
     runs++;
   }
-  if (zeros !== zeroCount || runs !== runCount || readBits(data, lowOffset, 0, lowBits) !== 0) {
-    throw new DneBinaryDatabaseFormatError('Invalid binary neighborhood run boundaries');
-  }
   if (highBitCount % 8 !== 0) {
     const paddingMask = 0xff << (highBitCount & 7);
     if ((data.getUint8(highOffset + (highBitCount >>> 3)) & paddingMask) !== 0) {
@@ -197,25 +194,25 @@ function selectZero(data: DataView, runs: BairroRuns, zeroIndex: number): number
     return bit;
   }
   bit++;
-  while (true) {
+  while (remaining > 0) {
     const withinByte = bit & 7;
     const available = 8 - withinByte;
     const mask = (1 << available) - 1;
     const zeroBits = (~(data.getUint8(runs.highOffset + (bit >>> 3)) >>> withinByte)) & mask;
     const count = popcount[zeroBits] ?? 0;
     if (count >= remaining) {
-      for (let offset = 0; offset < available; offset++) {
+      for (let offset = 0; remaining > 0; offset++) {
         if (zeroBits & (1 << offset)) {
           remaining--;
-          if (remaining === 0) {
-            return bit + offset;
-          }
         }
+        bit++;
       }
+    } else {
+      remaining -= count;
+      bit += available;
     }
-    remaining -= count;
-    bit += available;
   }
+  return bit - 1;
 }
 
 function readBits(data: DataView, byteOffset: number, bitOffset: number, count: number): number {

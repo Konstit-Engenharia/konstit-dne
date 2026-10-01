@@ -95,6 +95,26 @@ test('reads an FSST logradouro dictionary through mmap and after reopening', () 
   }
 });
 
+test('validates a complete FSST dictionary with two-byte lengths and literal escapes', () => {
+  expect(fsstLayout.lengthWidth).toBe(2);
+  expect(() => validateBinaryDatabaseBytes(fsstBytes)).not.toThrow();
+});
+
+test('rejects an FSST suffix above the compressed byte limit', () => {
+  const bytes = fsstBytes.slice();
+  const dictionary = bytes.slice(fsstLayout.regionOffset, fsstLayout.regionOffset + fsstLayout.regionLength);
+  const expanded = new Uint8Array(dictionary.length + 512);
+  expanded.set(dictionary);
+  const view = new DataView(expanded.buffer);
+  view.setUint32(24, fsstLayout.suffixDataLength + 512, true);
+  view.setUint16(fsstLayout.lengthsOffset - fsstLayout.regionOffset, 511, true);
+  for (let block = 1; block < fsstLayout.blockCount; block++) {
+    view.setUint32(fsstLayout.blockOffsetsOffset - fsstLayout.regionOffset + block * 4, fsstLayout.suffixDataLength + 512, true);
+  }
+  const repacked = repackDatabase(bytes, expanded);
+  expect(() => validateBinaryDatabaseBytes(repacked.bytes)).toThrow('FSST suffix is too long');
+});
+
 test.each(
   [
     ['truncated region', (bytes: Uint8Array) => {

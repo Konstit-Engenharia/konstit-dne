@@ -121,6 +121,7 @@ test('replaces malformed UTF-8 while retaining decoder state for later reads', (
 
 test('validates the fixed symbol table during generation', () => {
   const fixture = makeFixture([{ codes: [0] }], new Map([[0, Uint8Array.of(65)]]));
+  expect(() => validateFsstSymbols(fixture.data, fixture.symbolsOffset)).not.toThrow();
   fixture.bytes[fixture.symbolsOffset] = 9;
 
   expect(() => validateFsstSymbols(fixture.data, fixture.symbolsOffset))

@@ -16,10 +16,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   BINARY_SECTION_NAMES,
+  DICTIONARY_CODEC_FSST,
   SECTION_TABLE_OFFSET,
 } from '../src/binary-db-format.ts';
 import { DneBinaryDatabaseReader } from '../src/binary-db-reader.ts';
 import { buildBinaryDatabase } from '../src/binary-db-writer.ts';
+import * as fsstEncoder from '../src/fsst-encoder.ts';
 import { captureRejection } from './assertions.ts';
 
 const directory = mkdtempSync(join(tmpdir(), 'dne-binary-writer-'));
@@ -102,6 +104,55 @@ test('keeps front coding when an FSST table would make a dictionary larger', asy
     reader.close();
   }
 });
+
+test('writes FSST dictionaries with two-byte compressed lengths', async () => {
+  const encode = fsstEncoder.encodeFsstSuffixSource;
+  spyOn(fsstEncoder, 'encodeFsstSuffixSource').mockImplementation((source) => {
+    const encoded = encode(source);
+    const lengths = new Uint8Array(source.count * 2);
+    const view = new DataView(lengths.buffer);
+    for (let index = 0; index < source.count; index++) {
+      view.setUint16(index * 2, encoded.compressedLengths[index] ?? 0, true);
+    }
+    return { ...encoded, lengthWidth: 2, compressedLengths: lengths };
+  });
+  const rows = fsstRows();
+  const path = createDatabase(rows);
+  await buildBinaryDatabase(path, `${path}.bin`);
+  const bytes = new Uint8Array(await Bun.file(`${path}.bin`).arrayBuffer());
+  const dictionary = new DataView(bytes.buffer).getUint32(
+    SECTION_TABLE_OFFSET + BINARY_SECTION_NAMES.indexOf('logradouroDictionary') * 8,
+    true,
+  );
+  expect(bytes[dictionary + 30]).toBe(DICTIONARY_CODEC_FSST);
+  expect(bytes[dictionary + 31]).toBe(2);
+  const reader = new DneBinaryDatabaseReader(`${path}.bin`);
+  try {
+    for (const row of rows) {
+      expect(reader.queryCep(row.cep)?.logradouro).toBe(row.logradouro);
+    }
+  } finally {
+    reader.close();
+  }
+});
+
+test('does not publish a database when the FSST encoder returns an invalid symbol table', async () => {
+  const encode = fsstEncoder.encodeFsstSuffixSource;
+  spyOn(fsstEncoder, 'encodeFsstSuffixSource').mockImplementation((source) => ({ ...encode(source), symbols: new Uint8Array() }));
+  const path = createDatabase(fsstRows());
+  expect(await captureRejection(buildBinaryDatabase(path, `${path}.bin`))).toMatchObject({
+    message: expect.stringContaining('Invalid FSST encoder result'),
+  });
+  expect(existsSync(`${path}.bin`)).toBe(false);
+});
+
+function fsstRows() {
+  return Array.from({ length: 64 }, (_, index) => ({
+    ...validRow,
+    cep: String(1_001_000 + index).padStart(8, '0'),
+    logradouro: `${index.toString().padStart(2, '0')} ${'Avenida das Flores '.repeat(10)}`,
+  }));
+}
 
 test.each(
   [

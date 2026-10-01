@@ -52,3 +52,27 @@ test('rejects invalid run starts and directory entries before lookup', () => {
     expect(() => parseLocalityRuns(new DataView(corrupted.buffer), region, 4, 1)).toThrow('Invalid binary locality run');
   }
 });
+
+test.each(
+  [
+    ['truncated', (bytes: Uint8Array) => bytes.subarray(0, 7), 'are truncated'],
+    ['zero count', (bytes: Uint8Array) => {
+      new DataView(bytes.buffer).setUint32(0, 0, true);
+      return bytes;
+    }, 'run header'],
+    ['excess count', (bytes: Uint8Array) => {
+      new DataView(bytes.buffer).setUint32(0, 5, true);
+      return bytes;
+    }, 'run header'],
+    ['block shift', (bytes: Uint8Array) => {
+      bytes[4] = 7;
+      return bytes;
+    }, 'run header'],
+    ['length', (bytes: Uint8Array) => bytes.subarray(0, -1), 'run length'],
+  ] as const,
+)('rejects %s locality run data', (_name, mutate, message) => {
+  const encoded = encodeLocalityRuns(Uint8Array.of(1, 1, 2, 2), new Uint8Array(4), 1);
+  const bytes = mutate(encoded.ids);
+  const data = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  expect(() => parseLocalityRuns(data, { offset: 0, length: bytes.length }, 4, 1)).toThrow(message);
+});

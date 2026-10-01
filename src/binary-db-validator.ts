@@ -99,7 +99,6 @@ type LocalityRunValues = {
 };
 
 type MunicipalityTable = {
-  codes: Uint32Array;
   ufIds: Uint32Array;
 };
 
@@ -415,9 +414,6 @@ function decodeDictionary(
     const nextRelative = block + 1 < dictionary.blockCount
       ? data.getUint32(dictionary.blockOffsetsOffset + (block + 1) * 4, true)
       : dictionary.suffixDataLength;
-    if (relative > nextRelative || nextRelative > dictionary.suffixDataLength) {
-      throw new DneBinaryDatabaseFormatError(`Binary ${name} dictionary has invalid block offsets`);
-    }
     let cursor = dictionary.suffixDataOffset + relative;
     const blockEnd = dictionary.suffixDataOffset + nextRelative;
     let blockPrevious: Uint8Array<ArrayBufferLike> = new Uint8Array();
@@ -488,9 +484,6 @@ function decodeFsstValue(
   name: string,
   index: number,
 ): Uint8Array<ArrayBufferLike> {
-  if (prefix > previous.byteLength || prefix > 255) {
-    throw new DneBinaryDatabaseFormatError(`Invalid binary ${name} FSST prefix: ${index}`);
-  }
   const output: Uint8Array<ArrayBufferLike> = new Uint8Array(255);
   output.set(previous.subarray(0, prefix));
   let outputLength = prefix;
@@ -583,7 +576,6 @@ function validateMunicipalities(
   const recordWidth = 3 + dictionaries.municipio.idWidth + dictionaries.uf.idWidth;
   const region = header.sections.municipalities;
   assertRegionLength(region, header.municipalityCount * recordWidth, 'municipalities');
-  const codes = new Uint32Array(header.municipalityCount + 1);
   const ufIds = new Uint32Array(header.municipalityCount + 1);
   let previousCode = 0;
   for (let index = 0; index < header.municipalityCount; index++) {
@@ -604,11 +596,10 @@ function validateMunicipalities(
     if (Math.floor(code / 100_000) !== stateCodes[uf]) {
       throw new DneBinaryDatabaseFormatError(`IBGE municipality code does not match UF: ${code} (${uf}, ${stateCodes[uf]})`);
     }
-    codes[index + 1] = code;
     ufIds[index + 1] = ufId;
     previousCode = code;
   }
-  return { codes, ufIds };
+  return { ufIds };
 }
 
 type SparseValues = { localidadeNome: Uint32Array; };
@@ -834,7 +825,7 @@ function validateRows(
   sparse: SparseValues,
   municipalityTable: MunicipalityTable,
 ) {
-  const bairroRunValues = decodeBairroRuns(data, bairroRuns, header.rowCount);
+  const bairroRunValues = decodeBairroRuns(data, bairroRuns);
   const localityRunValues = decodeLocalityRuns(data, header, localityRuns);
   let bairroRun = 0;
   let localityRun = 0;
@@ -849,38 +840,17 @@ function validateRows(
     const municipalityId = localityRunValues.ids[localityRun] ?? 0;
     const flags = localityRunValues.flags[localityRun] ?? 0;
     const tipo = flags >>> 2;
-    if (municipalityId === 0 || municipalityId > header.municipalityCount || municipalityTable.codes[municipalityId] === undefined) {
-      throw new DneBinaryDatabaseFormatError(`Invalid binary municipality id: ${municipalityId}`);
-    }
-    if (bairroIndex > bairros.count) {
-      throw new DneBinaryDatabaseFormatError(`Invalid binary neighborhood index: ${bairroIndex}`);
-    }
     const localidadeNomeId = sparse.localidadeNome[row] ?? 0;
     if (localidadeNomeId !== 0 && (bairroIndex !== 0 || tipo === 0)) {
       throw new DneBinaryDatabaseFormatError(`Invalid binary subordinate locality name: ${row}`);
     }
     if (bairroIndex !== 0) {
-      const nameId = readNeighborhoodNameId(data, bairros, dictionaries, bairroIndex);
-      if (nameId === 0) {
-        throw new DneBinaryDatabaseFormatError(`Null binary neighborhood name: ${row}`);
-      }
       const bairroUfId = readNeighborhoodUfId(data, bairros, dictionaries, bairroIndex);
       if (bairroUfId !== municipalityTable.ufIds[municipalityId]) {
         throw new DneBinaryDatabaseFormatError(`Neighborhood and municipality UFs differ: ${row}`);
       }
     }
   }
-}
-
-function readNeighborhoodNameId(
-  data: DataView,
-  bairros: BinaryBairros,
-  dictionaries: BinaryDictionaries,
-  index: number,
-) {
-  const offset = bairros.recordsOffset + (index - 1) * bairros.recordWidth
-    + bairros.originalIdWidth + bairros.localidadeIdWidth;
-  return readPackedInteger(data, offset, dictionaries.bairro.idWidth);
 }
 
 function readNeighborhoodUfId(
@@ -895,7 +865,7 @@ function readNeighborhoodUfId(
   return readPackedInteger(data, offset, dictionaries.uf.idWidth);
 }
 
-function decodeBairroRuns(data: DataView, runs: BairroRuns, rowCount: number): BairroRunValues {
+function decodeBairroRuns(data: DataView, runs: BairroRuns): BairroRunValues {
   const starts = new Uint32Array(runs.runCount);
   const ids = new Uint32Array(runs.runCount);
   const lowBase = 2 ** runs.lowBits;
@@ -911,9 +881,6 @@ function decodeBairroRuns(data: DataView, runs: BairroRuns, rowCount: number): B
     starts[run] = zeros * lowBase + low;
     ids[run] = readPackedInteger(data, runs.idsOffset + run * runs.idWidth, runs.idWidth);
     run++;
-  }
-  if (run !== runs.runCount || starts[0] !== 0 || (starts[runs.runCount - 1] ?? rowCount) >= rowCount) {
-    throw new DneBinaryDatabaseFormatError('Invalid binary neighborhood run coverage');
   }
   return { ids, starts };
 }

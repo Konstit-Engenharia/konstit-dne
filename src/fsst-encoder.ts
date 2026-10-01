@@ -6,7 +6,7 @@ const FSST_MAX_SYMBOL_LENGTH = 8;
 const FSST_MAX_COMPRESSED_LENGTH = 510;
 const SAMPLE_LIMIT = 64 * 1024;
 // Evaluate different shares of the 255 codes, keeping the best measured sample size.
-const MULTI_SYMBOL_BUDGETS = [0, 64, 128, 160, 192, 224] as const;
+const MULTI_SYMBOL_BUDGETS = [64, 128, 160, 192, 224] as const;
 
 type Candidate = {
   key: string;
@@ -132,7 +132,8 @@ function collectSingleBytes(sample: readonly Uint8Array[]) {
 }
 
 function chooseTable(candidates: readonly Candidate[], singleBytes: readonly number[], sample: readonly Uint8Array[]) {
-  let best: { table: SymbolTable; size: number; } | undefined;
+  const byteTable = createTable(singleBytes.slice(0, FSST_CODE_COUNT).map((byte) => Uint8Array.of(byte)));
+  let best = { table: byteTable, size: measureSample(sample, byteTable).size };
   for (const multiCount of MULTI_SYMBOL_BUDGETS) {
     let multi = candidates.slice(0, multiCount);
     let nextCandidate = multi.length;
@@ -143,7 +144,7 @@ function chooseTable(candidates: readonly Candidate[], singleBytes: readonly num
       const symbols = multi.map((candidate) => bytesFromKey(candidate.key)).concat(singles);
       const table = createTable(symbols);
       const measured = measureSample(sample, table);
-      if (!best || measured.size < best.size) {
+      if (measured.size < best.size) {
         best = { table, size: measured.size };
       }
       const retained = multi.filter((_, code) => (measured.uses[code] ?? 0) > 0);
@@ -158,10 +159,6 @@ function chooseTable(candidates: readonly Candidate[], singleBytes: readonly num
       }
       multi = retained;
     }
-  }
-  // The first budget always produces a table, including for an all-empty sample.
-  if (!best) {
-    throw new Error('Unable to train FSST symbol table');
   }
   return best.table;
 }
