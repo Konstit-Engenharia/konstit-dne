@@ -88,13 +88,13 @@ describe('binary reader error contract', () => {
 
   test('exposes actual and supported versions without relying on the error message', async () => {
     const bytes = original.slice();
-    new DataView(bytes.buffer).setUint16(8, 2, true);
+    new DataView(bytes.buffer).setUint16(8, 1, true);
     const path = join(workDir, 'version.bin');
     await Bun.write(path, bytes);
     expect(await isBinaryDatabase(path)).toBe(true);
     const error = captureError(() => new DneBinaryDatabaseReader(path));
     expect(error).toBeInstanceOf(DneBinaryDatabaseVersionError);
-    expect(error).toMatchObject({ code: 'UNSUPPORTED_VERSION', actualVersion: 2, supportedVersion: BINARY_DATABASE_VERSION });
+    expect(error).toMatchObject({ code: 'UNSUPPORTED_VERSION', actualVersion: 1, supportedVersion: BINARY_DATABASE_VERSION });
   });
 
   test('types header, helper-validation, and JSON parsing failures', async () => {

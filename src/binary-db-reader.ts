@@ -40,6 +40,7 @@ import {
   type ByteWidth,
 } from './binary-db-format.ts';
 import { cepToU32 } from './cep.ts';
+import { parseBairroRuns, readBairroRunIndex, type BairroRuns } from './bairro-runs.ts';
 import {
   LOCALIDADE_SITUACOES,
   LOCALIDADE_TIPOS,
@@ -137,6 +138,7 @@ export class DneBinaryDatabaseReader {
   private decodeScratch = new Uint8Array(0xff);
   private dictionaries: BinaryDictionaries;
   private bairros: BinaryBairros;
+  private bairroRuns: BairroRuns;
   private header: BinaryHeader;
   private mapped: Uint8Array<ArrayBuffer> | null;
   private metadataValue: LoadMetadata;
@@ -162,7 +164,7 @@ export class DneBinaryDatabaseReader {
       validateHeader(data, header);
       const dictionaries = readDictionaries(data, header);
       const bairros = readNeighborhoods(data, header, dictionaries);
-      validateLayout(data, header, dictionaries, bairros);
+      const bairroRuns = validateLayout(data, header, dictionaries, bairros);
       const metadata = parseMetadata(mapped, header.sections.metadata);
 
       this.mapped = mapped;
@@ -170,6 +172,7 @@ export class DneBinaryDatabaseReader {
       this.header = header;
       this.dictionaries = dictionaries;
       this.bairros = bairros;
+      this.bairroRuns = bairroRuns;
       this.metadataValue = metadata;
       this.bairroCache = Array.from({ length: dictionaries.bairro.count + 1 });
       this.municipalityCache = Array.from({ length: header.municipalityCount + 1 });
@@ -357,7 +360,7 @@ export class DneBinaryDatabaseReader {
   }
 
   private readNeighborhoodIndex(row: number): number {
-    const index = this.readPackedInteger(this.header.sections.bairroIds.offset + row * this.bairros.idWidth, this.bairros.idWidth);
+    const index = readBairroRunIndex(this.requireData(), this.bairroRuns, row);
     if (index > this.bairros.count) {
       throw new DneBinaryDatabaseFormatError(`Invalid binary neighborhood index: ${index}`);
     }
@@ -856,7 +859,7 @@ function validateLayout(data: DataView, header: BinaryHeader, dictionaries: Bina
   const sections = header.sections;
   assertRegionLength(sections.localidadeFlags, header.rowCount, 'locality indicators');
   assertRegionLength(sections.logradouroIds, header.rowCount * dictionaries.logradouro.idWidth, 'logradouro ids');
-  assertRegionLength(sections.bairroIds, header.rowCount * bairros.idWidth, 'bairro indexes');
+  const bairroRuns = parseBairroRuns(data, sections.bairroIds, header.rowCount, bairros.idWidth, bairros.count);
   assertRegionLength(sections.municipalityIds, header.rowCount * header.municipalityIdWidth, 'municipality ids');
   const municipalityRecordWidth = 3 + dictionaries.municipio.idWidth + dictionaries.uf.idWidth;
   assertRegionLength(
@@ -878,6 +881,7 @@ function validateLayout(data: DataView, header: BinaryHeader, dictionaries: Bina
   if (firstPrefix !== 0 || lastPrefix !== header.rowCount) {
     throw new DneBinaryDatabaseFormatError('Binary CEP prefix directory has invalid boundaries');
   }
+  return bairroRuns;
 }
 
 function validateSparseLayout(

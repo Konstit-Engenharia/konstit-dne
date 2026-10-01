@@ -118,7 +118,7 @@ bunx @konstit/dne build --force --db ./dne.db --source /dados/eDNE_Basico.zip
 
 A atualização substitui o esquema dentro de uma única transação e só confirma a nova base depois de validar a carga. Se a fonte for remota, a CLI também compara a versão do esquema com os validadores disponíveis; uma base antiga deixa de ser considerada atual mesmo quando a fonte não mudou.
 
-O formato binário tem versão `1` e não é retrocompatível com o layout anterior. Arquivos binários gerados com o layout anterior precisam ser regenerados. O leitor SQLite lança `DneDatabaseSchemaError` quando a base não possui a view ou os campos normalizados esperados; consulte [Erros da API](api.md#erros).
+O formato binário tem versão `2` e usa sequências comprimidas para os índices de bairro. Arquivos binários da versão `1` precisam ser regenerados. O leitor SQLite lança `DneDatabaseSchemaError` quando a base não possui a view ou os campos normalizados esperados; consulte [Erros da API](api.md#erros).
 
 ## Drizzle ORM
 

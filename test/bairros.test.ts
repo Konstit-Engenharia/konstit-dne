@@ -154,7 +154,7 @@ describe('normalized neighborhoods', () => {
     }
   });
 
-  test('uses three-byte dense neighborhood indexes without confusing them with name IDs', async () => {
+  test('uses three-byte neighborhood indexes in compressed runs without confusing them with name IDs', async () => {
     const { source, sqlite, binary } = fixture('wide');
     fetchDatabase(sqlite, source);
     const db = new Database(sqlite);

@@ -1,10 +1,10 @@
 # DNE binary database format
 
-This document specifies version 1 of the `@konstit/dne` binary database format. It is intended for authors of readers in languages other than TypeScript.
+This document specifies version 2 of the `@konstit/dne` binary database format. It is intended for authors of readers in languages other than TypeScript. Version 2 readers do not accept version 1 files.
 
 The format is immutable and optimized for memory-mapped, read-only CEP lookup. It stores rows in CEP order, splits each CEP into a prefix directory and a packed suffix, interns strings in per-column dictionaries, and stores nullable low-density columns with bitmaps and rank indexes.
 
-Version 1 files do not contain a checksum. Readers that accept files from untrusted sources must validate every offset, length, count, and identifier before dereferencing it.
+Version 2 files do not contain a checksum. Readers that accept files from untrusted sources must validate every offset, length, count, and identifier before dereferencing it.
 
 ## Conventions
 
@@ -30,6 +30,9 @@ The following symbols are used in size formulas:
 | `F` | Number of neighborhood CEP intervals |
 | `L` | Number of non-null district or village fallback names |
 | `Wb` | Width of an internal neighborhood index, `width(B)` |
+| `R` | Number of consecutive runs of equal neighborhood indexes, `1..N` |
+| `q` | Number of low bits in the Elias–Fano run starts |
+| `Z` | Number of zero bits in the Elias–Fano high vector, `ceil(N / 2^q)` |
 | `Wo` | Width of an original neighborhood identifier |
 | `Wl` | Width of an original locality identifier |
 | `Rb` | Neighborhood record width, `Wo + Wl + W(bairro) + W(bairroAbreviado) + W(uf)` |
@@ -79,7 +82,7 @@ A file consists of a fixed 256-byte header followed by 27 sections in a fixed or
 
 Every section begins at an offset divisible by 8. Zero-filled padding may appear between sections and after the final section. Writers must zero reserved bytes and padding. Readers should ignore their contents.
 
-The file size, all section offsets, and all section lengths are stored as `u32`, so a version 1 file cannot exceed `4294967295` bytes.
+The file size, all section offsets, and all section lengths are stored as `u32`, so a version 2 file cannot exceed `4294967295` bytes.
 
 ## Header
 
@@ -88,7 +91,7 @@ The header occupies bytes `0` through `255`.
 | Offset | Size | Type | Field | Required value or meaning |
 | ---: | ---: | --- | --- | --- |
 | 0 | 8 | bytes | Magic | `44 4e 45 42 49 4e 00 00`, or `DNEBIN\0\0` |
-| 8 | 2 | `u16` | Version | `1` |
+| 8 | 2 | `u16` | Version | `2` |
 | 10 | 2 | `u16` | Header size | `256` |
 | 12 | 4 | `u32` | Row count | `N`, must be greater than zero |
 | 16 | 4 | `u32` | File size | Exact file length, including final padding |
@@ -122,7 +125,7 @@ The entries have the following fixed order. The byte range column identifies the
 | 4 | 64-71 | `complementoBitmap` | `ceil(N / 8)` |
 | 5 | 72-79 | `complementoRanks` | `(ceil(N / 256) + 1) * 4` |
 | 6 | 80-87 | `complementoIds` | `C * W(complemento)` |
-| 7 | 88-95 | `bairroIds` | `N * Wb` |
+| 7 | 88-95 | `bairroIds` | `8 + ceil(R * q / 8) + ceil((Z + R) / 8) + 4 * ceil(Z / 8) + R * Wb` |
 | 8 | 96-103 | `municipalityIds` | `N * Wm` |
 | 9 | 104-111 | `nomeBitmap` | `ceil(N / 8)` |
 | 10 | 112-119 | `nomeRanks` | `(ceil(N / 256) + 1) * 4` |
@@ -258,9 +261,34 @@ Suffixes inside each prefix range are sorted, so a binary search is sufficient.
 
 ## Packed integer columns
 
-The `logradouroIds`, `bairroIds`, and `municipalityIds` sections are dense arrays. Entry `i` starts at `section_offset + i * width` and is decoded as `uint(width)`.
+The `logradouroIds` and `municipalityIds` sections are dense arrays. Entry `i` starts at `section_offset + i * width` and is decoded as `uint(width)`.
 
-`logradouroIds` uses its dictionary ID width. `bairroIds` uses `Wb = width(B)` and references the neighborhood registry, not the string dictionary. Both may be zero for null. `municipalityIds` uses `Wm`; its IDs must be in the inclusive range `1` through `M`.
+`logradouroIds` uses its dictionary ID width and may be zero for null. `municipalityIds` uses `Wm`; its IDs must be in the inclusive range `1` through `M`.
+
+## Neighborhood run index
+
+`bairroIds` stores one internal neighborhood index per maximal run of equal indexes in CEP row order. The start of each run is stored with Elias–Fano coding. The run indexes use `Wb = width(B)` and reference the neighborhood registry, not the string dictionary. Zero means no neighborhood.
+
+The section begins with an eight-byte header:
+
+| Offset | Size | Type | Meaning |
+| ---: | ---: | --- | --- |
+| 0 | 4 | `u32` | Number of runs, `R` |
+| 4 | 1 | `u8` | Low-bit width, `q` |
+| 5 | 1 | `u8` | Zero-sample shift, always `3` |
+| 6 | 1 | `u8` | Neighborhood-index width, `Wb` |
+| 7 | 1 | `u8` | Reserved, zero |
+
+The header is followed, without padding, by four arrays:
+
+1. `R` low parts of `q` bits each, packed least-significant bit first into `ceil(R * q / 8)` bytes.
+2. A high bitvector of `Z + R` bits in `ceil((Z + R) / 8)` bytes. For run `i` beginning at row `s_i`, bit `floor(s_i / 2^q) + i` is set. All other bits are zero.
+3. `ceil(Z / 8)` little-endian `u32` samples. Sample `j` is the bit position of zero number `8*j` in the high bitvector, with zero numbers and bit positions both starting at zero.
+4. `R` neighborhood indexes, each encoded as `uint(Wb)`.
+
+The writer selects `q = floor(log2(N / R))`. To find the index for row `r`, set `h = floor(r / 2^q)`, then use `select0(h)` to find zero number `h` in the high bitvector. The number of runs with high part at most `h` is `end = select0(h) - h`; the first run in bucket `h` is `begin = 0` when `h = 0`, otherwise `begin = select0(h - 1) - (h - 1)`. Find the last low part at most `r mod 2^q` in `[begin, end)`, or use run `begin - 1` if there is none. Its stored neighborhood index is the value for row `r`. The sampled zero positions bound the scan needed for each `select0`.
+
+Readers must verify exactly `R` one bits and `Z` zero bits, valid samples, a first run at row zero, strictly increasing starts below `N`, indexes in `0..B`, and different indexes in adjacent runs.
 
 ## Neighborhood registry and intervals
 
@@ -448,7 +476,7 @@ complemento = read_sparse_value(
     row,
 )
 
-bairro_index = bairroIds[row]
+bairro_index = read_neighborhood_run_index(row)
 if bairro_index != 0:
     bairro = bairroDictionary[bairros[bairro_index - 1].nome_id]
 else:
@@ -507,7 +535,7 @@ A robust reader should perform these checks before or during lookup:
 13. Every municipality ID is between 1 and `M`; required municipality-name and state-code IDs are nonzero and in range.
 14. Metadata is valid UTF-8 JSON whose top-level value is an object.
 15. Neighborhood original identifiers are positive and strictly increasing; every locality identifier is positive and all dictionary references are valid.
-16. Neighborhood indexes are in `0..B`; fallback names occur only with index zero and locality type `D` or `P`.
+16. The neighborhood run index has valid boundaries, samples, and indexes in `0..B`; fallback names occur only with index zero and locality type `D` or `P`.
 17. Range offsets start at zero, are monotonic, and end at `F`; each interval has `0 <= initial <= final <= 99999999`, and intervals per neighborhood are strictly ordered by `(initial, final)`.
 18. Each locality byte has a situation in `0..3`, a type index in `0..2`, and zero reserved bits.
 

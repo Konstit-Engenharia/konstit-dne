@@ -155,7 +155,7 @@ describe('binary database', () => {
     const original = new Uint8Array(await Bun.file(binaryPath).arrayBuffer());
 
     const oldVersion = original.slice();
-    new DataView(oldVersion.buffer).setUint16(8, 2, true);
+    new DataView(oldVersion.buffer).setUint16(8, 1, true);
     const oldPath = join(workDir, 'old-version.bin');
     await Bun.write(oldPath, oldVersion);
     expect(() => new DneBinaryDatabaseReader(oldPath)).toThrow('build --force');

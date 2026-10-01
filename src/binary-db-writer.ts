@@ -34,6 +34,7 @@ import {
   type ByteWidth,
 } from './binary-db-format.ts';
 import { LOCALIDADE_TIPO_CODIGOS } from './schema.ts';
+import { encodeBairroRuns } from './bairro-runs.ts';
 import {
   SQLITE_BAIRRO_FAIXAS_TABLE_NAME,
   SQLITE_BAIRROS_TABLE_NAME,
@@ -257,7 +258,7 @@ export async function buildBinaryDatabase(
     const sections: Record<SectionName, Uint8Array> = {
       bairroDictionary: dictionaries.bairro.bytes,
       bairroAbreviadoDictionary: dictionaries.bairroAbreviado.bytes,
-      bairroIds,
+      bairroIds: encodeBairroRuns(bairroIds, rowCount, bairroIdWidth),
       bairros: createBairroSection(bairros, dictionaries),
       bairroFaixaOffsets: bairroRanges.offsets,
       bairroFaixas: bairroRanges.ranges,

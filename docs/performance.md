@@ -16,6 +16,8 @@ O leitor binário atingiu **3,11 milhões de consultas por segundo**, calculadas
 
 Medição realizada em **30/09/2026**, em um **Apple M4 com Bun 1.4.2**, usando [bench/binary-lookup.bench.ts](../bench/binary-lookup.bench.ts) e uma base com 1.611.629 CEPs. Cada rodada executou 50 mil consultas a CEPs existentes e 50 mil a CEPs ausentes, com duas rodadas de aquecimento e nove medições. Ambos os leitores encontraram os 50 mil CEPs esperados. Os tempos incluem somente as consultas após aquecimento, sem a abertura da base; os tamanhos estão em MB decimais.
 
+Estes resultados usam o formato binário v1. O índice de bairros da v2 altera o tamanho do arquivo e o tempo das consultas; a tabela acima permanece como referência histórica.
+
 ### Reproduzir a comparação
 
 Para comparar os leitores usando os mesmos CEPs, execute os comandos na raiz do repositório, com as dependências instaladas e as duas bases disponíveis:
