@@ -2,7 +2,7 @@
 
 Consulte CEPs do Brasil localmente em aplicações Bun, com uma base compacta incluída no pacote e dados do e-DNE dos Correios. As consultas funcionam offline, sem servidor. A CLI também permite criar e atualizar bases próprias em SQLite ou formato binário.
 
-**3,11 milhões de consultas por segundo** no [benchmark de leitura após aquecimento](https://github.com/Konstit-Engenharia/konstit-dne/blob/main/docs/performance.md), com uma base binária de **32,2 MB**.
+Consulte os [benchmarks de leitura e importação](https://github.com/Konstit-Engenharia/konstit-dne/blob/main/docs/performance.md) para os resultados medidos em cada formato.
 
 ## Requisitos
 
@@ -60,6 +60,8 @@ O leitor abre a base incluída no pacote, independentemente do diretório de tra
 | Executar SQL ou integrar ferramentas SQLite    | SQLite  | `build --db ./dne.db`           |
 
 Os dois leitores oferecem consultas por CEP, bairro e faixas de CEP. Para abrir arquivos próprios na API, use `new DneBinaryDatabaseReader('/dados/dne.bin')` ou `new DneDatabaseReader('/dados/dne.db')`, importados de `@konstit/dne`.
+
+O formato binário atual é a versão 4. Ele mantém a API do leitor e pode usar FSST para compactar os sufixos do dicionário de logradouros; os demais dicionários continuam no formato simples. O encoder e o decoder FSST são escritos em TypeScript e executados pelo Bun. A especificação do layout está em [Formato binário](docs/binary-layout.md).
 
 ## CLI: criar e consultar sua própria base
 
@@ -119,7 +121,7 @@ No benchmark de **30/09/2026**, em um **Apple M4 com Bun 1.4.2**, o leitor biná
 
 A base continha 1.611.629 CEPs. Cada rodada consultou 50 mil CEPs existentes e 50 mil ausentes, com duas rodadas de aquecimento e nove medições. Os tempos excluem a abertura da base; os tamanhos estão em MB decimais.
 
-Esta medição usou o formato binário v1. A v3 comprime bairros, municípios e IDs de logradouro; consulte a investigação de compressão em [desempenho](docs/performance.md#compressão-do-binário-v3).
+Esta medição histórica usou o formato binário v1 e não representa o formato v4 atual. A investigação e os resultados disponíveis estão em [desempenho](docs/performance.md).
 
 Veja a [metodologia, os comandos de reprodução e os resultados de importação](https://github.com/Konstit-Engenharia/konstit-dne/blob/main/docs/performance.md). O benchmark de importação usa outra base e está documentado separadamente.
 

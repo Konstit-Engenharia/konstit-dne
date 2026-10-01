@@ -5,15 +5,18 @@ Requires clang++ and downloads a pinned upstream MIT implementation into output.
 Only logradouroDictionary is replaced; experimental binaries use version 65535.
 """
 
+import io
 import json
 from pathlib import Path
 import shutil
 import struct
 import subprocess
 import sys
+import tarfile
 import urllib.request
 
 REVISION = "e638d4cf8c26129d73c242a4127b42b975de5b63"
+READER_REVISION = "e750743"
 ROOT = Path(__file__).resolve().parent.parent
 baseline = Path(sys.argv[1]).resolve()
 output = Path(sys.argv[2]).resolve()
@@ -66,7 +69,8 @@ for index in range(count):
     cursor += length - prefix
 assert cursor == payload + payload_size
 
-report = {"upstreamRevision": REVISION, "dictionaryStrings": count, "baselineBytes": len(binary),
+report = {"upstreamRevision": REVISION, "readerRevision": READER_REVISION,
+          "dictionaryStrings": count, "baselineBytes": len(binary),
           "baselineDictionaryBytes": dictionary_size, "rawStringBytes": sum(map(len, strings)), "variants": []}
 for mode, name, values in ((1, "full", strings), (2, "suffix", suffixes)):
     input_path, encoded_path = output / f"fsst-{name}.input", output / f"fsst-{name}.encoded"
@@ -111,7 +115,11 @@ for mode, name, values in ((1, "full", strings), (2, "suffix", suffixes)):
                                "maxCompressedLength": max(compressed_lengths)})
 
 snapshot = output / "fsst-source/src"
-shutil.copytree(ROOT / "src", snapshot, dirs_exist_ok=True)
+# Preserve the v3 experiment after production moves to a newer format.
+archive = subprocess.run(["git", "archive", READER_REVISION, "src"], cwd=ROOT,
+                         check=True, capture_output=True).stdout
+with tarfile.open(fileobj=io.BytesIO(archive)) as source:
+    source.extractall(snapshot.parent, filter="data")
 shutil.copyfile(ROOT / "bench/fsst-decoder.ts", snapshot / "fsst-decoder.ts")
 format_path = snapshot / "binary-db-format.ts"
 format_path.write_text(replace_once(format_path.read_text(), "BINARY_DATABASE_VERSION = 3", "BINARY_DATABASE_VERSION = 65535"))

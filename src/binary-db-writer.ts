@@ -20,7 +20,9 @@ import {
   createPopcountTable,
   DICTIONARY_BLOCK_SHIFT,
   DICTIONARY_BLOCK_SIZE,
+  DICTIONARY_CODEC_FSST,
   DICTIONARY_HEADER_SIZE,
+  FSST_SYMBOL_TABLE_SIZE,
   integerByteWidth,
   MAX_UINT32,
   packedBitLength,
@@ -34,6 +36,7 @@ import {
   type BinarySectionName as SectionName,
   type ByteWidth,
 } from './binary-db-format.ts';
+import { encodeFsstSuffixSource } from './fsst-encoder.ts';
 import { encodeLocalityRuns } from './locality-runs.ts';
 import {
   integerBitWidth,
@@ -134,6 +137,7 @@ export async function buildBinaryDatabase(
     const bairroIdWidth = integerByteWidth(bairros.length);
     const gathered = gatherValues(db, tableName, bairros);
     const dictionaries = buildDictionaries(gathered);
+    dictionaries.logradouro = maybeCompressLogradouro(dictionaries.logradouro);
     const municipalityEntries = [...gathered.municipalitiesByIbge.entries()]
       .sort(([left,], [right,]) => left - right);
     const municipalityCount = municipalityEntries.length;
@@ -431,6 +435,99 @@ function buildDictionary(uniqueValues: Set<string>): BuiltDictionary {
     ids,
     idWidth: integerByteWidth(count),
   };
+}
+
+function maybeCompressLogradouro(dictionary: BuiltDictionary): BuiltDictionary {
+  const plain = readPlainDictionary(dictionary);
+  if (!plain.count || plain.suffixDataLength <= FSST_SYMBOL_TABLE_SIZE) {
+    return dictionary;
+  }
+  const encoded = encodeFsstSuffixSource(plain.source);
+  const bytes = buildFsstDictionary(dictionary, plain, encoded.compressedLengths, encoded.lengthWidth, encoded.symbols, encoded.payload);
+  return bytes.byteLength < dictionary.bytes.byteLength ? { ...dictionary, bytes } : dictionary;
+}
+
+function readPlainDictionary(dictionary: BuiltDictionary) {
+  const data = new DataView(dictionary.bytes.buffer, dictionary.bytes.byteOffset, dictionary.bytes.byteLength);
+  const count = data.getUint32(0, true);
+  const blockCount = data.getUint32(4, true);
+  const blockOffsets = dictionary.bytes.subarray(data.getUint32(8, true), data.getUint32(12, true));
+  const blockData = new DataView(blockOffsets.buffer, blockOffsets.byteOffset, blockOffsets.byteLength);
+  const lengths = dictionary.bytes.subarray(data.getUint32(12, true), data.getUint32(16, true));
+  const prefixes = dictionary.bytes.subarray(data.getUint32(16, true), data.getUint32(20, true));
+  const suffixDataOffset = data.getUint32(20, true);
+  const suffixDataLength = data.getUint32(24, true);
+  const source = {
+    count,
+    totalBytes: suffixDataLength,
+    get(index: number) {
+      const block = index >>> DICTIONARY_BLOCK_SHIFT;
+      let cursor = suffixDataOffset + blockData.getUint32(block * 4, true);
+      const blockStart = block * DICTIONARY_BLOCK_SIZE;
+      for (let current = blockStart; current < index; current++) {
+        cursor += (lengths[current] ?? 0) - (prefixes[current] ?? 0);
+      }
+      const length = (lengths[index] ?? 0) - (prefixes[index] ?? 0);
+      return dictionary.bytes.subarray(cursor, cursor + length);
+    },
+  };
+  return { blockCount, blockOffsets, count, lengths, prefixes, source, suffixDataLength };
+}
+
+function buildFsstDictionary(
+  dictionary: BuiltDictionary,
+  plain: ReturnType<typeof readPlainDictionary>,
+  compressedLengths: Uint8Array,
+  lengthWidth: 1 | 2,
+  symbols: Uint8Array,
+  payload: Uint8Array,
+) {
+  const blockCount = plain.blockCount;
+  const blockOffsets = new Uint32Array(blockCount);
+  let payloadOffset = 0;
+  for (let index = 0; index < plain.count; index++) {
+    if (index % DICTIONARY_BLOCK_SIZE === 0) {
+      blockOffsets[index >>> DICTIONARY_BLOCK_SHIFT] = payloadOffset;
+    }
+    payloadOffset += compressedLengthAt(compressedLengths, lengthWidth, index);
+    assertUint32(payloadOffset, 'FSST dictionary suffix data length');
+  }
+  if (payloadOffset !== payload.byteLength || symbols.byteLength !== FSST_SYMBOL_TABLE_SIZE) {
+    throw new Error('Invalid FSST encoder result');
+  }
+
+  const blockOffsetsOffset = DICTIONARY_HEADER_SIZE;
+  const lengthsOffset = blockOffsetsOffset + blockOffsets.byteLength;
+  const prefixesOffset = lengthsOffset + compressedLengths.byteLength;
+  const symbolsOffset = prefixesOffset + plain.count;
+  const suffixDataOffset = symbolsOffset + symbols.byteLength;
+  const bytes = new Uint8Array(suffixDataOffset + payload.byteLength);
+  const data = new DataView(bytes.buffer);
+  data.setUint32(0, plain.count, true);
+  data.setUint32(4, blockCount, true);
+  data.setUint32(8, blockOffsetsOffset, true);
+  data.setUint32(12, lengthsOffset, true);
+  data.setUint32(16, prefixesOffset, true);
+  data.setUint32(20, suffixDataOffset, true);
+  data.setUint32(24, payload.byteLength, true);
+  data.setUint8(28, dictionary.idWidth);
+  data.setUint8(29, DICTIONARY_BLOCK_SHIFT);
+  data.setUint8(30, DICTIONARY_CODEC_FSST);
+  data.setUint8(31, lengthWidth);
+  bytes.set(asBytes(blockOffsets), blockOffsetsOffset);
+  bytes.set(compressedLengths, lengthsOffset);
+  bytes.set(plain.prefixes, prefixesOffset);
+  bytes.set(symbols, symbolsOffset);
+  bytes.set(payload, suffixDataOffset);
+  return bytes;
+}
+
+function compressedLengthAt(lengths: Uint8Array, width: 1 | 2, index: number) {
+  if (width === 1) {
+    return lengths[index] ?? 0;
+  }
+  const offset = index * 2;
+  return (lengths[offset] ?? 0) | ((lengths[offset + 1] ?? 0) << 8);
 }
 
 function createMunicipalitySection(

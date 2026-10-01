@@ -14,6 +14,10 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import {
+  BINARY_SECTION_NAMES,
+  SECTION_TABLE_OFFSET,
+} from '../src/binary-db-format.ts';
 import { DneBinaryDatabaseReader } from '../src/binary-db-reader.ts';
 import { buildBinaryDatabase } from '../src/binary-db-writer.ts';
 import { captureRejection } from './assertions.ts';
@@ -65,6 +69,35 @@ test('exports a database without optional metadata', async () => {
   try {
     expect(reader.metadata()).toEqual({});
     expect(reader.queryCep('01001000')).toMatchObject({ cep: '01001000', bairro: 'Centro', municipio: 'São Paulo' });
+  } finally {
+    reader.close();
+  }
+});
+
+test('keeps front coding when an FSST table would make a dictionary larger', async () => {
+  let random = 0x1234_abcd;
+  const rows = Array.from({ length: 64 }, (_, index) => {
+    let logradouro = '';
+    for (let byte = 0; byte < 255; byte++) {
+      random ^= random << 13;
+      random ^= random >>> 17;
+      random ^= random << 5;
+      logradouro += String.fromCharCode(33 + ((random >>> 0) % 94));
+    }
+    return { ...validRow, cep: String(1001000 + index).padStart(8, '0'), logradouro };
+  });
+  const path = createDatabase(rows);
+  await buildBinaryDatabase(path, `${path}.bin`);
+  const bytes = new Uint8Array(await Bun.file(`${path}.bin`).arrayBuffer());
+  const view = new DataView(bytes.buffer);
+  const dictionary = view.getUint32(SECTION_TABLE_OFFSET + BINARY_SECTION_NAMES.indexOf('logradouroDictionary') * 8, true);
+  expect(view.getUint32(dictionary + 24, true)).toBeGreaterThan(2295);
+  expect(bytes[dictionary + 30]).toBe(0);
+  const reader = new DneBinaryDatabaseReader(`${path}.bin`);
+  try {
+    for (const row of rows) {
+      expect(reader.queryCep(row.cep)?.logradouro).toBe(row.logradouro);
+    }
   } finally {
     reader.close();
   }

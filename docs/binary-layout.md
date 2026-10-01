@@ -1,10 +1,10 @@
 # DNE binary database format
 
-This document specifies version 3 of the `@konstit/dne` binary database format. It is intended for authors of readers in languages other than TypeScript. Version 3 readers do not accept version 1 or version 2 files.
+This document specifies version 4 of the `@konstit/dne` binary database format. It is intended for authors of readers in languages other than TypeScript. Version 4 readers do not accept version 1, version 2, or version 3 files.
 
 The format is immutable and optimized for memory-mapped, read-only CEP lookup. It stores rows in CEP order, splits each CEP into a prefix directory and a packed suffix, interns strings in per-column dictionaries, and stores nullable low-density columns with bitmaps and rank indexes.
 
-Version 3 files do not contain a checksum. Readers that accept files from untrusted sources must validate every offset, length, count, and identifier before dereferencing it.
+Version 4 files do not contain a checksum. Readers that accept files from untrusted sources must validate every offset, length, count, and identifier before dereferencing it.
 
 ## Conventions
 
@@ -84,7 +84,7 @@ A file consists of a fixed 256-byte header followed by 27 sections in a fixed or
 
 Every section begins at an offset divisible by 8. Zero-filled padding may appear between sections and after the final section. Writers must zero reserved bytes and padding. Readers should ignore their contents.
 
-The file size, all section offsets, and all section lengths are stored as `u32`, so a version 3 file cannot exceed `4294967295` bytes.
+The file size, all section offsets, and all section lengths are stored as `u32`, so a version 4 file cannot exceed `4294967295` bytes.
 
 ## Header
 
@@ -93,7 +93,7 @@ The header occupies bytes `0` through `255`.
 | Offset | Size | Type | Field | Required value or meaning |
 | ---: | ---: | --- | --- | --- |
 | 0 | 8 | bytes | Magic | `44 4e 45 42 49 4e 00 00`, or `DNEBIN\0\0` |
-| 8 | 2 | `u16` | Version | `3` |
+| 8 | 2 | `u16` | Version | `4` |
 | 10 | 2 | `u16` | Header size | `256` |
 | 12 | 4 | `u32` | Row count | `N`, must be greater than zero |
 | 16 | 4 | `u32` | File size | Exact file length, including final padding |
@@ -400,11 +400,13 @@ The municipality-name and state-code dictionary IDs are required and must not be
 
 ## String dictionaries
 
-There are six independent dictionaries: `logradouro`, `complemento`, `bairro`, `municipio`, `uf`, and `nome`. Strings are UTF-8 encoded and front-coded in blocks of eight.
+There are seven independent dictionaries: `logradouro`, `complemento`, `bairro`, `bairroAbreviado`, `municipio`, `uf`, and `nome`. Strings are UTF-8 encoded and front-coded in blocks of eight.
 
 The official writer deduplicates and lexicographically sorts each set of strings before assigning IDs. Dictionary order is not needed for lookup correctness; readers use the stored IDs and block metadata.
 
-Each individual encoded string is limited to 255 bytes because its total byte length is stored as `u8`.
+Plain dictionaries store each decoded UTF-8 string in at most 255 bytes. The `logradouro` dictionary may use the FSST codec for the bytes after its front-coded prefix. FSST entries are also limited to 255 decoded bytes; one entry's encoded code payload is limited to 510 bytes.
+
+The writer chooses the plain representation when the complete FSST dictionary section is not smaller. Other dictionaries always use the plain representation.
 
 ### Dictionary header
 
@@ -416,14 +418,17 @@ Every dictionary starts with a 32-byte header. Dictionary-relative offsets are m
 | 4 | 4 | `u32` | Block count | `ceil(entry_count / 8)` |
 | 8 | 4 | `u32` | Block-offset array offset | `32` |
 | 12 | 4 | `u32` | Length array offset | `32 + block_count * 4` |
-| 16 | 4 | `u32` | Prefix-length array offset | `lengths_offset + entry_count` |
-| 20 | 4 | `u32` | Suffix-data offset | `prefixes_offset + entry_count` |
+| 16 | 4 | `u32` | Prefix-length array offset | `lengths_offset + entry_count * length_width` |
+| 20 | 4 | `u32` | Suffix-data offset | `prefixes_offset + entry_count + symbol_table_size` |
 | 24 | 4 | `u32` | Suffix-data length | Dictionary section length minus suffix-data offset |
 | 28 | 1 | `u8` | Dictionary ID width | One of `1`, `2`, `3`, or `4` |
 | 29 | 1 | `u8` | Block shift | `3` |
-| 30 | 2 | bytes | Reserved | Written as zero |
+| 30 | 1 | `u8` | Codec | `0` = plain; `2` = FSST, only for `logradouro` |
+| 31 | 1 | `u8` | Encoded-length width | `0` for plain; `1` or `2` for FSST |
 
-The arrays immediately follow the header:
+For a plain dictionary, `length_width = 1` and `symbol_table_size = 0`, but the length array contains one `u8` per entry and byte 31 must be zero. For an FSST `logradouro` dictionary, `length_width` is the value in byte 31 and `symbol_table_size` is `255 * 9 = 2295` bytes. Any other codec or length-width combination is invalid.
+
+The arrays immediately follow the header. In the plain representation:
 
 ```text
 +------------------------------+ dictionary offset 0
@@ -439,15 +444,35 @@ The arrays immediately follow the header:
 +------------------------------+
 ```
 
-`blockOffsets` is an array of little-endian `u32` values. Each value is relative to the start of the suffix-data area and points to the first suffix in that block. The first block offset is zero.
+In the FSST representation, the arrays after the block offsets are laid out as follows:
 
-`lengths[i]` is the complete UTF-8 byte length of entry `i`. `prefixes[i]` is the number of leading bytes shared with entry `i - 1`. At the start of every eight-entry block, `prefixes[i]` must be zero. A non-initial prefix length must not exceed either the previous entry length or the current entry length.
+```text
++------------------------------+
+| Compressed suffix lengths   | entry_count * length_width bytes
++------------------------------+
+| Shared decoded-prefix lengths| entry_count bytes
++------------------------------+
+| FSST symbol lengths          | 255 bytes
++------------------------------+
+| FSST symbol slots            | 255 * 8 bytes, little-endian
++------------------------------+
+| FSST code payload            | suffix_data_length bytes
++------------------------------+
+```
 
-The suffix-data area concatenates `encoded_string[prefix_length:]` for every dictionary entry in ID order.
+`blockOffsets` is an array of little-endian `u32` values. Each value is relative to the start of the suffix-data area and points to the first suffix or code payload in that block. The first block offset is zero; subsequent offsets and the final suffix-data length bound each block.
+
+For a plain dictionary, `lengths[i]` is the complete UTF-8 byte length of entry `i`. For FSST, it is the compressed code-payload length of the decoded suffix for entry `i`, using the one- or two-byte little-endian width selected in byte 31. In both representations, `prefixes[i]` is the number of leading decoded UTF-8 bytes shared with entry `i - 1`. At the start of every eight-entry block, `prefixes[i]` must be zero. A non-initial prefix length must not exceed the previous decoded entry length or the current decoded entry length.
+
+The plain suffix-data area concatenates `encoded_string[prefix_length:]` for every dictionary entry in ID order. The FSST code-payload area concatenates the encoded form of the same decoded suffixes. Its codes are bytes `0..254` for symbols and `255` for an escape followed by one literal byte.
+
+The FSST symbol table contains 255 one-byte lengths followed by 255 fixed eight-byte slots. A length of zero marks an unused symbol; a used symbol length must be `1..8`. Each slot is a little-endian eight-byte value, and only the first `length` bytes are copied to the decoded output. The decoder validates all 255 symbol lengths when opening the file, without scanning the code payload.
 
 ### Dictionary decoding
 
-To decode a nonzero dictionary ID:
+ID zero is decoded as null only for fields that permit null. Readers should reject IDs greater than the dictionary entry count. Header fields and all internal array offsets must be validated when opening the file: the block count, block shift, ID width, codec and length-width combination, contiguous array offsets, and FSST symbol table must agree with the dictionary section length. Code payload bounds are checked on demand for the requested ID.
+
+To decode a nonzero plain dictionary ID:
 
 ```text
 index = id - 1
@@ -470,6 +495,8 @@ for current from block_start through index:
         fail
 
     suffix_length = length - prefix
+    if cursor + suffix_length > suffix_data_end:
+        fail
     decoded[prefix:length] = suffix_data[cursor:cursor + suffix_length]
     cursor += suffix_length
     previous_length = length
@@ -477,7 +504,50 @@ for current from block_start through index:
 return decode_utf8(decoded[0:previous_length])
 ```
 
-ID zero is decoded as null only for fields that permit null. Readers should reject IDs greater than the dictionary entry count and any suffix read outside the dictionary section.
+To decode an FSST `logradouro` ID, use the same front-coding traversal, but use the compressed length and block boundary:
+
+```text
+index = id - 1
+block = index >> 3
+block_start = block << 3
+relative = block_offsets[block]
+next_relative = block_offsets[block + 1] if block + 1 < block_count else suffix_data_length
+if relative > next_relative or next_relative > suffix_data_length:
+    fail
+
+cursor = suffix_data_offset + relative
+block_end = suffix_data_offset + next_relative
+previous_length = 0
+
+for current from block_start through index:
+    encoded_length = read_uint(lengths, current, length_width)
+    if encoded_length > 510 or cursor + encoded_length > block_end:
+        fail
+    prefix = prefixes[current]
+    if prefix > previous_length:
+        fail
+    end = cursor + encoded_length
+    offset = prefix
+    while cursor < end:
+        code = code_payload[cursor++]
+        if code == 255:
+            if cursor == end or offset == 255:
+                fail
+            decoded[offset++] = code_payload[cursor++]
+        else:
+            symbol_length = symbol_lengths[code]
+            if symbol_length == 0 or symbol_length > 8 or offset + symbol_length > 255:
+                fail
+            copy symbol_slots[code][0:symbol_length] to decoded[offset:]
+            offset += symbol_length
+    previous_length = offset
+
+if current is the final entry of its block and cursor != block_end:
+    fail
+return decode_utf8(decoded[0:previous_length])
+```
+
+The final-entry check applies to every block, including the final partial block. It ensures that a valid lookup consumes exactly the selected block's payload; the `next_relative` boundary prevents a lookup from reading the next block. Symbol, escape, prefix, decoded-length, encoded-length, and payload-end errors must be reported as format errors.
 
 ## Reconstructing a row
 
@@ -549,21 +619,22 @@ A robust reader should perform these checks before or during lookup:
 7. Every fixed-size section matches the formulas in the section-directory table.
 8. The CEP prefix directory begins with zero, ends with `N`, is monotonic, and contains no value greater than `N`.
 9. Every decoded CEP suffix is at most 999 and suffixes are strictly increasing within each prefix range.
-10. Each dictionary has a valid 32-byte header, contiguous internal arrays, valid block offsets, and an ID width capable of representing its entry count.
-11. Every dense or sparse dictionary ID is zero where permitted or is no greater than its dictionary entry count.
-12. The final sparse rank equals the number of sparse IDs, rank values are monotonic, and unused bitmap bits are ignored or verified as zero.
-13. Every municipality ID is between 1 and `M`; required municipality-name and state-code IDs are nonzero and in range.
-14. Metadata is valid UTF-8 JSON whose top-level value is an object.
-15. Neighborhood original identifiers are positive and strictly increasing; every locality identifier is positive and all dictionary references are valid.
-16. The neighborhood run index has valid boundaries, samples, and indexes in `0..B`; fallback names occur only with index zero and locality type `D` or `P`.
-17. Range offsets start at zero, are monotonic, and end at `F`; each interval has `0 <= initial <= final <= 99999999`, and intervals per neighborhood are strictly ordered by `(initial, final)`.
-18. Municipality/locality runs have strictly increasing starts beginning at zero, exact directory entries and sentinel, and the same number of IDs and flags.
-19. Each locality byte has a situation in `0..3`, a type index in `0..2`, and zero reserved bits.
+10. Each dictionary has a valid 32-byte header, contiguous internal arrays, valid block offsets, and an ID width capable of representing its entry count. Plain dictionaries use codec `0` and header byte 31 equal to `0`; only `logradouro` may use codec `2` with header byte 31 equal to `1` or `2`.
+11. An FSST symbol table has exactly 255 lengths in `0..8`, 255 eight-byte little-endian slots, and a code payload after the table. On demand, every selected block has valid next-block bounds, every compressed length is at most `510`, every symbol and escape is valid, decoded output is at most `255` bytes, and a requested final block entry consumes the block exactly.
+12. Every dense or sparse dictionary ID is zero where permitted or is no greater than its dictionary entry count.
+13. The final sparse rank equals the number of sparse IDs, rank values are monotonic, and unused bitmap bits are ignored or verified as zero.
+14. Every municipality ID is between 1 and `M`; required municipality-name and state-code IDs are nonzero and in range.
+15. Metadata is valid UTF-8 JSON whose top-level value is an object.
+16. Neighborhood original identifiers are positive and strictly increasing; every locality identifier is positive and all dictionary references are valid.
+17. The neighborhood run index has valid boundaries, samples, and indexes in `0..B`; fallback names occur only with index zero and locality type `D` or `P`.
+18. Range offsets start at zero, are monotonic, and end at `F`; each interval has `0 <= initial <= final <= 99999999`, and intervals per neighborhood are strictly ordered by `(initial, final)`.
+19. Municipality/locality runs have strictly increasing starts beginning at zero, exact directory entries and sentinel, and the same number of IDs and flags.
+20. Each locality byte has a situation in `0..3`, a type index in `0..2`, and zero reserved bits.
 
 Bounds checks are still required at point of use, even after initial validation. A memory-mapped file must not be truncated or replaced in place while readers are using that mapping.
 
 ## Compatibility
 
-Readers implementing this document must require version `3` and the 27-section layout above. Earlier binaries are unsupported and must be regenerated from the DNE source. The public `DneBinaryDatabaseReader` API is unchanged. A reader must reject mismatched versions, header sizes, section counts, sparse rank shifts, and dictionary block shifts rather than guessing their meaning.
+Readers implementing this document must require version `4` and the 27-section layout above. Earlier binaries, including versions `1`, `2`, and `3`, are unsupported and must be regenerated from the DNE source. The public `DneBinaryDatabaseReader` API is unchanged. A reader must reject mismatched versions, header sizes, section counts, sparse rank shifts, dictionary block shifts, and dictionary codec fields rather than guessing their meaning.
 
 There is no platform-endianness marker. The on-disk representation is always little-endian, independent of the reader's host architecture.

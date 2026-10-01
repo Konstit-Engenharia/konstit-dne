@@ -2,7 +2,7 @@
 
 [Voltar ao README](../README.md)
 
-Os resultados abaixo registram duas medições distintas: consultas em 30/09/2026 e importação em 30/08/2026. Cada medição usa sua própria base e condições; os tamanhos não representam o mesmo conjunto de dados.
+Os resultados registram a evolução dos formatos binários e medições de importação. Cada seção identifica a base, a versão e as condições usadas; os resultados históricos não descrevem automaticamente o formato atual.
 
 ## Consultas por CEP
 
@@ -16,7 +16,7 @@ O leitor binário atingiu **3,11 milhões de consultas por segundo**, calculadas
 
 Medição realizada em **30/09/2026**, em um **Apple M4 com Bun 1.4.2**, usando [bench/binary-lookup.bench.ts](../bench/binary-lookup.bench.ts) e uma base com 1.611.629 CEPs. Cada rodada executou 50 mil consultas a CEPs existentes e 50 mil a CEPs ausentes, com duas rodadas de aquecimento e nove medições. Ambos os leitores encontraram os 50 mil CEPs esperados. Os tempos incluem somente as consultas após aquecimento, sem a abertura da base; os tamanhos estão em MB decimais.
 
-Estes resultados usam o formato binário v1. A compressão das versões v2 e v3 altera o tamanho do arquivo e o tempo das consultas; a tabela acima permanece como referência histórica.
+Estes resultados usam o formato binário v1. A compressão das versões v2, v3 e v4 altera o tamanho do arquivo e o tempo das consultas; a tabela acima permanece como referência histórica.
 
 ### Reproduzir a comparação
 
@@ -34,6 +34,56 @@ A base SQLite deve representar a mesma fonte usada para gerar o binário. O terc
 `memoryBytes` registra a memória antes de abrir a base, após abri-la, após o primeiro lote de consultas, após a coleta de lixo desse lote e ao final das medições, sempre antes de fechar o leitor. A coleta de lixo inicial e a do primeiro lote ficam fora das medições de tempo.
 
 Todos os valores de memória estão em bytes. `rss` é o consumo do processo reportado pelo Bun, incluindo o runtime e a lista de consultas; não representa apenas o banco. `heapUsed`, `heapTotal`, `external` e `arrayBuffers` são os valores originais de `process.memoryUsage()`. Não os some: há sobreposição, e o Bun pode incluir buffers externos em `heapUsed`. `heapObjectBytes` separa os objetos do heap de strings e buffers alocados externamente, usando `heapSize - extraMemorySize` de `bun:jsc`. Esse contador reflete a última coleta de lixo; compare `beforeOpen` com `afterFirstBatchGc` para avaliar os objetos que continuam ocupando memória. [Detalhes das métricas do Bun](https://bun.com/reference/bun/jsc/heapStats).
+
+## Formato v4: FSST em TypeScript
+
+Integração medida em **30/09/2026**, no Apple M4 com Bun 1.4.2. O encoder e o decoder de produção são inteiramente TypeScript. A CLI gera a tabela de símbolos durante a exportação do SQLite; o pacote não adiciona dependências, compilador nativo ou WASM.
+
+O FSST comprime os sufixos do dicionário de logradouros, preservando os blocos de oito nomes e os IDs existentes. O writer mantém front coding simples quando a seção FSST completa não é menor. O formato agora tem versão **4**; arquivos v1–v3 devem ser regenerados. A API pública do leitor permanece igual.
+
+| Métrica | v3 | v4 TypeScript |
+| --- | ---: | ---: |
+| Arquivo completo | 22.493.680 bytes | **19.121.768 bytes** |
+| Dicionário de logradouros | 10.358.914 bytes | **6.987.008 bytes** |
+| Geração a partir do SQLite, mediana de três processos | 2,578 s | 2,957 s |
+
+A economia no arquivo completo é de **14,99%**. O tempo de geração aumentou aproximadamente **0,379 s (14,69%)** nesta base. Essa medição inclui a exportação e escrita do arquivo, com cache do sistema aquecido; exclui importação do módulo, cálculo do hash, download e normalização do e-DNE. Os três arquivos gerados por cada versão tiveram hashes idênticos. O protótipo com encoder oficial C++ gerou 18.674.624 bytes; o encoder TypeScript produz **447.144 bytes a mais** nesta base.
+
+### Consultas: comparação direta com a v3
+
+Três processos independentes compararam a v3 do commit `e750743` com o arquivo produzido pelo writer v4. Cada processo validou a igualdade dos **1.611.629 registros completos**, antes dos três aquecimentos e onze medições alternadas AB/BA por carga. Os conjuntos de 100 mil consultas são os mesmos do protocolo anterior, sem profiler e com os caches aquecidos.
+
+Medianas em milissegundos por 100 mil consultas:
+
+| Repetição | Existentes: v3 → v4 | Mista: v3 → v4 | Ausentes: v3 → v4 |
+| --- | ---: | ---: | ---: |
+| 1 | 75,44 → **67,29** | 44,21 → 43,65 | 5,84 → 5,87 |
+| 2 | 77,83 → **68,71** | 42,27 → 42,39 | 5,24 → 5,42 |
+| 3 | 75,47 → **68,84** | 41,16 → 40,64 | 5,24 → 5,25 |
+
+A mediana das reduções dentro de cada par foi **10,80% nos existentes** (8,79–11,72%). A carga mista ficou próxima do empate: **1,26% de redução na mediana**, com uma repetição 0,29% mais lenta e duas aproximadamente 1,26% mais rápidas. Ausentes tiveram mediana de 0,55% a mais de tempo; essas consultas não decodificam strings. As medições não avaliam cache frio, concorrência ou outros runtimes/hardwares. Os [dados completos](benchmarks/fsst-v4.json) preservam amostras, hashes dos arquivos/fontes, parâmetros de treinamento e tempos de abertura separados.
+
+### Treinamento e validação
+
+O [encoder TypeScript](../src/fsst-encoder.ts) usa um treinador próprio determinístico: amostra de até **64 KiB e 65.536 entradas**, contagem de sequências de dois a oito bytes e avaliação de diferentes divisões da tabela entre símbolos simples e compostos. Até quatro passes substituem símbolos compostos que não foram usados na codificação greedy da amostra; a menor codificação medida é preservada. O treinamento depende dos dados, sem uma tabela pré-treinada. O writer acessa os sufixos já armazenados no dicionário simples, sem reter uma lista de centenas de milhares de buffers.
+
+O [decoder](../src/fsst.ts) usa a tabela pequena e as duas escritas `u32` selecionadas no experimento anterior, com aproximadamente **2,5 KiB de buffers auxiliares por dicionário/leitor**. O layout aceita comprimentos comprimidos de um ou dois bytes, até 510 bytes, mantendo o limite de 255 bytes decodificados. Nesta base, o maior sufixo comprimido tem 59 bytes e todos os comprimentos usam um byte.
+
+Na abertura, são validados layout, codec, largura e tabela de símbolos. As consultas verificam os limites do bloco, prefixos, símbolos, escapes e tamanho decodificado; a última entrada deve consumir exatamente o bloco. Testes cobrem dados corrompidos, limites 255/510, Unicode, BOM, reconstrução de prefixos, treinamento determinístico e fallback quando FSST aumenta o arquivo. O teste do pacote instalado gera e consulta uma base FSST a partir de outro diretório. **347 testes passaram**, além de TypeScript, Biome, oxlint e build.
+
+### Reproduzir a v4
+
+Com a mesma base SQLite de esquema 4 em `./dne.db`, execute na raiz do repositório:
+
+```sh
+mkdir -p outputs/fsst-v4-baseline
+git archive e750743 src | tar -x -C outputs/fsst-v4-baseline
+bun bench/binary-build.bench.ts ./dne.db outputs/fsst-v4-baseline/src/binary-db-writer.ts outputs/v3.bin
+bun bench/binary-build.bench.ts ./dne.db src/binary-db-writer.ts outputs/v4.bin
+bun bench/compression.bench.ts ./dne.db outputs/fsst-v4-baseline/src/binary-db-reader.ts outputs/v3.bin src/binary-db-reader.ts outputs/v4.bin
+```
+
+A geração foi repetida em seis processos, na ordem v3/v4, v4/v3 e v3/v4. A comparação de consultas foi executada três vezes, sequencialmente, após a geração e os testes.
 
 ## Compressão do binário v3
 
@@ -71,26 +121,27 @@ O experimento usa o [compressor oficial FSST](https://github.com/cwida/fsst/tree
 - **Nomes completos:** elimina a reconstrução dos nomes anteriores do bloco, reduzindo o tempo de consulta em aproximadamente 8–11% nas cargas com resultados. Porém, aumenta o arquivo para **22.856.240 bytes**, 1,61% acima da v3. Não é a melhor opção para reduzir espaço nesta base.
 - **Sufixos do front coding:** preserva os blocos de oito nomes, mas comprime seus sufixos com FSST. O dicionário cai de 10.358.914 para **6.539.862 bytes** e o arquivo chega a **18,67 MB**, 33,41% abaixo da v2. Consultas existentes ficaram estáveis (-0,54%); a carga mista ficou 4,67% mais lenta. É a variante mais promissora para continuar a redução.
 
-O FSST permanece um protótipo em `bench/`, sem dependência nativa no pacote nem alteração nos dicionários da v3. Os binários experimentais usam a versão `65535` e só são aceitos pelo leitor experimental gerado. Para incorporá-lo ao produto ainda é preciso escolher a integração do encoder no processo de geração e completar a validação do formato para entradas corrompidas. O protótipo exige comprimentos comprimidos de até 255 bytes; o máximo observado foi 62 bytes nos nomes completos e 55 nos sufixos.
+Nesta etapa da investigação, o FSST era um protótipo em `bench/`, sem dependência nativa no pacote nem alteração nos dicionários da v3. A integração de produção na v4 está descrita acima. Os binários experimentais usam a versão `65535` e só são aceitos pelo leitor experimental gerado. A integração ainda precisava escolher o encoder de geração e completar a validação de entradas corrompidas. O protótipo exige comprimentos comprimidos de até 255 bytes; o máximo observado foi 62 bytes nos nomes completos e 55 nos sufixos.
 
 ### Reproduzir a investigação
 
 Os [resultados completos](benchmarks/compression-v3.json) incluem todas as amostras, tempos de abertura, tamanho e SHA-256 do SQLite de origem. Com uma base SQLite de esquema 4 em `./dne.db`, crie binários da v2 e v3:
 
 ```sh
-mkdir -p outputs/compression-followup/baseline
+mkdir -p outputs/compression-followup/baseline outputs/compression-followup/baseline-v3
 git archive 74d9cbe src | tar -x -C outputs/compression-followup/baseline
+git archive e750743 src | tar -x -C outputs/compression-followup/baseline-v3
 bun -e 'import { buildBinaryDatabase } from "./outputs/compression-followup/baseline/src/binary-db-writer.ts"; await buildBinaryDatabase("./dne.db", "outputs/compression-followup/baseline-v2.bin")'
-bun -e 'import { buildBinaryDatabase } from "./src/binary-db-writer.ts"; await buildBinaryDatabase("./dne.db", "outputs/compression-followup/columns-v3.bin")'
-bun bench/compression.bench.ts ./dne.db outputs/compression-followup/baseline/src/binary-db-reader.ts outputs/compression-followup/baseline-v2.bin src/binary-db-reader.ts outputs/compression-followup/columns-v3.bin
+bun -e 'import { buildBinaryDatabase } from "./outputs/compression-followup/baseline-v3/src/binary-db-writer.ts"; await buildBinaryDatabase("./dne.db", "outputs/compression-followup/columns-v3.bin")'
+bun bench/compression.bench.ts ./dne.db outputs/compression-followup/baseline/src/binary-db-reader.ts outputs/compression-followup/baseline-v2.bin outputs/compression-followup/baseline-v3/src/binary-db-reader.ts outputs/compression-followup/columns-v3.bin
 ```
 
 Para o experimento FSST, são necessários Python 3, `clang++` e acesso ao GitHub para baixar a revisão fixada do compressor MIT. O script mantém fontes, artefatos e um snapshot do leitor dentro de `outputs/`:
 
 ```sh
 python3 bench/fsst-experiment.py outputs/compression-followup/columns-v3.bin outputs/compression-followup
-bun bench/compression.bench.ts ./dne.db src/binary-db-reader.ts outputs/compression-followup/columns-v3.bin outputs/compression-followup/fsst-source/src/binary-db-reader.ts outputs/compression-followup/fsst-suffix.bin
-bun bench/compression.bench.ts ./dne.db src/binary-db-reader.ts outputs/compression-followup/columns-v3.bin outputs/compression-followup/fsst-source/src/binary-db-reader.ts outputs/compression-followup/fsst-full.bin
+bun bench/compression.bench.ts ./dne.db outputs/compression-followup/baseline-v3/src/binary-db-reader.ts outputs/compression-followup/columns-v3.bin outputs/compression-followup/fsst-source/src/binary-db-reader.ts outputs/compression-followup/fsst-suffix.bin
+bun bench/compression.bench.ts ./dne.db outputs/compression-followup/baseline-v3/src/binary-db-reader.ts outputs/compression-followup/columns-v3.bin outputs/compression-followup/fsst-source/src/binary-db-reader.ts outputs/compression-followup/fsst-full.bin
 ```
 
 ### Decoder C compilado pelo Bun e assembly NEON
@@ -166,7 +217,7 @@ bun bench/compression.bench.ts ./dne.db outputs/compression-followup/fsst-source
 bun bench/fsst-startup.bench.ts outputs/compression-followup/fsst-ts-source/src/binary-db-reader.ts outputs/compression-followup/fsst-suffix.bin 01001010
 ```
 
-As opções exploratórias são `DNE_FSST_COPY=bytes`, `DNE_FSST_TEXT=buffer` e `DNE_FSST_PAIRS=1`. Todas permanecem em `bench/`; o leitor de produção v3 continua sem FSST.
+As opções exploratórias são `DNE_FSST_COPY=bytes`, `DNE_FSST_TEXT=buffer` e `DNE_FSST_PAIRS=1`. As opções exploratórias permanecem em `bench/`. A v4 incorpora a variante TypeScript padrão, com validação adicional do formato.
 
 ### CPU profiling do decoder FSST
 

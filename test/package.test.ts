@@ -116,6 +116,43 @@ describe('published package', () => {
     expect(run('bun', [entrypoint, '--help'], otherCwd)).toContain('build');
   });
 
+  test('builds and reads FSST databases with the installed CLI from another directory', () => {
+    const source = join(workDir, 'fsst-source');
+    createLocalityFixture(source);
+    const streets = join(source, 'Delimitado', 'LOG_LOGRADOURO_SP.TXT');
+    const rows = Array.from(
+      { length: 2048 },
+      (_, index) =>
+        `${1000 + index}@SP@1@11@@Setor ${String(index).padStart(5, '0')} da Comunidade do Jardim das Flores@@${
+          String(1002000 + index).padStart(8, '0')
+        }@Rua@S`,
+    );
+    writeFileSync(streets, `${readFileSync(streets, 'latin1')}\n${rows.join('\n')}`, 'latin1');
+    const database = join(otherCwd, 'fsst.bin');
+    run('bun', [join(installed, 'dist/index.js'), 'build', '--format', 'binary', '--db', database, '--source', source], otherCwd);
+    const bytes = readFileSync(database);
+    const dictionaryOffset = bytes.readUInt32LE(32 + 13 * 8);
+    expect(bytes.readUInt16LE(8)).toBe(4);
+    expect(bytes[dictionaryOffset + 30]).toBe(2);
+    const output = run('bun', [
+      '--eval',
+      `
+      import { DneBinaryDatabaseReader } from '@konstit/dne';
+      import { strict as assert } from 'node:assert';
+      const reader = new DneBinaryDatabaseReader('./fsst.bin');
+      try {
+        assert.equal(reader.rowCount(), 2068);
+        assert.equal(reader.queryCep('01002000').logradouro, 'Rua Setor 00000 da Comunidade do Jardim das Flores');
+        assert.equal(reader.queryCep('01004047').logradouro, 'Rua Setor 02047 da Comunidade do Jardim das Flores');
+      } finally {
+        reader.close();
+      }
+      console.log('fsst-package-ok');
+    `,
+    ], otherCwd);
+    expect(output.trim()).toBe('fsst-package-ok');
+  });
+
   test.each(['NodeNext', 'Bundler'])('resolves public TypeScript declarations with %s', (resolution) => {
     writeFileSync(
       join(consumer, 'consumer.ts'),

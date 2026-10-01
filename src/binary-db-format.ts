@@ -1,7 +1,7 @@
 /**
  * Binary format revision accepted by the current reader and emitted by the writer.
  */
-export const BINARY_DATABASE_VERSION = 3;
+export const BINARY_DATABASE_VERSION = 4;
 /**
  * Fixed file-header size in bytes, including the section directory and reserved space.
  */
@@ -34,6 +34,12 @@ export const CEP_SUFFIX_BITS = 10;
  * Size in bytes of a front-coded string dictionary header.
  */
 export const DICTIONARY_HEADER_SIZE = 32;
+/** Dictionary codec identifiers stored at byte 30 of each dictionary header. */
+export const DICTIONARY_CODEC_PLAIN = 0;
+export const DICTIONARY_CODEC_FSST = 2;
+/** FSST uses 255 symbols of up to eight bytes; code 255 escapes one literal byte. */
+export const FSST_SYMBOL_COUNT = 255;
+export const FSST_SYMBOL_TABLE_SIZE = FSST_SYMBOL_COUNT * 9;
 /**
  * Base-two logarithm of the number of strings in one dictionary block.
  */

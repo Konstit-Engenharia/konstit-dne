@@ -29,7 +29,10 @@ import {
   createPopcountTable,
   DICTIONARY_BLOCK_SHIFT,
   DICTIONARY_BLOCK_SIZE,
+  DICTIONARY_CODEC_FSST,
+  DICTIONARY_CODEC_PLAIN,
   DICTIONARY_HEADER_SIZE,
+  FSST_SYMBOL_TABLE_SIZE,
   hasBinaryMagic as hasMagic,
   integerByteWidth,
   maxPackedInteger,
@@ -45,6 +48,10 @@ import {
   type ByteWidth,
 } from './binary-db-format.ts';
 import { cepToU32 } from './cep.ts';
+import {
+  readFsstString,
+  validateFsstSymbols,
+} from './fsst.ts';
 import {
   findLocalityRun,
   parseLocalityRuns,
@@ -83,12 +90,15 @@ type BinaryDictionary = {
   blockCount: number;
   blockOffsetsOffset: number;
   count: number;
+  codec: number;
   idWidth: ByteWidth;
   lengthsOffset: number;
+  lengthWidth: 1 | 2;
   prefixesOffset: number;
   region: Region;
   suffixDataLength: number;
   suffixDataOffset: number;
+  symbolsOffset: number;
 };
 
 type BinaryDictionaries = {
@@ -549,6 +559,9 @@ export class DneBinaryDatabaseReader {
     }
 
     const mapped = this.requireMapped();
+    if (dictionary.codec === DICTIONARY_CODEC_FSST) {
+      return readFsstString(mapped, this.requireData(), dictionary, id);
+    }
     const index = id - 1;
     const block = index >>> DICTIONARY_BLOCK_SHIFT;
     const blockStart = block << DICTIONARY_BLOCK_SHIFT;
@@ -750,14 +763,14 @@ function readDictionaries(data: DataView, header: BinaryHeader): BinaryDictionar
     bairro: readDictionary(data, header.sections.bairroDictionary, 'bairro'),
     bairroAbreviado: readDictionary(data, header.sections.bairroAbreviadoDictionary, 'bairro abbreviation'),
     complemento: readDictionary(data, header.sections.complementoDictionary, 'complemento'),
-    logradouro: readDictionary(data, header.sections.logradouroDictionary, 'logradouro'),
+    logradouro: readDictionary(data, header.sections.logradouroDictionary, 'logradouro', true),
     municipio: readDictionary(data, header.sections.municipioDictionary, 'municipio'),
     nome: readDictionary(data, header.sections.nomeDictionary, 'nome'),
     uf: readDictionary(data, header.sections.ufDictionary, 'uf'),
   };
 }
 
-function readDictionary(data: DataView, region: Region, name: string): BinaryDictionary {
+function readDictionary(data: DataView, region: Region, name: string, allowFsst = false): BinaryDictionary {
   if (region.length < DICTIONARY_HEADER_SIZE) {
     throw new DneBinaryDatabaseFormatError(`Binary ${name} dictionary is truncated`);
   }
@@ -769,6 +782,16 @@ function readDictionary(data: DataView, region: Region, name: string): BinaryDic
   const suffixDataRelative = data.getUint32(region.offset + 20, true);
   const suffixDataLength = data.getUint32(region.offset + 24, true);
   const idWidth = readByteWidth(data.getUint8(region.offset + 28), `${name} dictionary id`);
+  const codec = data.getUint8(region.offset + 30);
+  const encodedWidth = data.getUint8(region.offset + 31);
+  if (
+    (codec !== DICTIONARY_CODEC_PLAIN && (codec !== DICTIONARY_CODEC_FSST || !allowFsst))
+    || (codec === DICTIONARY_CODEC_PLAIN ? encodedWidth !== 0 : encodedWidth !== 1 && encodedWidth !== 2)
+  ) {
+    throw new DneBinaryDatabaseFormatError(`Unsupported binary ${name} dictionary codec or length width`);
+  }
+  const lengthWidth = encodedWidth === 2 ? 2 : 1;
+  const symbolTableSize = codec === DICTIONARY_CODEC_FSST ? FSST_SYMBOL_TABLE_SIZE : 0;
   if (data.getUint8(region.offset + 29) !== DICTIONARY_BLOCK_SHIFT) {
     throw new DneBinaryDatabaseFormatError(`Unsupported binary ${name} dictionary block size`);
   }
@@ -781,8 +804,8 @@ function readDictionary(data: DataView, region: Region, name: string): BinaryDic
   if (
     blockOffsetsRelative !== DICTIONARY_HEADER_SIZE
     || lengthsRelative !== blockOffsetsRelative + blockCount * 4
-    || prefixesRelative !== lengthsRelative + count
-    || suffixDataRelative !== prefixesRelative + count
+    || prefixesRelative !== lengthsRelative + count * lengthWidth
+    || suffixDataRelative !== prefixesRelative + count + symbolTableSize
     || suffixDataRelative > region.length
     || suffixDataLength !== region.length - suffixDataRelative
   ) {
@@ -793,15 +816,24 @@ function readDictionary(data: DataView, region: Region, name: string): BinaryDic
     blockCount,
     blockOffsetsOffset: region.offset + blockOffsetsRelative,
     count,
+    codec,
     idWidth,
     lengthsOffset: region.offset + lengthsRelative,
+    lengthWidth,
     prefixesOffset: region.offset + prefixesRelative,
     region,
     suffixDataLength,
     suffixDataOffset: region.offset + suffixDataRelative,
-  };
+    symbolsOffset: region.offset + prefixesRelative + count,
+  } satisfies BinaryDictionary;
   if (blockCount && data.getUint32(dictionary.blockOffsetsOffset, true) !== 0) {
     throw new DneBinaryDatabaseFormatError(`Binary ${name} dictionary has an invalid first block offset`);
+  }
+  if (codec === DICTIONARY_CODEC_FSST) {
+    if (!count && suffixDataLength !== 0) {
+      throw new DneBinaryDatabaseFormatError(`Binary ${name} dictionary has unexpected payload`);
+    }
+    validateFsstSymbols(data, dictionary.symbolsOffset);
   }
   return dictionary;
 }
