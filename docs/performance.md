@@ -134,6 +134,40 @@ clang -O3 -dynamiclib bench/fsst-native.c -o outputs/compression-followup/fsst-c
 DNE_FSST_LIBRARY="$PWD/outputs/compression-followup/fsst-clang-scalar.dylib" bun bench/compression.bench.ts ./dne.db outputs/compression-followup/fsst-source/src/binary-db-reader.ts outputs/compression-followup/fsst-suffix.bin outputs/compression-followup/fsst-native-source/src/binary-db-reader.ts outputs/compression-followup/fsst-suffix.bin
 ```
 
+### Otimização do decoder TypeScript
+
+O decoder FSST experimental ainda tinha margem sem FFI. A variante [`bench/fsst-ts-optimized.ts`](../bench/fsst-ts-optimized.ts) prepara uma tabela pequena de símbolos como pares de `u32`, copia cada símbolo com duas escritas de 32 bits e reutiliza um buffer com espaço extra para essas escritas. O `TextDecoder` é preservado. Não há cache de strings decodificadas, alteração do arquivo ou mudança na API.
+
+A referência é o decoder FSST TypeScript do commit `827d64f`. A comparação final foi repetida em **três processos**, cada um validando os 1.611.629 resultados e executando três aquecimentos e onze medições alternadas AB/BA, com 100 mil consultas por carga. Todas as variantes usam o arquivo de **18.674.624 bytes**.
+
+| Repetição | Existentes: antes → depois | Redução | Mista: antes → depois | Redução |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 67,51 → 61,85 ms | 8,38% | 37,06 → 34,43 ms | 7,09% |
+| 2 | 68,56 → 63,43 ms | 7,50% | 37,46 → 37,37 ms | 0,23% |
+| 3 | 70,66 → 62,04 ms | 12,20% | 36,33 → 35,86 ms | 1,31% |
+
+A mediana das reduções foi **8,38% nos existentes** e **1,31% na carga mista**. A variação entre processos impede tratar os ganhos exploratórios maiores como garantidos. Ausentes, que não passam pelo decoder, oscilaram de -4,10% a +6,25% no tempo. As amostras completas estão em [`fsst-typescript.json`](benchmarks/fsst-typescript.json).
+
+O custo auxiliar é de **2.567 bytes de buffers por dicionário FSST por leitor**: 255 bytes de comprimentos, 2.040 bytes de símbolos e 272 bytes de saída, além dos objetos JavaScript. Na mediana de onze primeiras consultas em leitores novos, com o runtime e o cache de arquivos aquecidos, o tempo passou de 32,21 µs para 35,71 µs. A preparação é feita na primeira consulta ao dicionário. Esses tempos excluem a abertura do leitor e não representam o início de um processo frio.
+
+Também foram avaliadas alternativas:
+
+- **Oito escritas de byte sem laço:** ganhou 2,54% nos existentes em relação às duas escritas `u32`, mas perdeu 4,25% na carga mista; não foi selecionada como padrão.
+- **`Buffer.toString('utf8')`:** apresentou resultados próximos aos de `TextDecoder` em rodadas exploratórias. A opção preserva explicitamente a remoção do BOM inicial, mas o padrão continua sendo `TextDecoder`.
+- **Tabela de pares de símbolos:** adiciona 1.114.112 bytes de buffers por dicionário. Na comparação direta com a tabela pequena, piorou 2,25% nos existentes e 7,01% na carga mista. A primeira consulta por leitor passou para aproximadamente 1,10 ms. Permanece uma opção experimental desativada.
+
+Foram executadas **146 verificações por configuração**, cobrindo modo completo e front coding, símbolos de 1 a 8 bytes, escapes, prefixos, limite de 255 bytes, BOM, UTF-8 inválido e entradas corrompidas. As quatro configurações verificadas foram a padrão, cópias de bytes, conversão por Buffer e tabela de pares.
+
+Após gerar os snapshots com `fsst-experiment.py`, reproduza a variante selecionada:
+
+```sh
+bun bench/fsst-ts.check.ts
+bun bench/compression.bench.ts ./dne.db outputs/compression-followup/fsst-source/src/binary-db-reader.ts outputs/compression-followup/fsst-suffix.bin outputs/compression-followup/fsst-ts-source/src/binary-db-reader.ts outputs/compression-followup/fsst-suffix.bin
+bun bench/fsst-startup.bench.ts outputs/compression-followup/fsst-ts-source/src/binary-db-reader.ts outputs/compression-followup/fsst-suffix.bin 01001010
+```
+
+As opções exploratórias são `DNE_FSST_COPY=bytes`, `DNE_FSST_TEXT=buffer` e `DNE_FSST_PAIRS=1`. Todas permanecem em `bench/`; o leitor de produção v3 continua sem FSST.
+
 ## Importação a partir da fonte pública
 
 Medição histórica de **30/08/2026**, com **10 execuções** do `@konstit/dne`. A geração completa levou **5,73 segundos em média**, incluindo o download, e produziu uma base com **1.605.136 registros**. Os tamanhos desta comparação estão em **MiB**.

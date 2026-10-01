@@ -127,6 +127,9 @@ reader = replace_once(reader, "    || suffixDataRelative !== prefixesRelative + 
                       "    || suffixDataRelative !== prefixesRelative + (fsstMode === 1 ? 0 : count) + (fsstMode ? 2295 : 0)")
 reader = replace_once(reader, "  const dictionary = {\n    blockCount,", "  const dictionary = {\n    fsstMode,\n    blockCount,")
 reader_path.write_text(reader)
+optimized_snapshot = output / "fsst-ts-source/src"
+shutil.copytree(snapshot, optimized_snapshot, dirs_exist_ok=True)
+shutil.copyfile(ROOT / "bench/fsst-ts-optimized.ts", optimized_snapshot / "fsst-decoder.ts")
 for variant in ("native", "neon"):
     native_snapshot = output / f"fsst-{variant}-source/src"
     shutil.copytree(snapshot, native_snapshot, dirs_exist_ok=True)
