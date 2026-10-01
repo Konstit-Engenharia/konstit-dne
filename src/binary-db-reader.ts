@@ -155,7 +155,7 @@ export class DneBinaryDatabaseReader {
   private logradouroIdBits: number;
   private header: BinaryHeader;
   private mapped: Uint8Array<ArrayBuffer> | null;
-  private metadataValue: LoadMetadata;
+  private readonly metadataValue: Readonly<LoadMetadata>;
   private municipalityCache: (DecodedMunicipality | undefined)[];
 
   /**
@@ -191,7 +191,7 @@ export class DneBinaryDatabaseReader {
       this.bairroRuns = bairroRuns;
       this.localityRuns = localityRuns;
       this.logradouroIdBits = integerBitWidth(dictionaries.logradouro.count);
-      this.metadataValue = metadata;
+      this.metadataValue = Object.freeze(metadata);
       this.bairroCache = Array.from({ length: dictionaries.bairro.count + 1 });
       this.municipalityCache = Array.from({ length: header.municipalityCount + 1 });
     } catch (error) {
@@ -218,9 +218,9 @@ export class DneBinaryDatabaseReader {
 
   /**
    * Returns the load metadata parsed when the reader was constructed.
-   * @returns The cached metadata object, which callers should treat as read-only. Available after `close()`.
+   * @returns The cached, frozen metadata object. Available after `close()`.
    */
-  metadata(): LoadMetadata {
+  metadata(): Readonly<LoadMetadata> {
     return this.metadataValue;
   }
 
@@ -574,12 +574,12 @@ export class DneBinaryDatabaseReader {
 /**
  * Opens a binary database, reads its load metadata, and closes the temporary reader.
  * @param path - Path to an existing binary database file.
- * @returns Metadata parsed from the file at open time.
+ * @returns Frozen metadata parsed from the file at open time.
  * @throws {DneBinaryDatabaseIOError} If the file cannot be mapped.
  * @throws {DneBinaryDatabaseVersionError} If the binary version is unsupported.
  * @throws {DneBinaryDatabaseFormatError} If the minimum header, file size, or SHA-256 checksum is invalid.
  */
-export async function readBinaryDatabaseMetadata(path: string): Promise<LoadMetadata> {
+export async function readBinaryDatabaseMetadata(path: string): Promise<Readonly<LoadMetadata>> {
   const reader = new DneBinaryDatabaseReader(path);
   try {
     return reader.metadata();

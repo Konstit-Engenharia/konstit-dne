@@ -129,7 +129,7 @@ const totalBinary = binaryReader.rowCount();
 const totalSqlite = sqliteReader.rowCount('dne');
 ```
 
-`LoadMetadata` é um mapa `Record<string, string>` com campos conhecidos como `loaded_at`, `package_version`, `schema_version`, `source_input`, `source_kind`, `source_url`, `source_last_modified`, `source_etag` e `source_content_length`. Alguns campos são opcionais porque dependem da fonte usada na carga. No leitor binário, os metadados são lidos no construtor. No SQLite, `metadata()` retorna `undefined` quando `edne_metadata` não existe.
+`LoadMetadata` é um mapa `Record<string, string>` com campos conhecidos como `loaded_at`, `package_version`, `schema_version`, `source_input`, `source_kind`, `source_url`, `source_last_modified`, `source_etag` e `source_content_length`. Alguns campos são opcionais porque dependem da fonte usada na carga. No leitor binário, os metadados são lidos e congelados com `Object.freeze()` no construtor; `metadata()` retorna a mesma referência como `Readonly<LoadMetadata>`, inclusive após `close()`. No SQLite, `metadata()` retorna `undefined` quando `edne_metadata` não existe.
 
 O leitor SQLite também oferece operações de inspeção e SQL somente leitura:
 

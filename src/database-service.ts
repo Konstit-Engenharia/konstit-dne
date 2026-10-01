@@ -42,7 +42,7 @@ export type DatabaseInspection = {
   /**
    * Persisted import metadata, or null when unavailable.
    */
-  metadata: LoadMetadata | null;
+  metadata: Readonly<LoadMetadata> | null;
   /**
    * Database path supplied for inspection.
    */
@@ -186,7 +186,7 @@ export function memoryDatabaseInspection(rowCount: number): DatabaseInspection {
  * @throws {DneBinaryDatabaseError} If a binary database cannot be accessed or decoded.
  * @throws {Error} If SQLite metadata cannot be read.
  */
-export async function readDatabaseMetadata(path: string): Promise<LoadMetadata | undefined> {
+export async function readDatabaseMetadata(path: string): Promise<Readonly<LoadMetadata> | undefined> {
   if (path !== ':memory:' && !(await Bun.file(path).exists())) {
     return undefined;
   }
