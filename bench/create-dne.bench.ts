@@ -66,7 +66,7 @@ for (let index = 1; index <= size; index++) {
     'M',
     '',
     `Mun ${index}`,
-    String(3500000 + index),
+    String((uf === 'SP' ? 3500000 : 2900000) + index),
   ]);
 
   if (index % 100 === 0) {

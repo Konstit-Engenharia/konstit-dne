@@ -93,7 +93,7 @@ describe('loader', () => {
         complemento: null,
         bairro: 'Bairro 1',
         municipio: 'Municipio 1',
-        municipio_cod_ibge: 3500001,
+        municipio_cod_ibge: 2900001,
         uf: 'BA',
         nome: null,
         localidade_situacao: 1,

@@ -10,8 +10,9 @@ import {
 } from '../src/binary-db-format.ts';
 import {
   readFsstString,
-  type FsstDictionary,
+  readTrustedFsstString,
   validateFsstSymbols,
+  type FsstDictionary,
 } from '../src/fsst.ts';
 
 type Entry = {
@@ -118,7 +119,7 @@ test('replaces malformed UTF-8 while retaining decoder state for later reads', (
   expect(read(fixture, 2)).toBe('A');
 });
 
-test('validates the fixed symbol table at open time', () => {
+test('validates the fixed symbol table during generation', () => {
   const fixture = makeFixture([{ codes: [0] }], new Map([[0, Uint8Array.of(65)]]));
   fixture.bytes[fixture.symbolsOffset] = 9;
 
@@ -208,7 +209,11 @@ test('does not retain a failed decode after the payload is repaired', () => {
 });
 
 function read(fixture: Fixture, id: number) {
-  return readFsstString(fixture.bytes, fixture.data, fixture.dictionary, id);
+  const value = readFsstString(fixture.bytes, fixture.data, fixture.dictionary, id);
+  if (value !== null) {
+    expect(readTrustedFsstString(fixture.bytes, fixture.data, fixture.dictionary, id)).toBe(value);
+  }
+  return value;
 }
 
 function makeFixture(
@@ -223,7 +228,7 @@ function makeFixture(
   const prefixesOffset = lengthsOffset + count * lengthWidth;
   const symbolsOffset = prefixesOffset + count;
   const suffixDataOffset = symbolsOffset + FSST_SYMBOL_TABLE_SIZE;
-  const payload = Uint8Array.from(entries.flatMap(({ codes, }) => codes));
+  const payload = Uint8Array.from(entries.flatMap(({ codes }) => codes));
   const bytes = new Uint8Array(suffixDataOffset + payload.length);
   const data = new DataView(bytes.buffer);
   let payloadOffset = 0;

@@ -16,7 +16,7 @@ O leitor binário atingiu **3,11 milhões de consultas por segundo**, calculadas
 
 Medição realizada em **30/09/2026**, em um **Apple M4 com Bun 1.4.2**, usando [bench/binary-lookup.bench.ts](../bench/binary-lookup.bench.ts) e uma base com 1.611.629 CEPs. Cada rodada executou 50 mil consultas a CEPs existentes e 50 mil a CEPs ausentes, com duas rodadas de aquecimento e nove medições. Ambos os leitores encontraram os 50 mil CEPs esperados. Os tempos incluem somente as consultas após aquecimento, sem a abertura da base; os tamanhos estão em MB decimais.
 
-Estes resultados usam o formato binário v1. A compressão das versões v2, v3 e v4 altera o tamanho do arquivo e o tempo das consultas; a tabela acima permanece como referência histórica.
+Estes resultados usam o formato binário v1. A compressão das versões v2, v3 e v4 e a validação da v5 alteram o tamanho do arquivo e o tempo das consultas; a tabela acima permanece como referência histórica.
 
 ### Reproduzir a comparação
 
@@ -35,11 +35,55 @@ A base SQLite deve representar a mesma fonte usada para gerar o binário. O terc
 
 Todos os valores de memória estão em bytes. `rss` é o consumo do processo reportado pelo Bun, incluindo o runtime e a lista de consultas; não representa apenas o banco. `heapUsed`, `heapTotal`, `external` e `arrayBuffers` são os valores originais de `process.memoryUsage()`. Não os some: há sobreposição, e o Bun pode incluir buffers externos em `heapUsed`. `heapObjectBytes` separa os objetos do heap de strings e buffers alocados externamente, usando `heapSize - extraMemorySize` de `bun:jsc`. Esse contador reflete a última coleta de lixo; compare `beforeOpen` com `afterFirstBatchGc` para avaliar os objetos que continuam ocupando memória. [Detalhes das métricas do Bun](https://bun.com/reference/bun/jsc/heapStats).
 
+## Formato v5: validação na geração e SHA-256
+
+Medição em **01/10/2026**, no Apple M4 com Bun 1.4.2, usando a mesma base de **1.611.629 CEPs e 84.952 bairros**. A referência é a v4 do commit `724ba01`.
+
+O gerador valida os bytes finais antes de gravar o SHA-256: seções, índices, referências, todas as entradas dos dicionários, UTF-8, ordenação e relações entre campos. A abertura verifica o cabeçalho mínimo, versão, tamanho e checksum; depois prepara o layout sem repetir a validação completa. As consultas decodificam diretamente e verificam `close()` uma vez por chamada. O contrato exige um produtor confiável e arquivo imutável durante o uso; o digest verifica integridade, sem autenticar a origem.
+
+| Métrica | v4 | v5 |
+| --- | ---: | ---: |
+| Arquivo completo | 19.121.768 bytes | **19.121.800 bytes** |
+| Geração a partir do SQLite, mediana de três processos | 2,753 s | 3,160 s |
+| Abertura com cache aquecido, mediana das três medianas | 4,219 ms | 6,166 ms |
+
+O arquivo cresce apenas **32 bytes**, correspondentes ao rodapé. A geração acrescenta aproximadamente **0,407 s**, incluindo validação integral e SHA-256; a abertura acrescenta **1,947 ms** nesta base. Os tempos de geração incluem a escrita, mas excluem importação do módulo e o hash adicional calculado pelo benchmark para registrar o arquivo. Cada versão produziu o mesmo hash nas três gerações.
+
+### Consultas: comparação direta com a v4
+
+Cada um dos três processos verificou a igualdade dos **1.611.629 registros completos**, executou três aquecimentos e onze medições alternadas AB/BA por carga de 100 mil consultas. Os tempos abaixo são medianas em milissegundos, sem incluir a abertura:
+
+| Repetição | Existentes: v4 → v5 | Mista: v4 → v5 | Ausentes: v4 → v5 |
+| --- | ---: | ---: | ---: |
+| 1 | 69,13 → **65,62** | 38,12 → 37,49 | 5,23 → 4,67 |
+| 2 | 66,32 → **60,54** | 36,98 → 36,33 | 5,19 → 4,56 |
+| 3 | 66,67 → **60,77** | 38,80 → 35,94 | 5,18 → 4,62 |
+
+A mediana das reduções dentro de cada par foi **8,71% nos existentes**, **1,77% na carga mista** e **10,77% nos ausentes**. As reduções variaram entre 5,09–8,84%, 1,65–7,37% e 10,75–12,13%, respectivamente. O ganho mediano da carga mista foi pequeno. Ausentes também se beneficiam da remoção das verificações e do wrapper de consulta, embora não decodifiquem strings.
+
+A abertura foi medida separadamente, com nove amostras por versão em cada processo, primeiro v4 e depois v5. Todas as medições usam cache do sistema aquecido, sem profiler ou cargas concorrentes; não avaliam I/O frio, concorrência ou outro hardware/runtime. Os [dados completos](benchmarks/trusted-v5.json) preservam todas as amostras, hashes dos arquivos e fontes e os parâmetros da comparação.
+
+Também houve paridade integral de `queryNeighborhood()` e `queryNeighborhoodCepRanges()` para os **84.952 IDs**, e de `queryNeighborhoodByCep()` para todos os **1.611.629 CEPs**, sem diferenças. O digest do rodapé foi conferido independentemente com `hashlib.sha256` do Python. A validação final teve **372 testes aprovados**, além de TypeScript, Biome, oxlint e build. Os testes negativos cobrem índices, referências, dicionários, relações entre campos e corrupção do arquivo; uma falha na validação final impede a escrita de um arquivo novo e preserva um destino já existente.
+
+### Reproduzir a v5
+
+Com a mesma base SQLite de esquema 4 em `./dne.db`:
+
+```sh
+mkdir -p outputs/trusted-v4-baseline
+git archive 724ba01 src | tar -x -C outputs/trusted-v4-baseline
+bun bench/binary-build.bench.ts ./dne.db outputs/trusted-v4-baseline/src/binary-db-writer.ts outputs/v4.bin
+bun bench/binary-build.bench.ts ./dne.db src/binary-db-writer.ts outputs/v5.bin
+bun bench/compression.bench.ts ./dne.db outputs/trusted-v4-baseline/src/binary-db-reader.ts outputs/v4.bin src/binary-db-reader.ts outputs/v5.bin
+```
+
+Repita a geração em seis processos na ordem v4/v5, v5/v4 e v4/v5; depois execute a comparação de consultas três vezes, sequencialmente. A v5 preserva a API pública, mas exige regenerar arquivos v1–v4.
+
 ## Formato v4: FSST em TypeScript
 
 Integração medida em **30/09/2026**, no Apple M4 com Bun 1.4.2. O encoder e o decoder de produção são inteiramente TypeScript. A CLI gera a tabela de símbolos durante a exportação do SQLite; o pacote não adiciona dependências, compilador nativo ou WASM.
 
-O FSST comprime os sufixos do dicionário de logradouros, preservando os blocos de oito nomes e os IDs existentes. O writer mantém front coding simples quando a seção FSST completa não é menor. O formato agora tem versão **4**; arquivos v1–v3 devem ser regenerados. A API pública do leitor permanece igual.
+O FSST comprime os sufixos do dicionário de logradouros, preservando os blocos de oito nomes e os IDs existentes. O writer mantém front coding simples quando a seção FSST completa não é menor. Essa integração introduziu a versão **4**, incompatível com arquivos v1–v3. A API pública do leitor permanece igual.
 
 | Métrica | v3 | v4 TypeScript |
 | --- | ---: | ---: |
@@ -69,18 +113,19 @@ O [encoder TypeScript](../src/fsst-encoder.ts) usa um treinador próprio determi
 
 O [decoder](../src/fsst.ts) usa a tabela pequena e as duas escritas `u32` selecionadas no experimento anterior, com aproximadamente **2,5 KiB de buffers auxiliares por dicionário/leitor**. O layout aceita comprimentos comprimidos de um ou dois bytes, até 510 bytes, mantendo o limite de 255 bytes decodificados. Nesta base, o maior sufixo comprimido tem 59 bytes e todos os comprimentos usam um byte.
 
-Na abertura, são validados layout, codec, largura e tabela de símbolos. As consultas verificam os limites do bloco, prefixos, símbolos, escapes e tamanho decodificado; a última entrada deve consumir exatamente o bloco. Testes cobrem dados corrompidos, limites 255/510, Unicode, BOM, reconstrução de prefixos, treinamento determinístico e fallback quando FSST aumenta o arquivo. O teste do pacote instalado gera e consulta uma base FSST a partir de outro diretório. **347 testes passaram**, além de TypeScript, Biome, oxlint e build.
+Na v4, a abertura validava layout, codec, largura e tabela de símbolos. As consultas verificavam os limites do bloco, prefixos, símbolos, escapes e tamanho decodificado; a última entrada precisava consumir exatamente o bloco. Testes cobrem dados corrompidos, limites 255/510, Unicode, BOM, reconstrução de prefixos, treinamento determinístico e fallback quando FSST aumenta o arquivo. O teste do pacote instalado gera e consulta uma base FSST a partir de outro diretório. **347 testes passaram**, além de TypeScript, Biome, oxlint e build.
 
 ### Reproduzir a v4
 
 Com a mesma base SQLite de esquema 4 em `./dne.db`, execute na raiz do repositório:
 
 ```sh
-mkdir -p outputs/fsst-v4-baseline
+mkdir -p outputs/fsst-v4-baseline outputs/fsst-v4-source
 git archive e750743 src | tar -x -C outputs/fsst-v4-baseline
+git archive 724ba01 src | tar -x -C outputs/fsst-v4-source
 bun bench/binary-build.bench.ts ./dne.db outputs/fsst-v4-baseline/src/binary-db-writer.ts outputs/v3.bin
-bun bench/binary-build.bench.ts ./dne.db src/binary-db-writer.ts outputs/v4.bin
-bun bench/compression.bench.ts ./dne.db outputs/fsst-v4-baseline/src/binary-db-reader.ts outputs/v3.bin src/binary-db-reader.ts outputs/v4.bin
+bun bench/binary-build.bench.ts ./dne.db outputs/fsst-v4-source/src/binary-db-writer.ts outputs/v4.bin
+bun bench/compression.bench.ts ./dne.db outputs/fsst-v4-baseline/src/binary-db-reader.ts outputs/v3.bin outputs/fsst-v4-source/src/binary-db-reader.ts outputs/v4.bin
 ```
 
 A geração foi repetida em seis processos, na ordem v3/v4, v4/v3 e v3/v4. A comparação de consultas foi executada três vezes, sequencialmente, após a geração e os testes.

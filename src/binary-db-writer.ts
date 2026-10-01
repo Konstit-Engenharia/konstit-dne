@@ -1,5 +1,4 @@
 import { Database } from 'bun:sqlite';
-import { open } from 'node:fs/promises';
 import { encodeBairroRuns } from './bairro-runs.ts';
 import {
   isBairroId,
@@ -10,6 +9,7 @@ import {
   alignBinaryOffset as align,
   assertPackedInteger,
   BINARY_BAIRRO_HEADER_SIZE,
+  BINARY_DATABASE_CHECKSUM_SIZE,
   BINARY_DATABASE_HEADER_SIZE,
   BINARY_DATABASE_MAGIC as MAGIC,
   BINARY_DATABASE_VERSION,
@@ -36,6 +36,7 @@ import {
   type BinarySectionName as SectionName,
   type ByteWidth,
 } from './binary-db-format.ts';
+import { sealBinaryDatabaseBytes } from './binary-db-integrity.ts';
 import { encodeFsstSuffixSource } from './fsst-encoder.ts';
 import { encodeLocalityRuns } from './locality-runs.ts';
 import {
@@ -650,7 +651,7 @@ async function writeBinaryFile(
     sections[name] = { length: sectionData[name].byteLength, offset: cursor };
     cursor += sectionData[name].byteLength;
   }
-  const fileSize = align(cursor);
+  const fileSize = align(cursor) + BINARY_DATABASE_CHECKSUM_SIZE;
   assertUint32(fileSize, 'file size');
   const header = createHeader({
     cepPrefixOffsetWidth,
@@ -661,20 +662,13 @@ async function writeBinaryFile(
     sections,
   });
 
-  const file = await open(path, 'w');
-  try {
-    await writeBytes(file, header);
-    let position = header.byteLength;
-    for (const name of SECTION_NAMES) {
-      const region = sections[name];
-      await writePadding(file, region.offset - position);
-      await writeBytes(file, sectionData[name]);
-      position = region.offset + region.length;
-    }
-    await writePadding(file, fileSize - position);
-  } finally {
-    await file.close();
+  const bytes = new Uint8Array(fileSize);
+  bytes.set(header);
+  for (const name of SECTION_NAMES) {
+    bytes.set(sectionData[name], sections[name].offset);
   }
+  sealBinaryDatabaseBytes(bytes);
+  await Bun.write(path, bytes);
 }
 
 function createHeader(values: BinaryHeader) {
@@ -796,16 +790,6 @@ function assertUint32(value: number, name: string) {
 
 function asBytes(value: Uint8Array | Uint32Array) {
   return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-}
-
-async function writeBytes(file: Awaited<ReturnType<typeof open>>, bytes: Uint8Array) {
-  await file.write(bytes);
-}
-
-async function writePadding(file: Awaited<ReturnType<typeof open>>, length: number) {
-  if (length > 0) {
-    await file.write(new Uint8Array(length));
-  }
 }
 
 function quoteIdent(value: string) {

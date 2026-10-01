@@ -109,7 +109,7 @@ Um município com CEP geral ainda pode ter CEPs específicos de estabelecimentos
 
 ## Migrações e compatibilidade
 
-O esquema SQLite atual está na versão `4`, gravada em `schema_version` dentro de `edne_metadata`. Bases anteriores precisam de uma nova importação para recuperar `bairros`, `bairro_faixas`, a view normalizada e os indicadores de localidade. Informe `--source` quando a base usa uma fonte própria:
+O esquema SQLite atual está na versão `4`, gravada em `schema_version` dentro de `edne_metadata`. Essa versão do esquema é independente da versão do formato binário. Bases anteriores precisam de uma nova importação para recuperar `bairros`, `bairro_faixas`, a view normalizada e os indicadores de localidade. Informe `--source` quando a base usa uma fonte própria:
 
 ```sh
 bunx @konstit/dne build --force --db ./dne.db
@@ -118,7 +118,7 @@ bunx @konstit/dne build --force --db ./dne.db --source /dados/eDNE_Basico.zip
 
 A atualização substitui o esquema dentro de uma única transação e só confirma a nova base depois de validar a carga. Se a fonte for remota, a CLI também compara a versão do esquema com os validadores disponíveis; uma base antiga deixa de ser considerada atual mesmo quando a fonte não mudou.
 
-O formato binário tem versão `4`, com sequências comprimidas para bairros e pares de município/indicadores de localidade, IDs de logradouro compactados em bits e suporte a FSST nos sufixos do dicionário de logradouros. Arquivos binários das versões `1`, `2` e `3` precisam ser regenerados; a API do `DneBinaryDatabaseReader` permanece igual. O leitor SQLite lança `DneDatabaseSchemaError` quando a base não possui a view ou os campos normalizados esperados; consulte [Erros da API](api.md#erros).
+O formato binário tem versão `5`, com sequências comprimidas para bairros e pares de município/indicadores de localidade, IDs de logradouro compactados em bits, suporte a FSST nos sufixos do dicionário de logradouros e um rodapé SHA-256 de 32 bytes. O hash cobre todos os bytes anteriores ao rodapé, incluindo o cabeçalho e o preenchimento de alinhamento; ele verifica a integridade do arquivo, mas não autentica o produtor. A geração valida o binário serializado antes de registrar o hash. Na abertura, o leitor verifica o cabeçalho mínimo, a versão, o tamanho e o checksum e então usa o layout confiável para decodificar diretamente as consultas. A API do `DneBinaryDatabaseReader` permanece igual. Arquivos binários das versões `1` a `4` precisam ser regenerados. O leitor SQLite lança `DneDatabaseSchemaError` quando a base não possui a view ou os campos normalizados esperados; consulte [Erros da API](api.md#erros).
 
 ## Drizzle ORM
 

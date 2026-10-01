@@ -1,11 +1,13 @@
 /**
  * Binary format revision accepted by the current reader and emitted by the writer.
  */
-export const BINARY_DATABASE_VERSION = 4;
+export const BINARY_DATABASE_VERSION = 5;
 /**
  * Fixed file-header size in bytes, including the section directory and reserved space.
  */
 export const BINARY_DATABASE_HEADER_SIZE = 256;
+/** SHA-256 footer covering every preceding byte, including header and alignment padding. */
+export const BINARY_DATABASE_CHECKSUM_SIZE = 32;
 
 /** Neighborhood section header: row count and widths of the original DNE identifiers. */
 export const BINARY_BAIRRO_HEADER_SIZE = 16;

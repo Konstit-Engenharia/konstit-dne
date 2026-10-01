@@ -78,7 +78,20 @@ export function encodeBairroRuns(dense: Uint8Array, rowCount: number, idWidth: B
   return bytes;
 }
 
-/** Validates the complete encoded run index once when opening a v2 file. */
+/** Reads locations after the file has passed integrity verification. */
+export function readBairroRunsLayout(data: DataView, region: BinaryRegion, rowCount: number, idWidth: ByteWidth): BairroRuns {
+  const runCount = data.getUint32(region.offset, true);
+  const lowBits = data.getUint8(region.offset + 4);
+  const zeroCount = Math.ceil(rowCount / 2 ** lowBits);
+  const highBitCount = zeroCount + runCount;
+  const lowOffset = region.offset + HEADER_BYTES;
+  const highOffset = lowOffset + Math.ceil(runCount * lowBits / 8);
+  const samplesOffset = highOffset + Math.ceil(highBitCount / 8);
+  const idsOffset = samplesOffset + Math.ceil(zeroCount / SAMPLE_STEP) * 4;
+  return { highBitCount, highOffset, idWidth, idsOffset, lowBits, lowOffset, runCount, samplesOffset, zeroCount };
+}
+
+/** Validates the complete encoded run index during generation. */
 export function parseBairroRuns(
   data: DataView,
   region: BinaryRegion,
@@ -184,9 +197,9 @@ function selectZero(data: DataView, runs: BairroRuns, zeroIndex: number): number
     return bit;
   }
   bit++;
-  while (bit < runs.highBitCount) {
+  while (true) {
     const withinByte = bit & 7;
-    const available = Math.min(8 - withinByte, runs.highBitCount - bit);
+    const available = 8 - withinByte;
     const mask = (1 << available) - 1;
     const zeroBits = (~(data.getUint8(runs.highOffset + (bit >>> 3)) >>> withinByte)) & mask;
     const count = popcount[zeroBits] ?? 0;
@@ -203,7 +216,6 @@ function selectZero(data: DataView, runs: BairroRuns, zeroIndex: number): number
     remaining -= count;
     bit += available;
   }
-  throw new DneBinaryDatabaseFormatError('Invalid binary neighborhood run sample');
 }
 
 function readBits(data: DataView, byteOffset: number, bitOffset: number, count: number): number {

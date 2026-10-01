@@ -1,0 +1,725 @@
+{
+  "measuredOn": "2026-10-01 America/Sao_Paulo",
+  "cpu": "Apple M4",
+  "runtime": "Bun 1.4.2",
+  "baselineCommit": "724ba01",
+  "source": {
+    "schemaVersion": 4,
+    "rows": 1611629,
+    "neighborhoods": 84952,
+    "bytes": 109215744,
+    "sha256": "65946e92b7b71d6f5f37a930ed0be50407405bf3c2ff4ed0be7587b3bbf0d2d5"
+  },
+  "format": {
+    "version": 5,
+    "checksumAlgorithm": "SHA-256",
+    "checksumBytes": 32,
+    "checksumCovers": "Every byte preceding the footer, including header and padding",
+    "footerDigestHex": "705e81145a23056c651c25fe3d777f35d09475dfb7dc7ffcf5c06fd855977f3f",
+    "independentFooterVerification": "Python hashlib.sha256"
+  },
+  "protocol": {
+    "queryProcesses": 3,
+    "queriesPerWorkload": 100000,
+    "warmupRounds": 3,
+    "measurementRounds": 11,
+    "order": "Alternating AB/BA within each query process",
+    "parity": "Full JSON queryCep output for every source CEP in every query process",
+    "cache": "Warm OS page cache and warmed query processes; cold IO and concurrent loads not measured",
+    "openSamplesPerVersionPerProcess": 9,
+    "openOrder": "Baseline then candidate, measured separately after query workloads",
+    "buildProcessesPerVersion": 3,
+    "buildOrder": [
+      "v4",
+      "v5",
+      "v5",
+      "v4",
+      "v4",
+      "v5"
+    ],
+    "buildTiming": "Writer call through completed file write; v5 includes complete validation and footer SHA-256; excludes module import and separate post-write file hash used by the benchmark"
+  },
+  "size": {
+    "v4Bytes": 19121768,
+    "v5Bytes": 19121800,
+    "addedBytes": 32
+  },
+  "summary": {
+    "buildMedianMs": {
+      "v4": 2753.4262089999997,
+      "v5": 3159.958959
+    },
+    "openMedianMs": {
+      "v4": 4.218874999999571,
+      "v5": 6.166167000000314
+    },
+    "medianPairedQueryReductionPercent": {
+      "hits": 8.706027380218305,
+      "mixed": 1.7699950652023455,
+      "misses": 10.76694217683859
+    }
+  },
+  "neighborhoodParity": {
+    "neighborhoodCount": 84952,
+    "rangesCount": 84952,
+    "byCepCount": 1611629,
+    "byCepExpected": 1599830,
+    "mismatchCount": 0,
+    "mismatches": []
+  },
+  "builds": [
+    {
+      "runtime": "1.4.2",
+      "rows": 1611629,
+      "elapsedMs": 2832.367208,
+      "bytes": 19121768,
+      "sha256": "9f390aeccf8e87c6209b896d5cbb3d3fb2b6fd7019c9df7ead2c472cfee1a02c",
+      "sourcePath": "./dne.db",
+      "writerModulePath": "outputs/compression-followup/baseline-v4/src/binary-db-writer.ts",
+      "outputPath": "outputs/compression-followup/v4-trusted-baseline.bin",
+      "variant": "v4",
+      "repeat": 1
+    },
+    {
+      "runtime": "1.4.2",
+      "rows": 1611629,
+      "elapsedMs": 3125.681208,
+      "bytes": 19121800,
+      "sha256": "61b8836f17eef27dedc7b0da37dc8e5213c96364af60adeaedf72f540fea3329",
+      "sourcePath": "./dne.db",
+      "writerModulePath": "src/binary-db-writer.ts",
+      "outputPath": "outputs/compression-followup/trusted-v5.bin",
+      "variant": "v5",
+      "repeat": 1
+    },
+    {
+      "runtime": "1.4.2",
+      "rows": 1611629,
+      "elapsedMs": 3180.349916,
+      "bytes": 19121800,
+      "sha256": "61b8836f17eef27dedc7b0da37dc8e5213c96364af60adeaedf72f540fea3329",
+      "sourcePath": "./dne.db",
+      "writerModulePath": "src/binary-db-writer.ts",
+      "outputPath": "outputs/compression-followup/trusted-v5.bin",
+      "variant": "v5",
+      "repeat": 2
+    },
+    {
+      "runtime": "1.4.2",
+      "rows": 1611629,
+      "elapsedMs": 2652.659833,
+      "bytes": 19121768,
+      "sha256": "9f390aeccf8e87c6209b896d5cbb3d3fb2b6fd7019c9df7ead2c472cfee1a02c",
+      "sourcePath": "./dne.db",
+      "writerModulePath": "outputs/compression-followup/baseline-v4/src/binary-db-writer.ts",
+      "outputPath": "outputs/compression-followup/v4-trusted-baseline.bin",
+      "variant": "v4",
+      "repeat": 2
+    },
+    {
+      "runtime": "1.4.2",
+      "rows": 1611629,
+      "elapsedMs": 2753.4262089999997,
+      "bytes": 19121768,
+      "sha256": "9f390aeccf8e87c6209b896d5cbb3d3fb2b6fd7019c9df7ead2c472cfee1a02c",
+      "sourcePath": "./dne.db",
+      "writerModulePath": "outputs/compression-followup/baseline-v4/src/binary-db-writer.ts",
+      "outputPath": "outputs/compression-followup/v4-trusted-baseline.bin",
+      "variant": "v4",
+      "repeat": 3
+    },
+    {
+      "runtime": "1.4.2",
+      "rows": 1611629,
+      "elapsedMs": 3159.958959,
+      "bytes": 19121800,
+      "sha256": "61b8836f17eef27dedc7b0da37dc8e5213c96364af60adeaedf72f540fea3329",
+      "sourcePath": "./dne.db",
+      "writerModulePath": "src/binary-db-writer.ts",
+      "outputPath": "outputs/compression-followup/trusted-v5.bin",
+      "variant": "v5",
+      "repeat": 3
+    }
+  ],
+  "queries": [
+    {
+      "runtime": "1.4.2",
+      "verifiedRows": 1611629,
+      "baseline": {
+        "path": "outputs/compression-followup/v4-trusted-baseline.bin",
+        "bytes": 19121768,
+        "openMs": {
+          "medianMs": 4.679791999999907,
+          "minMs": 3.9169169999995574,
+          "maxMs": 7.391082999999526,
+          "samplesMs": [
+            6.965500000000247,
+            6.161457999999584,
+            6.124166999999943,
+            3.998750000000655,
+            7.391082999999526,
+            4.0170420000004015,
+            3.9169169999995574,
+            4.551959000000352,
+            4.679791999999907
+          ]
+        }
+      },
+      "candidate": {
+        "path": "outputs/compression-followup/trusted-v5.bin",
+        "bytes": 19121800,
+        "openMs": {
+          "medianMs": 6.159208000000035,
+          "minMs": 6.083332999999584,
+          "maxMs": 6.389542000000802,
+          "samplesMs": [
+            6.389542000000802,
+            6.249541000000136,
+            6.102624999999534,
+            6.159208000000035,
+            6.083332999999584,
+            6.226708000000144,
+            6.100166000000172,
+            6.16583399999945,
+            6.132249999999658
+          ]
+        }
+      },
+      "measurements": [
+        {
+          "name": "hits",
+          "queries": 100000,
+          "expectedFound": 100000,
+          "baseline": {
+            "medianMs": 69.13487499999974,
+            "minMs": 62.45516699999962,
+            "maxMs": 74.56145800000013,
+            "samplesMs": [
+              74.56145800000013,
+              70.36699999999973,
+              62.45516699999962,
+              71.12350000000015,
+              65.13524999999981,
+              66.8888750000001,
+              66.89466699999957,
+              72.55520800000068,
+              74.32749999999942,
+              69.13487499999974,
+              67.21770899999956
+            ]
+          },
+          "candidate": {
+            "medianMs": 65.61799999999994,
+            "minMs": 59.34954199999993,
+            "maxMs": 71.04841699999997,
+            "samplesMs": [
+              69.44454200000018,
+              63.16337499999963,
+              69.25829200000044,
+              65.61799999999994,
+              71.04841699999997,
+              69.40304199999991,
+              68.49337500000001,
+              63.475167000000056,
+              62.62412499999937,
+              59.34954199999993,
+              64.55112499999996
+            ]
+          }
+        },
+        {
+          "name": "mixed",
+          "queries": 100000,
+          "expectedFound": 50000,
+          "baseline": {
+            "medianMs": 38.12470800000028,
+            "minMs": 34.67525000000023,
+            "maxMs": 41.91949999999997,
+            "samplesMs": [
+              40.138333999999304,
+              38.12470800000028,
+              35.83899999999994,
+              39.751000000000204,
+              34.67525000000023,
+              41.91949999999997,
+              35.55458300000009,
+              38.8642090000003,
+              37.53045799999927,
+              40.17958300000009,
+              35.183583
+            ]
+          },
+          "candidate": {
+            "medianMs": 37.494832999999744,
+            "minMs": 32.3462499999996,
+            "maxMs": 41.05433300000004,
+            "samplesMs": [
+              37.494832999999744,
+              32.3462499999996,
+              40.080166999999165,
+              35.73649999999998,
+              41.05433300000004,
+              34.86641700000018,
+              39.41358300000047,
+              34.25508400000035,
+              38.03495800000019,
+              34.95533400000022,
+              38.873208999999406
+            ]
+          }
+        },
+        {
+          "name": "misses",
+          "queries": 100000,
+          "expectedFound": 0,
+          "baseline": {
+            "medianMs": 5.230417000000671,
+            "minMs": 4.96795899999961,
+            "maxMs": 5.400625000000218,
+            "samplesMs": [
+              4.96795899999961,
+              5.290874999999687,
+              5.23804199999995,
+              5.313999999999396,
+              5.198959000000286,
+              5.302291999999397,
+              5.21008300000085,
+              5.400625000000218,
+              5.161415999999917,
+              5.230417000000671,
+              5.179082999999991
+            ]
+          },
+          "candidate": {
+            "medianMs": 4.667916000000332,
+            "minMs": 4.294667000000118,
+            "maxMs": 4.820332999999664,
+            "samplesMs": [
+              4.55724999999984,
+              4.509041999999681,
+              4.78479200000038,
+              4.640207999999802,
+              4.820332999999664,
+              4.667916000000332,
+              4.734042000000045,
+              4.294667000000118,
+              4.737124999999651,
+              4.619708000000173,
+              4.671790999999757
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "runtime": "1.4.2",
+      "verifiedRows": 1611629,
+      "baseline": {
+        "path": "outputs/compression-followup/v4-trusted-baseline.bin",
+        "bytes": 19121768,
+        "openMs": {
+          "medianMs": 4.07549999999992,
+          "minMs": 3.806416999999783,
+          "maxMs": 6.8967090000005555,
+          "samplesMs": [
+            6.8967090000005555,
+            6.205707999999504,
+            5.897500000000036,
+            4.07549999999992,
+            3.913166000000274,
+            3.8472499999998035,
+            3.806416999999783,
+            6.144624999999905,
+            3.8813749999999345
+          ]
+        }
+      },
+      "candidate": {
+        "path": "outputs/compression-followup/trusted-v5.bin",
+        "bytes": 19121800,
+        "openMs": {
+          "medianMs": 6.166167000000314,
+          "minMs": 6.068500000000313,
+          "maxMs": 6.671416000000136,
+          "samplesMs": [
+            6.352958999999828,
+            6.156792000000678,
+            6.135000000000218,
+            6.166500000000269,
+            6.1117080000003625,
+            6.261333000000377,
+            6.671416000000136,
+            6.166167000000314,
+            6.068500000000313
+          ]
+        }
+      },
+      "measurements": [
+        {
+          "name": "hits",
+          "queries": 100000,
+          "expectedFound": 100000,
+          "baseline": {
+            "medianMs": 66.31612499999983,
+            "minMs": 60.00999999999976,
+            "maxMs": 72.6310410000001,
+            "samplesMs": [
+              66.31612499999983,
+              66.00974999999971,
+              60.00999999999976,
+              67.17366700000002,
+              60.09808299999986,
+              66.77887499999997,
+              61.95354099999986,
+              72.6310410000001,
+              63.010833000000275,
+              70.57699999999932,
+              66.70266600000014
+            ]
+          },
+          "candidate": {
+            "medianMs": 60.542625000000044,
+            "minMs": 54.740208000000166,
+            "maxMs": 104.0212919999999,
+            "samplesMs": [
+              104.0212919999999,
+              81.98141699999996,
+              61.338042000000314,
+              56.46137499999986,
+              60.56399999999985,
+              55.137750000000324,
+              60.707082999999784,
+              55.267875000000004,
+              60.542625000000044,
+              54.740208000000166,
+              59.77379199999996
+            ]
+          }
+        },
+        {
+          "name": "mixed",
+          "queries": 100000,
+          "expectedFound": 50000,
+          "baseline": {
+            "medianMs": 36.98225000000002,
+            "minMs": 31.70299999999952,
+            "maxMs": 41.446500000000015,
+            "samplesMs": [
+              39.47912499999984,
+              37.14583399999992,
+              33.752166999999645,
+              38.67491700000028,
+              36.06895899999927,
+              41.446500000000015,
+              36.1098750000001,
+              37.39512500000001,
+              34.66474999999991,
+              36.98225000000002,
+              31.70299999999952
+            ]
+          },
+          "candidate": {
+            "medianMs": 36.327665999999226,
+            "minMs": 32.33916599999975,
+            "maxMs": 40.80883300000005,
+            "samplesMs": [
+              36.02770799999962,
+              32.33916599999975,
+              39.89312500000051,
+              37.966582999999446,
+              40.80883300000005,
+              35.85033300000032,
+              37.027125000000524,
+              35.568084000000454,
+              37.33754200000021,
+              32.57454200000029,
+              36.327665999999226
+            ]
+          }
+        },
+        {
+          "name": "misses",
+          "queries": 100000,
+          "expectedFound": 0,
+          "baseline": {
+            "medianMs": 5.186999999999898,
+            "minMs": 4.92962499999976,
+            "maxMs": 5.271042000000307,
+            "samplesMs": [
+              5.003333999999995,
+              5.145416999999725,
+              5.19641700000011,
+              5.092207999999118,
+              5.092249999999694,
+              5.271042000000307,
+              5.221125000000029,
+              5.250374999999622,
+              4.92962499999976,
+              5.253999999999905,
+              5.186999999999898
+            ]
+          },
+          "candidate": {
+            "medianMs": 4.557791000000179,
+            "minMs": 4.348041000000194,
+            "maxMs": 4.759209000000737,
+            "samplesMs": [
+              4.488957999999911,
+              4.3923339999992095,
+              4.752333999999792,
+              4.489375000000109,
+              4.759209000000737,
+              4.666124999999738,
+              4.742291999999907,
+              4.348041000000194,
+              4.397500000000036,
+              4.557791000000179,
+              4.713749999999891
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "runtime": "1.4.2",
+      "verifiedRows": 1611629,
+      "baseline": {
+        "path": "outputs/compression-followup/v4-trusted-baseline.bin",
+        "bytes": 19121768,
+        "openMs": {
+          "medianMs": 4.218874999999571,
+          "minMs": 3.9106250000004366,
+          "maxMs": 6.89075000000048,
+          "samplesMs": [
+            6.89075000000048,
+            6.216292000000067,
+            5.8151249999991705,
+            4.019583000000239,
+            4.218874999999571,
+            3.9179579999999987,
+            3.9106250000004366,
+            6.1466669999999795,
+            4.05566699999963
+          ]
+        }
+      },
+      "candidate": {
+        "path": "outputs/compression-followup/trusted-v5.bin",
+        "bytes": 19121800,
+        "openMs": {
+          "medianMs": 6.214500000000044,
+          "minMs": 6.120332999999846,
+          "maxMs": 6.676041000000623,
+          "samplesMs": [
+            6.463749999999891,
+            6.166999999999462,
+            6.228250000000116,
+            6.214500000000044,
+            6.127542000000176,
+            6.267499999999927,
+            6.676041000000623,
+            6.171916999999667,
+            6.120332999999846
+          ]
+        }
+      },
+      "measurements": [
+        {
+          "name": "hits",
+          "queries": 100000,
+          "expectedFound": 100000,
+          "baseline": {
+            "medianMs": 66.66616700000031,
+            "minMs": 60.17379200000005,
+            "maxMs": 70.26925000000028,
+            "samplesMs": [
+              65.84679200000028,
+              70.26925000000028,
+              67.31812500000024,
+              68.59162500000002,
+              64.99183300000004,
+              66.66616700000031,
+              60.17379200000005,
+              65.94879200000014,
+              63.197000000000116,
+              68.5746250000002,
+              66.69879200000014
+            ]
+          },
+          "candidate": {
+            "medianMs": 60.76970900000015,
+            "minMs": 54.829749999999876,
+            "maxMs": 63.25491699999975,
+            "samplesMs": [
+              63.25491699999975,
+              55.10545900000034,
+              61.03541600000017,
+              60.76970900000015,
+              61.0975840000001,
+              55.09470800000008,
+              59.579959000000144,
+              54.829749999999876,
+              61.00599999999986,
+              56.963374999999814,
+              61.37866600000052
+            ]
+          }
+        },
+        {
+          "name": "mixed",
+          "queries": 100000,
+          "expectedFound": 50000,
+          "baseline": {
+            "medianMs": 38.79899999999998,
+            "minMs": 33.03229200000078,
+            "maxMs": 43.50054200000068,
+            "samplesMs": [
+              40.212375000000065,
+              42.924165999999786,
+              40.079500000000735,
+              38.79899999999998,
+              35.640625,
+              39.51287499999944,
+              35.60349999999926,
+              36.99904199999946,
+              43.50054200000068,
+              37.36712499999976,
+              33.03229200000078
+            ]
+          },
+          "candidate": {
+            "medianMs": 35.94054099999994,
+            "minMs": 31.93225000000075,
+            "maxMs": 40.155291000000034,
+            "samplesMs": [
+              36.70695799999976,
+              35.60670800000025,
+              38.25508300000001,
+              34.82287499999984,
+              40.155291000000034,
+              35.50025000000005,
+              39.1727920000003,
+              34.5347499999998,
+              35.94054099999994,
+              31.93225000000075,
+              36.095124999999825
+            ]
+          }
+        },
+        {
+          "name": "misses",
+          "queries": 100000,
+          "expectedFound": 0,
+          "baseline": {
+            "medianMs": 5.180207999999766,
+            "minMs": 5.0304159999996045,
+            "maxMs": 5.4768749999993815,
+            "samplesMs": [
+              5.071042000000489,
+              5.180207999999766,
+              5.210207999999511,
+              5.4551659999997355,
+              5.335332999999991,
+              5.0953329999993,
+              5.132625000000189,
+              5.4768749999993815,
+              5.2511249999997744,
+              5.0304159999996045,
+              5.125375000000531
+            ]
+          },
+          "candidate": {
+            "medianMs": 4.622457999999824,
+            "minMs": 4.233333999999559,
+            "maxMs": 4.87237499999992,
+            "samplesMs": [
+              4.6001249999999345,
+              4.438166999999339,
+              4.87237499999992,
+              4.622457999999824,
+              4.759208000000399,
+              4.301499999999578,
+              4.668792000000394,
+              4.233333999999559,
+              4.650791999999456,
+              4.295833999999559,
+              4.70770900000025
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "sourceHashes": {
+    "src/bairro-runs.ts": "26c610b452c5b07ff3d91390c205717d99d10687808be065adb694bf4f08da83",
+    "src/bairro.ts": "2ed6355629f1838022bf83746d133132ac94df5f29d3a7ec249d384932fe2433",
+    "src/binary-db-errors.ts": "0bdc3df4e30c87995db56411959750eea11e65f9590721938c3f76ab41fb99a0",
+    "src/binary-db-format.ts": "0a3eb37ee5114702579cb1e8fe73354c6160c0d65f86e69d339ad096d7d70fe5",
+    "src/binary-db-integrity.ts": "be02155872118cf09a4b26db952c477fa953e98c6dbb4f80c556036eb5a3faac",
+    "src/binary-db-reader.ts": "fb19cf8b603b76eceaa27918fd7c3fdced8931a4729285315582a9e72f224a05",
+    "src/binary-db-validator.ts": "1e516e3c0e95460c9e709c581740d1abb3b28887f57a56023cd1d1336b39bcff",
+    "src/binary-db-writer.ts": "57201c7df813115e2ce7f1c068bf1a1703fe23842ba73f4585b284ea5e74c979",
+    "src/cep.ts": "67dbebe7e2a8de764af09c97f06e769bfd6f7c8b3a1dd7b320d1d283aea27d63",
+    "src/cli.ts": "2bcd054121d2a35a61df05ca09bcd624a0b421b6b969d23e9440e34c61b11b08",
+    "src/cron-service.ts": "f4e6edc2d5c530b07d8465c7729a3093bd50d89d05ddc937def2457c7f9b4b5a",
+    "src/database-service.ts": "7b99d8b21aba878b42cb26db09a24f0b2438a7b71804b4001725e2a38a1fe17a",
+    "src/db.ts": "fed529f09c0e1275e8b562721cb8bddfca8a3824c7682ef3b2721d131b3cf354",
+    "src/dne-source-parser.ts": "f2220568e6c5f6c0affd98afbb428d11b3fa9a6db23cedcd05f246c74322bdb3",
+    "src/dne-source-quality.ts": "0abf4cfdd1f7b711d8ee9633a01b35bc4f4663146c56cbe238c3960f76d2154e",
+    "src/dne-source.ts": "f0fd5d118fd0ac99849706fb387d97ec4ec71f713ff0a5652aa204f5a8e829e0",
+    "src/errors.ts": "4ff1540d99d7fc3ffb305353d2ad43a8e45fedb2bad8cc1be983f2e7e37879be",
+    "src/fetch-lock.ts": "9ccd049de3d8ab287f41d11ea077c4fee0e6612cedc8f534d2a4fdace562141f",
+    "src/fsst-encoder.ts": "89e1383afbf841c4270db17d9870b062ac685f49249c2216e9d6e3dccca9a589",
+    "src/fsst.ts": "3512d3962fea7bbc756700dea0d71e90b05b2b9cad7bbc4da30839b75e023855",
+    "src/index.ts": "708d5bcff1bce0593af753e52f1c0f4ad4345572f772143ff72a9b93783a6977",
+    "src/library.ts": "9745198cdfa5480be8349fa085e2bd4fb3248c9abc30c8f38212305f295adf52",
+    "src/locality-runs.ts": "9e491295593280811c00638359122a5b3a6ab623098a3adc98b6e5747e7d615e",
+    "src/package-version.ts": "e3d3d58096512286394f566f2f9cc7e7407b9132c6db3184f84286478044a7e6",
+    "src/packed-bits.ts": "326600c3c07222b4ac638a0b7fc68064fdc440f2eb255a47d364bbf73cae9585",
+    "src/parallel-download.ts": "db0b495e836fbfb3eb8d9ebc33e646d97d0bc148b6f8abe61d07a5009d02bc74",
+    "src/resolver.ts": "d952d6d685900167cd3c4a8867ca1906ea6aefd2e200247ec759adbbd3746253",
+    "src/schema.ts": "4ed90734ca0cbffe724f4f58507150ae08ed466b07545ffddebf66186d143adc",
+    "src/settings.ts": "9048beae2bec96dd8938479b7db0e3e8a69283b77038cf8cc0a9dc1572d8b448",
+    "src/sqlite-db-errors.ts": "6a10e41e3215cf1ff6479fe0141e279d911bafea75db7f9abfd7118e2a00b63e",
+    "src/sqlite-db-insert.ts": "abe573e5a346203a93b99d191fb7828261e0d2720a3c58e8ded907cc33c65055",
+    "src/sqlite-db-reader.ts": "a454addbef5dda9c31e5e2a70387b3070e1d3b3e969dcc28fc4477a64da37187",
+    "src/sqlite-db-schema.ts": "ac0d6f19b7fea2b89bd41cdcc8aaf957f9c60e8ef97d871acb966925276e1a9e",
+    "src/sqlite-db-writer.ts": "42da19d0be264c5c283bc79b9d8ca3c3359b906b3c7ae8ba7ed78d085d337462",
+    "src/types.ts": "7a740d11bc143743aa2a1285969c47f743f820a8c23d2de3ded3decf5e806bb8",
+    "src/update-policy.ts": "a9e213c2e8b7e72a68061e70354433cb600d0de4692f0e5087fecf9bfc21e8ab",
+    "outputs/compression-followup/baseline-v4/src/bairro-runs.ts": "b64795438b55dc211a82f7508c46e4807ddfa07632c40312c7e1d6ef02b21f7d",
+    "outputs/compression-followup/baseline-v4/src/bairro.ts": "2ed6355629f1838022bf83746d133132ac94df5f29d3a7ec249d384932fe2433",
+    "outputs/compression-followup/baseline-v4/src/binary-db-errors.ts": "0bdc3df4e30c87995db56411959750eea11e65f9590721938c3f76ab41fb99a0",
+    "outputs/compression-followup/baseline-v4/src/binary-db-format.ts": "e53e8837c1b08e5594ae453421d3a16877dc5e8d35c2e36212f68b14c73b1bd5",
+    "outputs/compression-followup/baseline-v4/src/binary-db-reader.ts": "052de69229a34d57403304dc133193a28e5c6cea6fc42f792f67e057fb2a437b",
+    "outputs/compression-followup/baseline-v4/src/binary-db-writer.ts": "a1af6880a87dfee87dee7696f8f81d09bf55bac45867108757fde8f6029760ab",
+    "outputs/compression-followup/baseline-v4/src/cep.ts": "67dbebe7e2a8de764af09c97f06e769bfd6f7c8b3a1dd7b320d1d283aea27d63",
+    "outputs/compression-followup/baseline-v4/src/cli.ts": "2bcd054121d2a35a61df05ca09bcd624a0b421b6b969d23e9440e34c61b11b08",
+    "outputs/compression-followup/baseline-v4/src/cron-service.ts": "f4e6edc2d5c530b07d8465c7729a3093bd50d89d05ddc937def2457c7f9b4b5a",
+    "outputs/compression-followup/baseline-v4/src/database-service.ts": "7b99d8b21aba878b42cb26db09a24f0b2438a7b71804b4001725e2a38a1fe17a",
+    "outputs/compression-followup/baseline-v4/src/db.ts": "fed529f09c0e1275e8b562721cb8bddfca8a3824c7682ef3b2721d131b3cf354",
+    "outputs/compression-followup/baseline-v4/src/dne-source-parser.ts": "f2220568e6c5f6c0affd98afbb428d11b3fa9a6db23cedcd05f246c74322bdb3",
+    "outputs/compression-followup/baseline-v4/src/dne-source-quality.ts": "0abf4cfdd1f7b711d8ee9633a01b35bc4f4663146c56cbe238c3960f76d2154e",
+    "outputs/compression-followup/baseline-v4/src/dne-source.ts": "f0fd5d118fd0ac99849706fb387d97ec4ec71f713ff0a5652aa204f5a8e829e0",
+    "outputs/compression-followup/baseline-v4/src/errors.ts": "4ff1540d99d7fc3ffb305353d2ad43a8e45fedb2bad8cc1be983f2e7e37879be",
+    "outputs/compression-followup/baseline-v4/src/fetch-lock.ts": "9ccd049de3d8ab287f41d11ea077c4fee0e6612cedc8f534d2a4fdace562141f",
+    "outputs/compression-followup/baseline-v4/src/fsst-encoder.ts": "89e1383afbf841c4270db17d9870b062ac685f49249c2216e9d6e3dccca9a589",
+    "outputs/compression-followup/baseline-v4/src/fsst.ts": "1708e283983820214766de099e0572bec6fd6d3d6b8371d41b9a5c33fe2ff56a",
+    "outputs/compression-followup/baseline-v4/src/index.ts": "708d5bcff1bce0593af753e52f1c0f4ad4345572f772143ff72a9b93783a6977",
+    "outputs/compression-followup/baseline-v4/src/library.ts": "9745198cdfa5480be8349fa085e2bd4fb3248c9abc30c8f38212305f295adf52",
+    "outputs/compression-followup/baseline-v4/src/locality-runs.ts": "146833f2d2f333c4988b6693aadd2e143298f9405b94d44631aabf660f630b36",
+    "outputs/compression-followup/baseline-v4/src/package-version.ts": "e3d3d58096512286394f566f2f9cc7e7407b9132c6db3184f84286478044a7e6",
+    "outputs/compression-followup/baseline-v4/src/packed-bits.ts": "326600c3c07222b4ac638a0b7fc68064fdc440f2eb255a47d364bbf73cae9585",
+    "outputs/compression-followup/baseline-v4/src/parallel-download.ts": "db0b495e836fbfb3eb8d9ebc33e646d97d0bc148b6f8abe61d07a5009d02bc74",
+    "outputs/compression-followup/baseline-v4/src/resolver.ts": "d952d6d685900167cd3c4a8867ca1906ea6aefd2e200247ec759adbbd3746253",
+    "outputs/compression-followup/baseline-v4/src/schema.ts": "4ed90734ca0cbffe724f4f58507150ae08ed466b07545ffddebf66186d143adc",
+    "outputs/compression-followup/baseline-v4/src/settings.ts": "9048beae2bec96dd8938479b7db0e3e8a69283b77038cf8cc0a9dc1572d8b448",
+    "outputs/compression-followup/baseline-v4/src/sqlite-db-errors.ts": "6a10e41e3215cf1ff6479fe0141e279d911bafea75db7f9abfd7118e2a00b63e",
+    "outputs/compression-followup/baseline-v4/src/sqlite-db-insert.ts": "abe573e5a346203a93b99d191fb7828261e0d2720a3c58e8ded907cc33c65055",
+    "outputs/compression-followup/baseline-v4/src/sqlite-db-reader.ts": "a454addbef5dda9c31e5e2a70387b3070e1d3b3e969dcc28fc4477a64da37187",
+    "outputs/compression-followup/baseline-v4/src/sqlite-db-schema.ts": "ac0d6f19b7fea2b89bd41cdcc8aaf957f9c60e8ef97d871acb966925276e1a9e",
+    "outputs/compression-followup/baseline-v4/src/sqlite-db-writer.ts": "42da19d0be264c5c283bc79b9d8ca3c3359b906b3c7ae8ba7ed78d085d337462",
+    "outputs/compression-followup/baseline-v4/src/types.ts": "7a740d11bc143743aa2a1285969c47f743f820a8c23d2de3ded3decf5e806bb8",
+    "outputs/compression-followup/baseline-v4/src/update-policy.ts": "a9e213c2e8b7e72a68061e70354433cb600d0de4692f0e5087fecf9bfc21e8ab"
+  }
+}

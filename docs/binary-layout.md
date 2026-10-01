@@ -1,10 +1,10 @@
 # DNE binary database format
 
-This document specifies version 4 of the `@konstit/dne` binary database format. It is intended for authors of readers in languages other than TypeScript. Version 4 readers do not accept version 1, version 2, or version 3 files.
+This document specifies version 5 of the `@konstit/dne` binary database format. It is intended for authors of readers in languages other than TypeScript. Version 5 readers do not accept version 1, version 2, version 3, or version 4 files.
 
-The format is immutable and optimized for memory-mapped, read-only CEP lookup. It stores rows in CEP order, splits each CEP into a prefix directory and a packed suffix, interns strings in per-column dictionaries, and stores nullable low-density columns with bitmaps and rank indexes.
+The format is an immutable artifact produced by a trusted generation process and is optimized for memory-mapped, read-only CEP lookup. It stores rows in CEP order, splits each CEP into a prefix directory and a packed suffix, interns strings in per-column dictionaries, and stores nullable low-density columns with bitmaps and rank indexes.
 
-Version 4 files do not contain a checksum. Readers that accept files from untrusted sources must validate every offset, length, count, and identifier before dereferencing it.
+Every version 5 file ends with a 32-byte raw SHA-256 digest. The digest covers every preceding byte, including the header and alignment padding, and excludes the digest itself. The canonical writer validates the complete serialized byte sequence before computing the digest. Under the trusted-producer and immutability contract, an opening reader checks the minimum header, version, declared size, actual size, and digest before using the layout; it does not need to rescan every section, ID, offset, or relationship. Queries validate their input and decode the selected row directly. SHA-256 verifies integrity against the stored digest; it does not authenticate the producer, since an actor able to rewrite the file and digest can create another internally consistent artifact outside this contract.
 
 ## Conventions
 
@@ -58,7 +58,7 @@ Consequently, `Wc = width(N)`, `Wm = width(M)`, and each dictionary uses `width(
 
 ## File overview
 
-A file consists of a fixed 256-byte header followed by 27 sections in a fixed order.
+A file consists of a fixed 256-byte header, 27 sections in a fixed order, alignment padding, and a 32-byte SHA-256 footer.
 
 ```text
 +---------------------------+ 0
@@ -78,13 +78,15 @@ A file consists of a fixed 256-byte header followed by 27 sections in a fixed or
 +---------------------------+
 | Locality fallback names   | bitmap, ranks, sparse dictionary IDs
 +---------------------------+
-| Final padding             | file size is a multiple of 8
+| Final padding             | to the next 8-byte boundary
++---------------------------+
+| SHA-256 footer            | 32 raw digest bytes
 +---------------------------+
 ```
 
-Every section begins at an offset divisible by 8. Zero-filled padding may appear between sections and after the final section. Writers must zero reserved bytes and padding. Readers should ignore their contents.
+Every section begins at an offset divisible by 8. Zero-filled padding may appear between sections and before the footer. Writers must zero reserved bytes and padding. Readers should ignore their contents. The footer is not a section-directory entry and starts immediately after the aligned end of the final section.
 
-The file size, all section offsets, and all section lengths are stored as `u32`, so a version 4 file cannot exceed `4294967295` bytes.
+The file size, all section offsets, and all section lengths are stored as `u32`, so a version 5 file cannot exceed `4294967295` bytes.
 
 ## Header
 
@@ -93,10 +95,10 @@ The header occupies bytes `0` through `255`.
 | Offset | Size | Type | Field | Required value or meaning |
 | ---: | ---: | --- | --- | --- |
 | 0 | 8 | bytes | Magic | `44 4e 45 42 49 4e 00 00`, or `DNEBIN\0\0` |
-| 8 | 2 | `u16` | Version | `4` |
+| 8 | 2 | `u16` | Version | `5` |
 | 10 | 2 | `u16` | Header size | `256` |
 | 12 | 4 | `u32` | Row count | `N`, must be greater than zero |
-| 16 | 4 | `u32` | File size | Exact file length, including final padding |
+| 16 | 4 | `u32` | File size | Exact file length, including final alignment padding and the 32-byte footer |
 | 20 | 1 | `u8` | CEP prefix offset width | `Wc`, one of `1`, `2`, `3`, or `4` |
 | 21 | 1 | `u8` | Municipality ID width | `Wm`, one of `1`, `2`, `3`, or `4` |
 | 22 | 1 | `u8` | Sparse rank shift | `8`, meaning one rank block per 256 rows |
@@ -148,7 +150,19 @@ The entries have the following fixed order. The byte range column identifies the
 | 25 | 232-239 | `localidadeNomeRanks` | `(ceil(N / 256) + 1) * 4` |
 | 26 | 240-247 | `localidadeNomeIds` | `L * W(bairro)` |
 
-Sections must appear in directory order, must not overlap, and must fit entirely inside the file. The official writer aligns every section to 8 bytes.
+Sections must appear in directory order, must not overlap, and must fit before the footer. The official writer aligns every section to 8 bytes.
+
+### Footer
+
+The footer is not listed in the section directory. Let `end` be the end offset of the final section and let `footer_offset = ceil(end / 8) * 8`. The writer fills the bytes from `end` through `footer_offset - 1` with zeroes, then writes the 32-byte raw SHA-256 digest at `footer_offset`:
+
+```text
+digest = SHA-256(file[0:footer_offset])
+file[footer_offset:footer_offset + 32] = digest
+file_size = footer_offset + 32
+```
+
+The digest input includes the header, every section, and all alignment padding. It excludes the footer itself. The declared `File size` field must equal `file_size`, and no bytes may follow the footer.
 
 ## Logical row model
 
@@ -192,7 +206,7 @@ The TypeScript readers expose descriptive string unions in `DneRow`. The flag va
 
 The metadata section is a UTF-8 encoded JSON object with no length prefix, byte-order mark, or terminator. Its byte length comes from the section directory.
 
-The official writer serializes the key/value metadata from the source SQLite database. Current values are strings, but a reader should at minimum validate that the top-level JSON value is an object.
+The official writer serializes the key/value metadata from the source SQLite database. Current values are strings, and the generation validator requires the UTF-8 JSON value to be an object.
 
 ## CEP index
 
@@ -232,7 +246,7 @@ word       = data[byte_index] | (data[byte_index + 1] << 8)
 suffix     = (word >> shift) & 0x3ff
 ```
 
-The packed stream length guarantees that the two bytes needed by a valid row are present. A strict reader should reject decoded suffixes greater than `999`, even though 10 bits can represent values through `1023`.
+The packed stream length guarantees that the two bytes needed by a valid row are present. The generation validator rejects decoded suffixes greater than `999`, even though 10 bits can represent values through `1023`. A trusted reader can rely on this validated invariant during direct lookup.
 
 ### CEP lookup
 
@@ -282,7 +296,7 @@ The section contains these contiguous arrays, with offsets relative to its start
 
 Run starts are strictly increasing, begin at zero, and are less than `N`. Directory entry `j` is the run containing row `j * 256`; its final entry is the sentinel `Rl`. A row lookup searches for the greatest run start not exceeding the row, between directory entries `floor(row / 256)` and the next entry, inclusive when that next entry is less than `Rl`.
 
-Readers must validate the exact directory values and the sentinel. The row's municipality and flags must be read from the same run, including when only the flags changed.
+The generation validator checks the exact directory values and the sentinel. The row's municipality and flags must be read from the same run, including when only the flags changed. A trusted reader can use those validated boundaries directly.
 
 ## Neighborhood run index
 
@@ -307,7 +321,7 @@ The header is followed, without padding, by four arrays:
 
 The writer selects `q = floor(log2(N / R))`. To find the index for row `r`, set `h = floor(r / 2^q)`, then use `select0(h)` to find zero number `h` in the high bitvector. The number of runs with high part at most `h` is `end = select0(h) - h`; the first run in bucket `h` is `begin = 0` when `h = 0`, otherwise `begin = select0(h - 1) - (h - 1)`. Find the last low part at most `r mod 2^q` in `[begin, end)`, or use run `begin - 1` if there is none. Its stored neighborhood index is the value for row `r`. The sampled zero positions bound the scan needed for each `select0`.
 
-Readers must verify exactly `R` one bits and `Z` zero bits, valid samples, a first run at row zero, strictly increasing starts below `N`, indexes in `0..B`, and different indexes in adjacent runs.
+The generation validator verifies exactly `R` one bits and `Z` zero bits, valid samples, a first run at row zero, strictly increasing starts below `N`, indexes in `0..B`, and different indexes in adjacent runs. A trusted reader can decode the run index without repeating this full scan at open time.
 
 ## Neighborhood registry and intervals
 
@@ -402,7 +416,7 @@ The municipality-name and state-code dictionary IDs are required and must not be
 
 There are seven independent dictionaries: `logradouro`, `complemento`, `bairro`, `bairroAbreviado`, `municipio`, `uf`, and `nome`. Strings are UTF-8 encoded and front-coded in blocks of eight.
 
-The official writer deduplicates and lexicographically sorts each set of strings before assigning IDs. Dictionary order is not needed for lookup correctness; readers use the stored IDs and block metadata.
+The official writer deduplicates and sorts each set of strings in JavaScript lexicographic order (UTF-16 code units) before assigning IDs. The generation validator checks the decoded entries against that order. Dictionary order is not needed for lookup correctness; readers use the stored IDs and block metadata.
 
 Plain dictionaries store each decoded UTF-8 string in at most 255 bytes. The `logradouro` dictionary may use the FSST codec for the bytes after its front-coded prefix. FSST entries are also limited to 255 decoded bytes; one entry's encoded code payload is limited to 510 bytes.
 
@@ -466,11 +480,11 @@ For a plain dictionary, `lengths[i]` is the complete UTF-8 byte length of entry 
 
 The plain suffix-data area concatenates `encoded_string[prefix_length:]` for every dictionary entry in ID order. The FSST code-payload area concatenates the encoded form of the same decoded suffixes. Its codes are bytes `0..254` for symbols and `255` for an escape followed by one literal byte.
 
-The FSST symbol table contains 255 one-byte lengths followed by 255 fixed eight-byte slots. A length of zero marks an unused symbol; a used symbol length must be `1..8`. Each slot is a little-endian eight-byte value, and only the first `length` bytes are copied to the decoded output. The decoder validates all 255 symbol lengths when opening the file, without scanning the code payload.
+The FSST symbol table contains 255 one-byte lengths followed by 255 fixed eight-byte slots. A length of zero marks an unused symbol; a used symbol length must be `1..8`. Each slot is a little-endian eight-byte value, and only the first `length` bytes are copied to the decoded output. Bytes after `length` must be zero, including the entire slot of an unused symbol. The generation validator validates all 255 symbol-table lengths, slots, and code-payload entries. A trusted reader can use the validated table after the file digest has been verified.
 
 ### Dictionary decoding
 
-ID zero is decoded as null only for fields that permit null. Readers should reject IDs greater than the dictionary entry count. Header fields and all internal array offsets must be validated when opening the file: the block count, block shift, ID width, codec and length-width combination, contiguous array offsets, and FSST symbol table must agree with the dictionary section length. Code payload bounds are checked on demand for the requested ID.
+ID zero is decoded as null only for fields that permit null. The generation validator rejects IDs greater than the dictionary entry count. It also validates the block count, block shift, ID width, codec and length-width combination, contiguous array offsets, and FSST symbol table against the dictionary section length. A trusted reader can use these values directly after the digest check instead of rescanning every dictionary at open time. Code payload bounds and symbol references are therefore already covered by generation validation when a query selects an ID.
 
 To decode a nonzero plain dictionary ID:
 
@@ -606,35 +620,45 @@ cep_number = prefix * 1000 + suffix
 cep = decimal_string(cep_number).left_pad_with_zeroes(8)
 ```
 
-## Reader validation checklist
+## Generation validation checklist
 
-A robust reader should perform these checks before or during lookup:
+The canonical writer must apply the following checks to the complete serialized byte sequence before computing the footer digest.
 
-1. The file is at least 256 bytes and has the exact magic, version, and header size.
-2. The declared file size equals the actual file size.
+1. The file is at least 288 bytes and has the exact magic, version `5`, and header size.
+2. The declared file size equals the actual file size, the footer starts at the aligned end of the final section, and the file reserves exactly 32 bytes for the digest. The digest is computed only after these checks complete.
 3. `N` and `M` are nonzero.
-4. Integer widths are in the range 1 through 4 and their corresponding counts fit those widths.
+4. Integer widths are the minimum widths in the table above for their corresponding counts or maximum identifiers.
 5. The sparse rank shift is 8, the dictionary block shift is 3, and the section count is 27.
-6. Every section is inside the file, appears in directory order, and does not overlap the preceding section.
+6. Every section is before the footer, appears in directory order, and does not overlap the preceding section.
 7. Every fixed-size section matches the formulas in the section-directory table.
 8. The CEP prefix directory begins with zero, ends with `N`, is monotonic, and contains no value greater than `N`.
 9. Every decoded CEP suffix is at most 999 and suffixes are strictly increasing within each prefix range.
 10. Each dictionary has a valid 32-byte header, contiguous internal arrays, valid block offsets, and an ID width capable of representing its entry count. Plain dictionaries use codec `0` and header byte 31 equal to `0`; only `logradouro` may use codec `2` with header byte 31 equal to `1` or `2`.
-11. An FSST symbol table has exactly 255 lengths in `0..8`, 255 eight-byte little-endian slots, and a code payload after the table. On demand, every selected block has valid next-block bounds, every compressed length is at most `510`, every symbol and escape is valid, decoded output is at most `255` bytes, and a requested final block entry consumes the block exactly.
-12. Every dense or sparse dictionary ID is zero where permitted or is no greater than its dictionary entry count.
-13. The final sparse rank equals the number of sparse IDs, rank values are monotonic, and unused bitmap bits are ignored or verified as zero.
-14. Every municipality ID is between 1 and `M`; required municipality-name and state-code IDs are nonzero and in range.
-15. Metadata is valid UTF-8 JSON whose top-level value is an object.
-16. Neighborhood original identifiers are positive and strictly increasing; every locality identifier is positive and all dictionary references are valid.
-17. The neighborhood run index has valid boundaries, samples, and indexes in `0..B`; fallback names occur only with index zero and locality type `D` or `P`.
-18. Range offsets start at zero, are monotonic, and end at `F`; each interval has `0 <= initial <= final <= 99999999`, and intervals per neighborhood are strictly ordered by `(initial, final)`.
-19. Municipality/locality runs have strictly increasing starts beginning at zero, exact directory entries and sentinel, and the same number of IDs and flags.
-20. Each locality byte has a situation in `0..3`, a type index in `0..2`, and zero reserved bits.
+11. Every decoded dictionary entry is strict UTF-8, obeys the maximum decoded length, reconstructs its front-coded prefix, and appears in the canonical lexicographic order. The corresponding suffix and code-payload lengths consume each dictionary section exactly.
+12. An FSST symbol table has exactly 255 lengths in `0..8`, 255 eight-byte little-endian slots, and a code payload after the table. Every block has valid next-block bounds; each compressed entry has a length at most `510`, valid symbols and escapes, decoded output at most `255` bytes, and a final entry that consumes its block exactly.
+13. Every dense or sparse dictionary ID is zero where permitted or is no greater than its dictionary entry count.
+14. Every sparse rank entry equals the exact popcount before its 256-row block, rank values are monotonic, the final rank equals the number of sparse IDs, and unused bitmap bits are zero.
+15. Every municipality ID is between 1 and `M`; municipality records are sorted by ascending seven-digit IBGE code stored in 24 bits, required municipality-name and state-code IDs are nonzero and in range, and each code's first two digits match its UF's IBGE state code. Every UF dictionary entry is a canonical uppercase abbreviation, including unused entries.
+16. Metadata is valid strict UTF-8 JSON without a BOM, whose top-level value is an object with string values.
+17. Neighborhood original identifiers are positive and strictly increasing; every locality identifier is positive, every neighborhood UF reference is valid, required names are nonempty, and all dictionary references are valid. Each row's neighborhood and municipality have the same UF.
+18. The neighborhood run index has valid boundaries, samples, exact one- and zero-bit counts, and indexes in `0..B`; fallback names occur only with index zero and locality type `D` or `P`.
+19. Range offsets start at zero, are monotonic, and end at `F`; each interval has `0 <= initial <= final <= 99999999`, and intervals per neighborhood are strictly ordered by `(initial, final)`.
+20. Municipality/locality runs have strictly increasing starts beginning at zero, exact directory entries and sentinel, the same number of IDs and flags, and distinct adjacent `(municipality ID, flags)` pairs.
+21. Each locality byte has a situation in `0..3`, a type index in `0..2`, and zero reserved bits; locality fallback and neighborhood relationships agree with those indicators.
 
-Bounds checks are still required at point of use, even after initial validation. A memory-mapped file must not be truncated or replaced in place while readers are using that mapping.
+## Opening and query contract
+
+The trusted reader opens a file in this order:
+
+1. Check that the mapped input contains the fixed header, then read the magic, version, header size, and declared file size.
+2. Reject a version other than `5`, a header other than `256`, or a declared size that differs from the actual file length or cannot contain the footer.
+3. Treat the final 32 bytes as the footer and compare its raw value with SHA-256 of all preceding bytes.
+4. After the digest matches, parse the section directory and dictionaries using the generation invariants above; the trusted layout places the footer after the aligned end of the final section. Do not rescan every ID, offset, string, or relationship at open time.
+
+Queries retain invalid-input handling and the closed-reader check, then decode the requested row directly from the trusted layout. The public reader continues to report I/O, unsupported-version, size, checksum, and closed-reader errors. The trusted supplier and immutability contract requires that a memory-mapped file is not truncated or replaced in place while readers use it. A SHA-256 match alone does not establish producer authenticity.
 
 ## Compatibility
 
-Readers implementing this document must require version `4` and the 27-section layout above. Earlier binaries, including versions `1`, `2`, and `3`, are unsupported and must be regenerated from the DNE source. The public `DneBinaryDatabaseReader` API is unchanged. A reader must reject mismatched versions, header sizes, section counts, sparse rank shifts, dictionary block shifts, and dictionary codec fields rather than guessing their meaning.
+Readers implementing this document must require version `5` and the 27-section layout above. Earlier binaries, including versions `1`, `2`, `3`, and `4`, are unsupported and must be regenerated from the DNE source. The public `DneBinaryDatabaseReader` API is unchanged. The generator must reject mismatched header constants, section counts, sparse rank shifts, dictionary block shifts, and dictionary codec fields rather than guessing their meaning. A trusted reader checks the minimum header, version, declared size, and checksum, then relies on the validated immutable layout.
 
 There is no platform-endianness marker. The on-disk representation is always little-endian, independent of the reader's host architecture.

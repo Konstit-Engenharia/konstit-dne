@@ -61,7 +61,11 @@ O leitor abre a base incluída no pacote, independentemente do diretório de tra
 
 Os dois leitores oferecem consultas por CEP, bairro e faixas de CEP. Para abrir arquivos próprios na API, use `new DneBinaryDatabaseReader('/dados/dne.bin')` ou `new DneDatabaseReader('/dados/dne.db')`, importados de `@konstit/dne`.
 
-O formato binário atual é a versão 4. Ele mantém a API do leitor e pode usar FSST para compactar os sufixos do dicionário de logradouros; os demais dicionários continuam no formato simples. O encoder e o decoder FSST são escritos em TypeScript e executados pelo Bun. A especificação do layout está em [Formato binário](docs/binary-layout.md).
+O formato binário atual é a versão 5. Ele mantém a API do leitor e pode usar FSST para compactar os sufixos do dicionário de logradouros; os demais dicionários continuam no formato simples. O encoder e o decoder FSST são escritos em TypeScript e executados pelo Bun.
+
+Na geração, o processo valida integralmente os bytes serializados antes de calcular o hash. Cada arquivo termina com um rodapé SHA-256 sobre todos os bytes anteriores, incluindo o cabeçalho e o preenchimento de alinhamento.
+
+O fluxo pressupõe uma base gerada por um processo confiável e mantida imutável durante o uso. A abertura verifica cabeçalho, versão, tamanho e checksum antes de usar o layout validado. As consultas verificam a entrada e o estado de `close()` e decodificam diretamente. Os erros de E/S, versão, tamanho, checksum e leitor fechado continuam tipados. O SHA-256 verifica a integridade do arquivo, mas não autentica a origem do produtor. Arquivos binários das versões `1` a `4` precisam ser regenerados. A especificação do layout está em [Formato binário](docs/binary-layout.md).
 
 ## CLI: criar e consultar sua própria base
 
@@ -121,7 +125,7 @@ No benchmark de **30/09/2026**, em um **Apple M4 com Bun 1.4.2**, o leitor biná
 
 A base continha 1.611.629 CEPs. Cada rodada consultou 50 mil CEPs existentes e 50 mil ausentes, com duas rodadas de aquecimento e nove medições. Os tempos excluem a abertura da base; os tamanhos estão em MB decimais.
 
-Esta medição histórica usou o formato binário v1 e não representa o formato v4 atual. A investigação e os resultados disponíveis estão em [desempenho](docs/performance.md).
+Esta medição histórica usou o formato binário v1 e não representa o formato v5 atual. A investigação e os resultados disponíveis estão em [desempenho](docs/performance.md).
 
 Veja a [metodologia, os comandos de reprodução e os resultados de importação](https://github.com/Konstit-Engenharia/konstit-dne/blob/main/docs/performance.md). O benchmark de importação usa outra base e está documentado separadamente.
 

@@ -132,7 +132,7 @@ describe('published package', () => {
     run('bun', [join(installed, 'dist/index.js'), 'build', '--format', 'binary', '--db', database, '--source', source], otherCwd);
     const bytes = readFileSync(database);
     const dictionaryOffset = bytes.readUInt32LE(32 + 13 * 8);
-    expect(bytes.readUInt16LE(8)).toBe(4);
+    expect(bytes.readUInt16LE(8)).toBe(5);
     expect(bytes[dictionaryOffset + 30]).toBe(2);
     const output = run('bun', [
       '--eval',

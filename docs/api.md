@@ -35,7 +35,7 @@ Nenhum download é feito na instalação ou na consulta. A base incluída corres
 const reader = new DneBinaryDatabaseReader('/dados/dne.bin');
 ```
 
-O arquivo deve permanecer imutável enquanto o leitor estiver aberto. O construtor valida o cabeçalho, a versão, as seções, os dicionários e os metadados antes de liberar o leitor. `close()` pode ser chamado mais de uma vez. Depois de fechar, as consultas lançam `DneBinaryDatabaseClosedError`; `metadata()` e `rowCount()` continuam disponíveis.
+O arquivo deve permanecer imutável enquanto o leitor estiver aberto. A geração valida integralmente os bytes serializados antes de registrar o SHA-256. Ao abrir, o construtor verifica o cabeçalho mínimo, a versão, o tamanho declarado e o checksum; depois usa o layout validado para preparar o leitor. `close()` pode ser chamado mais de uma vez. Depois de fechar, as consultas lançam `DneBinaryDatabaseClosedError`; `metadata()` e `rowCount()` continuam disponíveis.
 
 ## Leitor SQLite
 
@@ -192,7 +192,7 @@ Todas as exceções binárias herdam de `DneBinaryDatabaseError`.
 | Classe                          | `code`                | Situação                                                                                                       |
 | ------------------------------- | --------------------- | -------------------------------------------------------------------------------------------------------------- |
 | `DneBinaryDatabaseIOError`      | `IO_ERROR`            | O arquivo não pôde ser aberto, mapeado ou lido. A propriedade `path` identifica o caminho.                     |
-| `DneBinaryDatabaseFormatError`  | `INVALID_FORMAT`      | O cabeçalho, as seções, os dicionários, os metadados ou um registro violam o formato.                          |
+| `DneBinaryDatabaseFormatError`  | `INVALID_FORMAT`      | O cabeçalho mínimo, o tamanho declarado ou o checksum violam o formato durante a abertura.                    |
 | `DneBinaryDatabaseVersionError` | `UNSUPPORTED_VERSION` | O arquivo declara uma versão que o leitor não suporta. `actualVersion` e `supportedVersion` ficam disponíveis. |
 | `DneBinaryDatabaseClosedError`  | `READER_CLOSED`       | Uma consulta foi feita depois de `close()`.                                                                    |
 

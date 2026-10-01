@@ -29,7 +29,7 @@ type DecoderState = {
 const states = new WeakMap<FsstDictionary, DecoderState>();
 const textDecoder = new TextDecoder();
 
-/** Check the fixed symbol table when opening a database, without scanning its payload. */
+/** Checks the fixed symbol table during generation. */
 export function validateFsstSymbols(data: DataView, symbolsOffset: number) {
   for (let code = 0; code < FSST_SYMBOL_COUNT; code++) {
     if (data.getUint8(symbolsOffset + code) > 8) {
@@ -112,4 +112,32 @@ export function readFsstString(mapped: Uint8Array, data: DataView, dictionary: F
     throw new DneBinaryDatabaseFormatError('Invalid binary FSST block length');
   }
   return textDecoder.decode(output.subarray(0, previousLength));
+}
+
+/** Decodes a validated FSST string directly; ID and stream bounds are trusted. */
+export function readTrustedFsstString(mapped: Uint8Array, data: DataView, dictionary: FsstDictionary, id: number): string {
+  const { lengths, words, output, view } = states.get(dictionary) ?? prepareDecoder(data, dictionary);
+  const index = id - 1;
+  const block = index >>> DICTIONARY_BLOCK_SHIFT;
+  let cursor = dictionary.suffixDataOffset + data.getUint32(dictionary.blockOffsetsOffset + block * 4, true);
+  let decodedLength = 0;
+  for (let current = block * DICTIONARY_BLOCK_SIZE; current <= index; current++) {
+    const compressedLength = dictionary.lengthWidth === 1
+      ? mapped[dictionary.lengthsOffset + current] as number
+      : data.getUint16(dictionary.lengthsOffset + current * 2, true);
+    const end = cursor + compressedLength;
+    let offset = mapped[dictionary.prefixesOffset + current] as number;
+    while (cursor < end) {
+      const code = mapped[cursor++] as number;
+      if (code === 255) {
+        output[offset++] = mapped[cursor++] as number;
+      } else {
+        view.setUint32(offset, words[code * 2] as number, true);
+        view.setUint32(offset + 4, words[code * 2 + 1] as number, true);
+        offset += lengths[code] as number;
+      }
+    }
+    decodedLength = offset;
+  }
+  return textDecoder.decode(output.subarray(0, decodedLength));
 }

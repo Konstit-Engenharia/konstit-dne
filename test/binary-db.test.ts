@@ -15,7 +15,11 @@ import {
   BINARY_SECTION_NAMES,
   SECTION_TABLE_OFFSET,
 } from '../src/binary-db-format.ts';
-import { DneBinaryDatabaseReader } from '../src/binary-db-reader.ts';
+import {
+  DneBinaryDatabaseFormatError,
+  DneBinaryDatabaseReader,
+} from '../src/binary-db-reader.ts';
+import { validateBinaryDatabaseBytes } from '../src/binary-db-validator.ts';
 import { buildBinaryDatabase } from '../src/binary-db-writer.ts';
 import {
   hasTable,
@@ -71,7 +75,7 @@ describe('binary database', () => {
         localidade_tipo: 'municipio',
         logradouro: 'Rua Endereco 1',
         municipio: 'Municipio 1',
-        municipio_cod_ibge: 3500001,
+        municipio_cod_ibge: 2900001,
         nome: null,
         uf: 'BA',
       });
@@ -145,7 +149,7 @@ describe('binary database', () => {
     }
   });
 
-  test('rejects unsupported binary versions and corrupt locality indicators', async () => {
+  test('rejects unsupported binary versions, checksum failures, and corrupt locality indicators', async () => {
     const sourcePath = join(workDir, 'invalid-localities');
     const sqlitePath = join(workDir, 'invalid-localities.db');
     const binaryPath = join(workDir, 'invalid-localities.bin');
@@ -165,21 +169,20 @@ describe('binary database', () => {
     for (const flag of [12, 15, 16, 255]) {
       const corrupted = original.slice();
       corrupted[flagsOffset] = flag;
+      expect(() => validateBinaryDatabaseBytes(corrupted)).toThrow(DneBinaryDatabaseFormatError);
+      expect(() => validateBinaryDatabaseBytes(corrupted)).toThrow('Invalid binary locality run');
       const path = join(workDir, `invalid-flag-${flag}.bin`);
       await Bun.write(path, corrupted);
-      const reader = new DneBinaryDatabaseReader(path);
-      try {
-        expect(() => reader.queryCep('10000000')).toThrow('Invalid binary locality indicators');
-      } finally {
-        reader.close();
-      }
+      expect(() => new DneBinaryDatabaseReader(path)).toThrow('SHA-256 checksum mismatch');
     }
 
     const truncated = original.slice();
     new DataView(truncated.buffer).setUint32(directoryOffset + 4, 0, true);
+    expect(() => validateBinaryDatabaseBytes(truncated)).toThrow(DneBinaryDatabaseFormatError);
+    expect(() => validateBinaryDatabaseBytes(truncated)).toThrow('Invalid bairros section padding');
     const truncatedPath = join(workDir, 'truncated-flags.bin');
     await Bun.write(truncatedPath, truncated);
-    expect(() => new DneBinaryDatabaseReader(truncatedPath)).toThrow('locality indicators region has an invalid length');
+    expect(() => new DneBinaryDatabaseReader(truncatedPath)).toThrow('SHA-256 checksum mismatch');
   });
 
   test('CLI creates and detects a binary database', async () => {

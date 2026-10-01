@@ -11,6 +11,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  BINARY_DATABASE_CHECKSUM_SIZE,
   BINARY_DATABASE_HEADER_SIZE,
   BINARY_DATABASE_VERSION,
   BINARY_SECTION_NAMES,
@@ -21,11 +22,13 @@ import {
   FSST_SYMBOL_TABLE_SIZE,
   SECTION_TABLE_OFFSET,
 } from '../src/binary-db-format.ts';
+import { sealBinaryDatabaseBytes } from '../src/binary-db-integrity.ts';
 import {
   DneBinaryDatabaseFormatError,
   DneBinaryDatabaseReader,
   DneBinaryDatabaseVersionError,
 } from '../src/binary-db-reader.ts';
+import { validateBinaryDatabaseBytes } from '../src/binary-db-validator.ts';
 import { buildBinaryDatabase } from '../src/binary-db-writer.ts';
 import {
   createFixture,
@@ -49,6 +52,7 @@ beforeAll(async () => {
   const converted = convertLogradouroToFsst(original);
   fsstBytes = converted.bytes;
   fsstLayout = converted.layout;
+  sealBinaryDatabaseBytes(fsstBytes);
   await Bun.write(fsstPath, fsstBytes);
 });
 
@@ -56,7 +60,7 @@ afterAll(() => {
   rmSync(workDir, { recursive: true, force: true });
 });
 
-test('builds a version 4 database that can be opened, closed, and reopened', () => {
+test('builds a version 5 database that can be opened, closed, and reopened', () => {
   expect(new DataView(original.buffer).getUint16(8, true)).toBe(BINARY_DATABASE_VERSION);
 
   const reader = new DneBinaryDatabaseReader(binaryPath);
@@ -97,7 +101,7 @@ test.each(
       const directory = SECTION_TABLE_OFFSET + BINARY_SECTION_NAMES.indexOf('logradouroDictionary') * 8;
       const view = new DataView(bytes.buffer);
       view.setUint32(directory + 4, fsstLayout.regionLength - 1, true);
-    }, 'invalid layout'],
+    }, 'section padding'],
     ['invalid length width', (bytes: Uint8Array) => {
       bytes[fsstLayout.regionOffset + 31] = 0;
     }, 'codec or length width'],
@@ -105,18 +109,16 @@ test.each(
       bytes[fsstLayout.symbolsOffset] = 9;
     }, 'FSST symbol length'],
   ] as const,
-)('rejects %s while opening an FSST dictionary', async (name, mutate, message) => {
+)('rejects %s during full validation', async (_name, mutate, message) => {
   const bytes = fsstBytes.slice();
   mutate(bytes);
-  const path = join(workDir, `invalid-fsst-${name.replaceAll(' ', '-')}.bin`);
-  await Bun.write(path, bytes);
 
-  const error = captureError(() => new DneBinaryDatabaseReader(path));
+  const error = captureError(() => validateBinaryDatabaseBytes(bytes));
   expect(error).toBeInstanceOf(DneBinaryDatabaseFormatError);
   expect(error.message).toContain(message);
 });
 
-test('wraps an unknown FSST symbol as a typed format error during lookup', async () => {
+test('rejects an unknown FSST symbol during full validation', async () => {
   const bytes = fsstBytes.slice();
   const offsets = entryPayloadOffsets(bytes, fsstLayout);
   bytes[fsstLayout.symbolsOffset + 254] = 0;
@@ -125,20 +127,13 @@ test('wraps an unknown FSST symbol as a typed format error during lookup', async
       bytes[fsstLayout.suffixDataOffset + offset] = 254;
     }
   }
-  const path = join(workDir, 'invalid-fsst-symbol.bin');
-  await Bun.write(path, bytes);
 
-  const reader = new DneBinaryDatabaseReader(path);
-  try {
-    const error = captureError(() => reader.queryCep('30000001'));
-    expect(error).toBeInstanceOf(DneBinaryDatabaseFormatError);
-    expect(error.message).toContain('Invalid binary FSST symbol');
-  } finally {
-    reader.close();
-  }
+  const error = captureError(() => validateBinaryDatabaseBytes(bytes));
+  expect(error).toBeInstanceOf(DneBinaryDatabaseFormatError);
+  expect(error.message).toContain('Invalid binary logradouro FSST symbol');
 });
 
-test('wraps dangling FSST escapes as a typed format error during lookup', async () => {
+test('rejects dangling FSST escapes during full validation', async () => {
   const bytes = fsstBytes.slice();
   const offsets = entryPayloadOffsets(bytes, fsstLayout);
   for (let block = 0; block < fsstLayout.blockCount; block++) {
@@ -149,39 +144,25 @@ test('wraps dangling FSST escapes as a typed format error during lookup', async 
       bytes[fsstLayout.suffixDataOffset + offset] = 255;
     }
   }
-  const path = join(workDir, 'invalid-fsst-escape.bin');
-  await Bun.write(path, bytes);
 
-  const reader = new DneBinaryDatabaseReader(path);
-  try {
-    const error = captureError(() => reader.queryCep('30000001'));
-    expect(error).toBeInstanceOf(DneBinaryDatabaseFormatError);
-    expect(error.message).toContain('Invalid binary FSST escape');
-  } finally {
-    reader.close();
-  }
+  const error = captureError(() => validateBinaryDatabaseBytes(bytes));
+  expect(error).toBeInstanceOf(DneBinaryDatabaseFormatError);
+  expect(error.message).toContain('Invalid binary logradouro FSST escape');
 });
 
-test('wraps a payload crossing the next FSST block boundary as a typed format error', async () => {
+test('rejects a payload crossing the next FSST block boundary during full validation', async () => {
   const bytes = fsstBytes.slice();
   const view = new DataView(bytes.buffer);
   for (let block = 1; block < fsstLayout.blockCount; block++) {
     view.setUint32(fsstLayout.blockOffsetsOffset + block * 4, 0, true);
   }
-  const path = join(workDir, 'invalid-fsst-boundary.bin');
-  await Bun.write(path, bytes);
 
-  const reader = new DneBinaryDatabaseReader(path);
-  try {
-    const error = captureError(() => reader.queryCep('30000001'));
-    expect(error).toBeInstanceOf(DneBinaryDatabaseFormatError);
-    expect(error.message).toContain('Invalid binary FSST compressed length');
-  } finally {
-    reader.close();
-  }
+  const error = captureError(() => validateBinaryDatabaseBytes(bytes));
+  expect(error).toBeInstanceOf(DneBinaryDatabaseFormatError);
+  expect(error.message).toContain('Invalid binary logradouro FSST suffix');
 });
 
-test.each([1, 2, 3])('rejects legacy binary version %i', async (version) => {
+test.each([1, 2, 3, 4])('rejects legacy binary version %i', async (version) => {
   const bytes = original.slice();
   new DataView(bytes.buffer).setUint16(8, version, true);
   const path = join(workDir, `version-${version}.bin`);
@@ -205,11 +186,9 @@ test('rejects FSST codec declarations on dictionaries other than logradouro', as
   const offset = dictionaryOffset(bytes, 'bairroDictionary');
   bytes[offset + 30] = 2;
   bytes[offset + 31] = 1;
-  const path = join(workDir, 'invalid-bairro-codec.bin');
-  await Bun.write(path, bytes);
 
-  expect(() => new DneBinaryDatabaseReader(path)).toThrow(DneBinaryDatabaseFormatError);
-  expect(() => new DneBinaryDatabaseReader(path)).toThrow('Unsupported binary bairro dictionary codec');
+  expect(() => validateBinaryDatabaseBytes(bytes)).toThrow(DneBinaryDatabaseFormatError);
+  expect(() => validateBinaryDatabaseBytes(bytes)).toThrow('Unsupported binary bairro dictionary codec');
 });
 
 test('rejects a nonzero encoded length width on a plain dictionary', async () => {
@@ -217,11 +196,9 @@ test('rejects a nonzero encoded length width on a plain dictionary', async () =>
   const offset = dictionaryOffset(bytes, 'municipioDictionary');
   bytes[offset + 30] = 0;
   bytes[offset + 31] = 1;
-  const path = join(workDir, 'invalid-municipio-width.bin');
-  await Bun.write(path, bytes);
 
-  expect(() => new DneBinaryDatabaseReader(path)).toThrow(DneBinaryDatabaseFormatError);
-  expect(() => new DneBinaryDatabaseReader(path)).toThrow('Unsupported binary municipio dictionary codec');
+  expect(() => validateBinaryDatabaseBytes(bytes)).toThrow(DneBinaryDatabaseFormatError);
+  expect(() => validateBinaryDatabaseBytes(bytes)).toThrow('Unsupported binary municipio dictionary codec');
 });
 
 function dictionaryOffset(bytes: Uint8Array, name: (typeof BINARY_SECTION_NAMES)[number]) {
@@ -370,7 +347,7 @@ function repackDatabase(source: Uint8Array, logradouroDictionary: Uint8Array) {
     regions.set(section.name, { length: section.bytes.length, offset: cursor });
     cursor += section.bytes.length;
   }
-  const fileSize = align(cursor);
+  const fileSize = align(cursor) + BINARY_DATABASE_CHECKSUM_SIZE;
   const bytes = new Uint8Array(fileSize);
   bytes.set(source.subarray(0, BINARY_DATABASE_HEADER_SIZE));
   const data = new DataView(bytes.buffer);

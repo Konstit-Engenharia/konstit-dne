@@ -59,6 +59,14 @@ export function encodeLocalityRuns(ids: Uint8Array, flags: Uint8Array, width: By
   return { ids: bytes, flags: Uint8Array.from(runFlags) };
 }
 
+/** Reads locations after the file has passed integrity verification. */
+export function readLocalityRunsLayout(data: DataView, region: BinaryRegion, rows: number): LocalityRuns {
+  const count = data.getUint32(region.offset, true);
+  const directoryOffset = region.offset + HEADER_BYTES;
+  const startsOffset = directoryOffset + (Math.ceil(rows / BLOCK_ROWS) + 1) * 4;
+  return { count, directoryOffset, startsOffset, idsOffset: startsOffset + count * 4 };
+}
+
 /** Validates run starts and the directory used to bound each row lookup. */
 export function parseLocalityRuns(data: DataView, region: BinaryRegion, rows: number, width: ByteWidth): LocalityRuns {
   if (region.length < HEADER_BYTES) {
