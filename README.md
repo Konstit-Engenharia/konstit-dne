@@ -119,7 +119,7 @@ No benchmark de **30/09/2026**, em um **Apple M4 com Bun 1.4.2**, o leitor biná
 
 A base continha 1.611.629 CEPs. Cada rodada consultou 50 mil CEPs existentes e 50 mil ausentes, com duas rodadas de aquecimento e nove medições. Os tempos excluem a abertura da base; os tamanhos estão em MB decimais.
 
-Esta medição usou o formato binário v1. O índice de bairros da v2 tem outro tamanho e custo de consulta.
+Esta medição usou o formato binário v1. A v3 comprime bairros, municípios e IDs de logradouro; consulte a investigação de compressão em [desempenho](docs/performance.md#compressão-do-binário-v3).
 
 Veja a [metodologia, os comandos de reprodução e os resultados de importação](https://github.com/Konstit-Engenharia/konstit-dne/blob/main/docs/performance.md). O benchmark de importação usa outra base e está documentado separadamente.
 
