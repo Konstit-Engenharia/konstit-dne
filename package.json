@@ -1,6 +1,6 @@
 {
   "name": "@konstit/dne",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Query bundled Brazilian postal codes or build and update local SQLite and binary databases.",
   "repository": {
     "type": "git",
