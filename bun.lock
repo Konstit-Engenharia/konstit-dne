@@ -9,7 +9,7 @@
       },
       "devDependencies": {
         "@biomejs/biome": "2.5.9",
-        "@types/bun": "1.4.0",
+        "@types/bun": "1.4.2",
         "dprint": "^0.56.0",
         "mitata": "^1.0.34",
         "oxlint": "^1.79.0",
@@ -119,11 +119,11 @@
 
     "@oxlint/binding-win32-x64-msvc": ["@oxlint/binding-win32-x64-msvc@1.79.0", "", { "os": "win32", "cpu": "x64" }, "sha512-mEelcCMMBS57sIXh2veGMNy+pQwuGtcMxHxGIZWQ5Ba9pJ5jCCUFOZB9E2JhBaxGsURe+WGe0zJp4RVre52gpQ=="],
 
-    "@types/bun": ["@types/bun@1.4.0", "", { "dependencies": { "bun-types": "1.4.0" } }, "sha512-K+lZULY23vRgK/CfTjFIV+tyifaNdSMlPh9j+6mQ/cLfpOznLyAuzgV/JQysyECpkBQLVMSyvjlr2fBUSA9wFQ=="],
+    "@types/bun": ["@types/bun@1.4.2", "", { "dependencies": { "bun-types": "1.4.2" } }, "sha512-GimotNn7+ZV0uVArItBbriZsR1oNf0+WTzPkdcFrzShI7k2norL0uzEaJT8T33dWr7O/c9ZDuAFQrctKCi72oQ=="],
 
     "@types/node": ["@types/node@26.2.0", "", { "dependencies": { "undici-types": "~8.3.0" } }, "sha512-5IviulTZeRNp2vAJ514cc/HUlY5nZ9fCbq9DMyC52BrhFZACo3nI0R7qBxhQmo/d27NFe96ur/b7Wwxklda+kg=="],
 
-    "bun-types": ["bun-types@1.4.0", "", { "dependencies": { "@types/node": "*" } }, "sha512-iIKw23BspnQQYd3prITOBxeUsxBHnwzX6YJfGMuNOZzeNcMmVqzIIVGRm1l69ogaPQmb4wB6BN8mA5bE9YuC5Q=="],
+    "bun-types": ["bun-types@1.4.2", "", { "dependencies": { "@types/node": "*" } }, "sha512-bxV1FgK7yBIzjRe5zBozIM4Bem11ZJcCXSrjWRG3YWLt8yFDePu4cLjpebO8OvPeIE9trbyPF4fuj3Cia4Fj3w=="],
 
     "dprint": ["dprint@0.56.0", "", { "optionalDependencies": { "@dprint/android-arm64": "0.56.0", "@dprint/android-x64": "0.56.0", "@dprint/darwin-arm64": "0.56.0", "@dprint/darwin-x64": "0.56.0", "@dprint/linux-arm64-glibc": "0.56.0", "@dprint/linux-arm64-musl": "0.56.0", "@dprint/linux-loong64-glibc": "0.56.0", "@dprint/linux-loong64-musl": "0.56.0", "@dprint/linux-ppc64-glibc": "0.56.0", "@dprint/linux-ppc64-musl": "0.56.0", "@dprint/linux-riscv64-glibc": "0.56.0", "@dprint/linux-x64-glibc": "0.56.0", "@dprint/linux-x64-musl": "0.56.0", "@dprint/win32-arm64": "0.56.0", "@dprint/win32-x64": "0.56.0" }, "bin": { "dprint": "bin.cjs" } }, "sha512-PdRT491Wmp7IcVRdwdz/Qc7wtm646tO1QnfWhMz7J039+yA+TQWomJkvqos8Nzox2PhFFCStJXdIsgOBVeHLmA=="],
 
