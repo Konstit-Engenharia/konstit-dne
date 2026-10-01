@@ -1,7 +1,7 @@
 /**
  * Binary format revision accepted by the current reader and emitted by the writer.
  */
-export const BINARY_DATABASE_VERSION = 2;
+export const BINARY_DATABASE_VERSION = 3;
 /**
  * Fixed file-header size in bytes, including the section directory and reserved space.
  */
@@ -128,7 +128,7 @@ export type BinaryHeader = {
    */
   municipalityCount: number;
   /**
-   * Byte width of municipality IDs in the row-oriented column.
+   * Byte width of municipality IDs in the locality runs.
    */
   municipalityIdWidth: ByteWidth;
   /**

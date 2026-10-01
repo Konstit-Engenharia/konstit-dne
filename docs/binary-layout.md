@@ -1,10 +1,10 @@
 # DNE binary database format
 
-This document specifies version 2 of the `@konstit/dne` binary database format. It is intended for authors of readers in languages other than TypeScript. Version 2 readers do not accept version 1 files.
+This document specifies version 3 of the `@konstit/dne` binary database format. It is intended for authors of readers in languages other than TypeScript. Version 3 readers do not accept version 1 or version 2 files.
 
 The format is immutable and optimized for memory-mapped, read-only CEP lookup. It stores rows in CEP order, splits each CEP into a prefix directory and a packed suffix, interns strings in per-column dictionaries, and stores nullable low-density columns with bitmaps and rank indexes.
 
-Version 2 files do not contain a checksum. Readers that accept files from untrusted sources must validate every offset, length, count, and identifier before dereferencing it.
+Version 3 files do not contain a checksum. Readers that accept files from untrusted sources must validate every offset, length, count, and identifier before dereferencing it.
 
 ## Conventions
 
@@ -41,6 +41,8 @@ The following symbols are used in size formulas:
 | `K` | Number of non-null `nome` values |
 | `Wc` | Width of an entry in the CEP prefix directory |
 | `Wm` | Width of a municipality ID |
+| `Rl` | Number of consecutive runs of equal municipality ID and locality flags, `1..N` |
+| `b` | Logradouro ID bit width, `max(1, ceil(log2(logradouro_count + 1)))` |
 | `W(field)` | ID width declared by the dictionary for `field` |
 
 The canonical writer chooses an integer width from the maximum value that must fit:
@@ -70,7 +72,7 @@ A file consists of a fixed 256-byte header followed by 27 sections in a fixed or
 +---------------------------+
 | Nome dictionary           |
 +---------------------------+
-| Locality indicators       | one byte per CEP row
+| Locality indicators       | one byte per locality run
 +---------------------------+
 | Neighborhoods and ranges  | original identities and CEP intervals
 +---------------------------+
@@ -82,7 +84,7 @@ A file consists of a fixed 256-byte header followed by 27 sections in a fixed or
 
 Every section begins at an offset divisible by 8. Zero-filled padding may appear between sections and after the final section. Writers must zero reserved bytes and padding. Readers should ignore their contents.
 
-The file size, all section offsets, and all section lengths are stored as `u32`, so a version 2 file cannot exceed `4294967295` bytes.
+The file size, all section offsets, and all section lengths are stored as `u32`, so a version 3 file cannot exceed `4294967295` bytes.
 
 ## Header
 
@@ -91,7 +93,7 @@ The header occupies bytes `0` through `255`.
 | Offset | Size | Type | Field | Required value or meaning |
 | ---: | ---: | --- | --- | --- |
 | 0 | 8 | bytes | Magic | `44 4e 45 42 49 4e 00 00`, or `DNEBIN\0\0` |
-| 8 | 2 | `u16` | Version | `2` |
+| 8 | 2 | `u16` | Version | `3` |
 | 10 | 2 | `u16` | Header size | `256` |
 | 12 | 4 | `u32` | Row count | `N`, must be greater than zero |
 | 16 | 4 | `u32` | File size | Exact file length, including final padding |
@@ -121,12 +123,12 @@ The entries have the following fixed order. The byte range column identifies the
 | 0 | 32-39 | `metadata` | Variable |
 | 1 | 40-47 | `cepPrefixOffsets` | `(P + 1) * Wc` |
 | 2 | 48-55 | `cepSuffixes` | `ceil(N * 10 / 8)` |
-| 3 | 56-63 | `logradouroIds` | `N * W(logradouro)` |
+| 3 | 56-63 | `logradouroIds` | `ceil(N * b / 8)` |
 | 4 | 64-71 | `complementoBitmap` | `ceil(N / 8)` |
 | 5 | 72-79 | `complementoRanks` | `(ceil(N / 256) + 1) * 4` |
 | 6 | 80-87 | `complementoIds` | `C * W(complemento)` |
 | 7 | 88-95 | `bairroIds` | `8 + ceil(R * q / 8) + ceil((Z + R) / 8) + 4 * ceil(Z / 8) + R * Wb` |
-| 8 | 96-103 | `municipalityIds` | `N * Wm` |
+| 8 | 96-103 | `municipalityIds` | `8 + 4 * (ceil(N / 256) + 1) + Rl * (4 + Wm)` |
 | 9 | 104-111 | `nomeBitmap` | `ceil(N / 8)` |
 | 10 | 112-119 | `nomeRanks` | `(ceil(N / 256) + 1) * 4` |
 | 11 | 120-127 | `nomeIds` | `K * W(nome)` |
@@ -137,7 +139,7 @@ The entries have the following fixed order. The byte range column identifies the
 | 16 | 160-167 | `municipioDictionary` | Variable dictionary section |
 | 17 | 168-175 | `ufDictionary` | Variable dictionary section |
 | 18 | 176-183 | `nomeDictionary` | Variable dictionary section |
-| 19 | 184-191 | `localidadeFlags` | `N` |
+| 19 | 184-191 | `localidadeFlags` | `Rl` |
 | 20 | 192-199 | `bairros` | `16 + B * Rb` |
 | 21 | 200-207 | `bairroFaixaOffsets` | `(B + 1) * 4` |
 | 22 | 208-215 | `bairroFaixas` | `F * 8` |
@@ -171,11 +173,11 @@ Dictionary IDs are one-based. ID `1` identifies dictionary entry index `0`; ID `
 
 ### Locality indicators
 
-`localidadeFlags` is a dense array of `N` bytes in CEP order. Each byte is `(type_index << 2) | situation`. Bits 4-7 must be zero; situation must be in `0..3` and type index must be in `0..2`. Thus the valid bytes are `0..11`.
+`localidadeFlags` contains `Rl` bytes, one per run shared with `municipalityIds`. A new run starts whenever either the municipality ID or its locality flags changes. Each byte is `(type_index << 2) | situation`. Bits 4-7 must be zero; situation must be in `0..3` and type index must be in `0..2`. Thus the valid bytes are `0..11`.
 
 The fields preserve `LOC_IN_SIT` and `LOC_IN_TIPO_LOC` from the originating DNE locality. Situation `0` means no street-level coding, `1` means street-level coding, `2` means a district or village included in the coding, and `3` means street-level coding is in progress. Situation `3` preserves both general and street CEPs during the transition, as documented in `Delimitado/Leiautes_delimitador.doc` from the [official e-DNE archive](https://www2.correios.com.br/sistemas/edne/download/eDNE_Basico.zip). The types are municipality (`M`), district (`D`), and village (`P`). These indicators belong to each CEP's source locality, while the municipality record still identifies the parent municipality for districts and villages. They must not be deduplicated by municipality ID.
 
-The TypeScript readers expose descriptive string unions in `DneRow`. The stored bytes and format version are unchanged; raw SQLite queries still return the original DNE codes.
+The TypeScript readers expose descriptive string unions in `DneRow`. The flag values preserve the original DNE codes; raw SQLite queries still return those codes.
 
 | Situation bits | `LocalidadeSituacao` |
 | --- | --- |
@@ -259,11 +261,28 @@ return decode_row(low)
 
 Suffixes inside each prefix range are sorted, so a binary search is sufficient.
 
-## Packed integer columns
+## Packed logradouro IDs
 
-The `logradouroIds` and `municipalityIds` sections are dense arrays. Entry `i` starts at `section_offset + i * width` and is decoded as `uint(width)`.
+`logradouroIds` is a contiguous little-endian bit stream with `b` bits per row. Its bit width is derived from the dictionary count, including zero for null, rather than the dictionary's byte width. Entry `i` begins at bit `i * b`; read exactly `b` bits, least-significant bit first, without reading beyond the section. Unused high bits in the final byte are zero. An ID must be zero or at most the dictionary count.
 
-`logradouroIds` uses its dictionary ID width and may be zero for null. `municipalityIds` uses `Wm`; its IDs must be in the inclusive range `1` through `M`.
+## Municipality and locality runs
+
+`municipalityIds` groups consecutive rows with the same pair `(municipality_id, locality_flags)`. Municipality IDs use `Wm` bytes and must be in `1..M`. The corresponding flag byte is stored at the same run index in `localidadeFlags`.
+
+The section contains these contiguous arrays, with offsets relative to its start:
+
+| Offset | Size | Meaning |
+| ---: | ---: | --- |
+| 0 | 4 | Run count `Rl`, as `u32` |
+| 4 | 1 | Directory block shift, exactly `8` |
+| 5 | 3 | Reserved, must be zero |
+| 8 | `4 * (ceil(N / 256) + 1)` | Directory of `u32` run indexes |
+| After directory | `4 * Rl` | Run start rows, as `u32` |
+| After starts | `Wm * Rl` | Municipality IDs, as `uint(Wm)` |
+
+Run starts are strictly increasing, begin at zero, and are less than `N`. Directory entry `j` is the run containing row `j * 256`; its final entry is the sentinel `Rl`. A row lookup searches for the greatest run start not exceeding the row, between directory entries `floor(row / 256)` and the next entry, inclusive when that next entry is less than `Rl`.
+
+Readers must validate the exact directory values and the sentinel. The row's municipality and flags must be read from the same run, including when only the flags changed.
 
 ## Neighborhood run index
 
@@ -465,7 +484,7 @@ ID zero is decoded as null only for fields that permit null. Readers should reje
 Given a row index found through the CEP index:
 
 ```text
-logradouro_id = logradouroIds[row]
+logradouro_id = read_packed_bits(logradouroIds, row, b)
 logradouro = logradouroDictionary[logradouro_id]
 
 complemento = read_sparse_value(
@@ -485,13 +504,14 @@ else:
         bairroDictionary, row,
     )
 
-municipality_id = municipalityIds[row]
+locality_run = find_locality_run(row)
+municipality_id = municipality_run_ids[locality_run]
 municipality_record = municipalities[municipality_id - 1]
 municipio_cod_ibge = municipality_record.ibge
 municipio = municipioDictionary[municipality_record.municipio_id]
 uf = ufDictionary[municipality_record.uf_id]
 
-flags = localidadeFlags[row]
+flags = localidadeFlags[locality_run]
 localidade_situacao = [
     "sem_codificacao_por_logradouro",
     "codificada_por_logradouro",
@@ -537,12 +557,13 @@ A robust reader should perform these checks before or during lookup:
 15. Neighborhood original identifiers are positive and strictly increasing; every locality identifier is positive and all dictionary references are valid.
 16. The neighborhood run index has valid boundaries, samples, and indexes in `0..B`; fallback names occur only with index zero and locality type `D` or `P`.
 17. Range offsets start at zero, are monotonic, and end at `F`; each interval has `0 <= initial <= final <= 99999999`, and intervals per neighborhood are strictly ordered by `(initial, final)`.
-18. Each locality byte has a situation in `0..3`, a type index in `0..2`, and zero reserved bits.
+18. Municipality/locality runs have strictly increasing starts beginning at zero, exact directory entries and sentinel, and the same number of IDs and flags.
+19. Each locality byte has a situation in `0..3`, a type index in `0..2`, and zero reserved bits.
 
 Bounds checks are still required at point of use, even after initial validation. A memory-mapped file must not be truncated or replaced in place while readers are using that mapping.
 
 ## Compatibility
 
-Readers implementing this document must require version `1` and the 27-section layout above. The version numbering was deliberately reset for this implementation; previously generated binaries are unsupported, including any older files marked version `1`. Regenerate them from the DNE source. A reader must reject mismatched versions, header sizes, section counts, sparse rank shifts, and dictionary block shifts rather than guessing their meaning.
+Readers implementing this document must require version `3` and the 27-section layout above. Earlier binaries are unsupported and must be regenerated from the DNE source. The public `DneBinaryDatabaseReader` API is unchanged. A reader must reject mismatched versions, header sizes, section counts, sparse rank shifts, and dictionary block shifts rather than guessing their meaning.
 
 There is no platform-endianness marker. The on-disk representation is always little-endian, independent of the reader's host architecture.

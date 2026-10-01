@@ -1,5 +1,10 @@
 import { fileURLToPath } from 'node:url';
 import {
+  parseBairroRuns,
+  readBairroRunIndex,
+  type BairroRuns,
+} from './bairro-runs.ts';
+import {
   isBairroId,
   type DneBairro,
   type DneFaixaCep,
@@ -40,7 +45,15 @@ import {
   type ByteWidth,
 } from './binary-db-format.ts';
 import { cepToU32 } from './cep.ts';
-import { parseBairroRuns, readBairroRunIndex, type BairroRuns } from './bairro-runs.ts';
+import {
+  findLocalityRun,
+  parseLocalityRuns,
+  type LocalityRuns,
+} from './locality-runs.ts';
+import {
+  integerBitWidth,
+  readPackedBits,
+} from './packed-bits.ts';
 import {
   LOCALIDADE_SITUACOES,
   LOCALIDADE_TIPOS,
@@ -139,6 +152,8 @@ export class DneBinaryDatabaseReader {
   private dictionaries: BinaryDictionaries;
   private bairros: BinaryBairros;
   private bairroRuns: BairroRuns;
+  private localityRuns: LocalityRuns;
+  private logradouroIdBits: number;
   private header: BinaryHeader;
   private mapped: Uint8Array<ArrayBuffer> | null;
   private metadataValue: LoadMetadata;
@@ -164,7 +179,7 @@ export class DneBinaryDatabaseReader {
       validateHeader(data, header);
       const dictionaries = readDictionaries(data, header);
       const bairros = readNeighborhoods(data, header, dictionaries);
-      const bairroRuns = validateLayout(data, header, dictionaries, bairros);
+      const { bairroRuns, localityRuns } = validateLayout(data, header, dictionaries, bairros);
       const metadata = parseMetadata(mapped, header.sections.metadata);
 
       this.mapped = mapped;
@@ -173,6 +188,8 @@ export class DneBinaryDatabaseReader {
       this.dictionaries = dictionaries;
       this.bairros = bairros;
       this.bairroRuns = bairroRuns;
+      this.localityRuns = localityRuns;
+      this.logradouroIdBits = integerBitWidth(dictionaries.logradouro.count);
       this.metadataValue = metadata;
       this.bairroCache = Array.from({ length: dictionaries.bairro.count + 1 });
       this.municipalityCache = Array.from({ length: header.municipalityCount + 1 });
@@ -393,15 +410,16 @@ export class DneBinaryDatabaseReader {
 
   private readRow(index: number, cep: string): DneRow {
     const sections = this.header.sections;
+    const run = findLocalityRun(this.requireData(), this.localityRuns, index);
     const municipalityId = this.readPackedInteger(
-      sections.municipalityIds.offset + index * this.header.municipalityIdWidth,
+      this.localityRuns.idsOffset + run * this.header.municipalityIdWidth,
       this.header.municipalityIdWidth,
     );
     if (municipalityId === 0 || municipalityId > this.header.municipalityCount) {
       throw new DneBinaryDatabaseFormatError(`Invalid binary municipality id: ${municipalityId}`);
     }
     const municipality = this.readMunicipality(municipalityId);
-    const flags = this.requireData().getUint8(sections.localidadeFlags.offset + index);
+    const flags = this.requireData().getUint8(sections.localidadeFlags.offset + run);
     const situacao = LOCALIDADE_SITUACOES[flags & 3];
     const tipo = LOCALIDADE_TIPOS[flags >>> 2];
     if (situacao === undefined || tipo === undefined) {
@@ -450,9 +468,11 @@ export class DneBinaryDatabaseReader {
       localidade_tipo: tipo,
       logradouro: this.readDictionaryString(
         this.dictionaries.logradouro,
-        this.readPackedInteger(
-          sections.logradouroIds.offset + index * this.dictionaries.logradouro.idWidth,
-          this.dictionaries.logradouro.idWidth,
+        readPackedBits(
+          this.requireData(),
+          sections.logradouroIds.offset,
+          index,
+          this.logradouroIdBits,
         ),
       ),
       municipio: municipality.municipio,
@@ -857,10 +877,14 @@ function validateNeighborhoodRanges(data: DataView, header: BinaryHeader, bairro
 
 function validateLayout(data: DataView, header: BinaryHeader, dictionaries: BinaryDictionaries, bairros: BinaryBairros) {
   const sections = header.sections;
-  assertRegionLength(sections.localidadeFlags, header.rowCount, 'locality indicators');
-  assertRegionLength(sections.logradouroIds, header.rowCount * dictionaries.logradouro.idWidth, 'logradouro ids');
+  const localityRuns = parseLocalityRuns(data, sections.municipalityIds, header.rowCount, header.municipalityIdWidth);
+  assertRegionLength(sections.localidadeFlags, localityRuns.count, 'locality indicators');
+  assertRegionLength(
+    sections.logradouroIds,
+    packedBitLength(header.rowCount, integerBitWidth(dictionaries.logradouro.count)),
+    'logradouro ids',
+  );
   const bairroRuns = parseBairroRuns(data, sections.bairroIds, header.rowCount, bairros.idWidth, bairros.count);
-  assertRegionLength(sections.municipalityIds, header.rowCount * header.municipalityIdWidth, 'municipality ids');
   const municipalityRecordWidth = 3 + dictionaries.municipio.idWidth + dictionaries.uf.idWidth;
   assertRegionLength(
     sections.municipalities,
@@ -881,7 +905,7 @@ function validateLayout(data: DataView, header: BinaryHeader, dictionaries: Bina
   if (firstPrefix !== 0 || lastPrefix !== header.rowCount) {
     throw new DneBinaryDatabaseFormatError('Binary CEP prefix directory has invalid boundaries');
   }
-  return bairroRuns;
+  return { bairroRuns, localityRuns };
 }
 
 function validateSparseLayout(

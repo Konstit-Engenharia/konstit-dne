@@ -1,5 +1,6 @@
 import { Database } from 'bun:sqlite';
 import { open } from 'node:fs/promises';
+import { encodeBairroRuns } from './bairro-runs.ts';
 import {
   isBairroId,
   type DneBairro,
@@ -33,8 +34,12 @@ import {
   type BinarySectionName as SectionName,
   type ByteWidth,
 } from './binary-db-format.ts';
+import { encodeLocalityRuns } from './locality-runs.ts';
+import {
+  integerBitWidth,
+  writePackedBits,
+} from './packed-bits.ts';
 import { LOCALIDADE_TIPO_CODIGOS } from './schema.ts';
-import { encodeBairroRuns } from './bairro-runs.ts';
 import {
   SQLITE_BAIRRO_FAIXAS_TABLE_NAME,
   SQLITE_BAIRROS_TABLE_NAME,
@@ -140,7 +145,8 @@ export async function buildBinaryDatabase(
 
     const cepPrefixOffsets = new Uint32Array(CEP_PREFIX_OFFSETS_COUNT);
     const cepSuffixes = new Uint8Array(packedBitLength(rowCount, CEP_SUFFIX_BITS));
-    const logradouroIds = new Uint8Array(rowCount * dictionaries.logradouro.idWidth);
+    const logradouroIdBits = integerBitWidth(dictionaries.logradouro.count);
+    const logradouroIds = new Uint8Array(packedBitLength(rowCount, logradouroIdBits));
     const complementoBitmap = new Uint8Array(bitmapByteLength(rowCount));
     const complementoIds = new Uint8Array(gathered.complementoCount * dictionaries.complemento.idWidth);
     const bairroIds = new Uint8Array(rowCount * bairroIdWidth);
@@ -177,11 +183,11 @@ export async function buildBinaryDatabase(
       }
       writePacked10(cepSuffixes, rowIndex, cep % 1_000);
 
-      writePackedInteger(
+      writePackedBits(
         logradouroIds,
-        rowIndex * dictionaries.logradouro.idWidth,
+        rowIndex,
+        logradouroIdBits,
         dictionaryId(dictionaries.logradouro, row.logradouro),
-        dictionaries.logradouro.idWidth,
       );
       if (row.complemento !== null) {
         setBitmapBit(complementoBitmap, rowIndex);
@@ -255,6 +261,7 @@ export async function buildBinaryDatabase(
     const bairroRanges = createBairroRangeSections(db, bairroIndexes);
     const metadata = textEncoder.encode(JSON.stringify(readMetadata(db)));
     const municipalities = createMunicipalitySection(municipalityEntries, dictionaries);
+    const localityRuns = encodeLocalityRuns(municipalityIds, localidadeFlags, municipalityIdWidth);
     const sections: Record<SectionName, Uint8Array> = {
       bairroDictionary: dictionaries.bairro.bytes,
       bairroAbreviadoDictionary: dictionaries.bairroAbreviado.bytes,
@@ -268,7 +275,7 @@ export async function buildBinaryDatabase(
       complementoDictionary: dictionaries.complemento.bytes,
       complementoIds: complemento.ids,
       complementoRanks: complemento.ranks,
-      localidadeFlags,
+      localidadeFlags: localityRuns.flags,
       localidadeNomeBitmap: localidadeNome.bitmap,
       localidadeNomeRanks: localidadeNome.ranks,
       localidadeNomeIds: localidadeNome.ids,
@@ -276,7 +283,7 @@ export async function buildBinaryDatabase(
       logradouroIds,
       metadata,
       municipalities,
-      municipalityIds,
+      municipalityIds: localityRuns.ids,
       municipioDictionary: dictionaries.municipio.bytes,
       nomeBitmap: nome.bitmap,
       nomeDictionary: dictionaries.nome.bytes,
