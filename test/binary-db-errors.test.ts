@@ -31,6 +31,7 @@ import {
 } from '../src/binary-db-reader.ts';
 import { validateBinaryDatabaseBytes } from '../src/binary-db-validator.ts';
 import { buildBinaryDatabase } from '../src/binary-db-writer.ts';
+import type { UF } from '../src/types.ts';
 import {
   createLocalityFixture,
   fetchDatabase,
@@ -74,6 +75,10 @@ describe('binary reader error contract', () => {
     const queries = [
       () => reader.queryCep('10000000'),
       () => reader.queryCep('invalid'),
+      () => reader.queryMunicipality(3_500_001),
+      () => reader.queryMunicipality(NaN),
+      () => reader.queryMunicipalityCodesByUf('SP'),
+      () => reader.queryMunicipalityCodesByUf('ZZ' as UF),
       () => reader.queryNeighborhood(-1),
       () => reader.queryNeighborhoodByCep('invalid'),
       () => reader.queryNeighborhoodCepRanges(-1),

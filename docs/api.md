@@ -73,6 +73,31 @@ const faixas = reader.queryNeighborhoodCepRanges(12345);
 
 Os retornos para identificadores inválidos ou desconhecidos são `undefined` em `queryNeighborhood()` e `queryNeighborhoodByCep()`, e `[]` em `queryNeighborhoodCepRanges()`.
 
+### Município por código IBGE
+
+O leitor binário oferece `queryMunicipality(municipioCodIbge)` para consultar o nome do município e sua UF:
+
+```typescript
+const municipio = binaryReader.queryMunicipality(3550308);
+// { municipio: 'São Paulo', uf: 'SP' }
+```
+
+O argumento é o código `municipio_cod_ibge` como inteiro de sete dígitos. O retorno tem tipo `Pick<DneRow, 'municipio' | 'uf'> | undefined`; códigos inválidos ou ausentes retornam `undefined`. Depois de `close()`, o método lança `DneBinaryDatabaseClosedError`, inclusive para entrada inválida.
+
+A consulta usa busca binária na tabela de municípios já armazenada no arquivo, com custo O(log M), onde M é a quantidade de municípios. O formato binário permanece o mesmo, e bases existentes na versão suportada podem ser consultadas sem regeneração.
+
+### Códigos IBGE por UF
+
+O leitor binário oferece `queryMunicipalityCodesByUf(uf: UF): number[]` para listar os códigos `municipio_cod_ibge` dos municípios presentes na base:
+
+```typescript
+const codigos = binaryReader.queryMunicipalityCodesByUf('SP');
+```
+
+Os códigos são únicos e retornados em ordem crescente. A UF deve ser uma sigla canônica em maiúsculas; uma entrada inválida ou uma UF sem municípios na base retorna `[]`. Use `parseUF()` para normalizar uma sigla recebida como texto. Depois de `close()`, o método lança `DneBinaryDatabaseClosedError`, inclusive para entrada inválida.
+
+A consulta localiza o início do intervalo estadual por busca binária e percorre apenas seus códigos, com custo O(log M + K), onde K é a quantidade de municípios retornados. Usa a tabela existente e não exige regenerar o binário.
+
 ### `DneRow`
 
 `queryCep()` retorna um `DneRow` quando encontra o CEP:

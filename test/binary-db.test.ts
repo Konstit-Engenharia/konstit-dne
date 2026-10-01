@@ -28,6 +28,11 @@ import {
   readDatabaseMetadata,
 } from '../src/database-service.ts';
 import { DneDatabaseReader } from '../src/db.ts';
+import {
+  ALL_UFS,
+  type DneRow,
+  type UF,
+} from '../src/types.ts';
 import { captureRejection } from './assertions.ts';
 import {
   createFixture,
@@ -92,6 +97,70 @@ describe('binary database', () => {
     expect(statSync(binaryPath).size).toBeLessThan(statSync(sqlitePath).size);
   });
 
+  test('looks up municipality names and UFs by IBGE code without exposing cached records', async () => {
+    const sourcePath = join(workDir, 'municipalities');
+    const sqlitePath = join(workDir, 'municipalities.db');
+    const binaryPath = join(workDir, 'municipalities.bin');
+    createFixture(sourcePath, 40);
+    fetchDatabase(sqlitePath, sourcePath);
+    await buildBinaryDatabase(sqlitePath, binaryPath);
+
+    const sqlite = new Database(sqlitePath, { readonly: true });
+    const reader = new DneBinaryDatabaseReader(binaryPath);
+    try {
+      const municipalities = sqlite.query(
+        'SELECT DISTINCT municipio_cod_ibge, municipio, uf FROM dne_consulta ORDER BY municipio_cod_ibge',
+      ).all() as Pick<DneRow, 'municipio_cod_ibge' | 'municipio' | 'uf'>[];
+      expect(municipalities.length).toBeGreaterThan(1);
+      for (const { municipio_cod_ibge, municipio, uf } of municipalities) {
+        expect(reader.queryMunicipality(municipio_cod_ibge)).toEqual({ municipio, uf });
+      }
+      for (const code of [1_000_000, 2_900_000, 2_900_041, 9_999_999, 0, -1, 999_999, 10_000_000, 2_900_001.5, NaN, Infinity, -Infinity]) {
+        expect(reader.queryMunicipality(code)).toBeUndefined();
+      }
+      const municipality = reader.queryMunicipality(2_900_001);
+      expect(municipality).toEqual({ municipio: 'Municipio 1', uf: 'BA' });
+      if (municipality) {
+        municipality.municipio = 'Alterado';
+        municipality.uf = 'SP';
+      }
+      expect(reader.queryMunicipality(2_900_001)).toEqual({ municipio: 'Municipio 1', uf: 'BA' });
+      expect(reader.queryCep('30000001')).toMatchObject({ municipio: 'Municipio 1', uf: 'BA' });
+    } finally {
+      reader.close();
+      sqlite.close();
+    }
+  });
+
+  test('lists unique municipality codes by UF in ascending order', async () => {
+    const sourcePath = join(workDir, 'municipalities-by-uf');
+    const sqlitePath = join(workDir, 'municipalities-by-uf.db');
+    const binaryPath = join(workDir, 'municipalities-by-uf.bin');
+    createFixture(sourcePath, 40);
+    fetchDatabase(sqlitePath, sourcePath);
+    await buildBinaryDatabase(sqlitePath, binaryPath);
+
+    const sqlite = new Database(sqlitePath, { readonly: true });
+    const reader = new DneBinaryDatabaseReader(binaryPath);
+    try {
+      const query = sqlite.query(
+        'SELECT DISTINCT municipio_cod_ibge FROM dne_consulta WHERE uf = ? ORDER BY municipio_cod_ibge',
+      );
+      for (const uf of ALL_UFS) {
+        const rows = query.all(uf) as Pick<DneRow, 'municipio_cod_ibge'>[];
+        expect(reader.queryMunicipalityCodesByUf(uf)).toEqual(rows.map((row) => row.municipio_cod_ibge));
+      }
+      expect(reader.queryMunicipalityCodesByUf('BA')).toHaveLength(20);
+      expect(reader.queryMunicipalityCodesByUf('SP')).toHaveLength(20);
+      for (const uf of ['ZZ', 'sp', ' SP ', '', 'constructor', '__proto__', 'toString']) {
+        expect(reader.queryMunicipalityCodesByUf(uf as UF)).toEqual([]);
+      }
+    } finally {
+      reader.close();
+      sqlite.close();
+    }
+  });
+
   test('decodes front-coded dictionaries and sparse columns across block boundaries', async () => {
     const sourcePath = join(workDir, 'block-source');
     const sqlitePath = join(workDir, 'block-source.db');
@@ -123,6 +192,10 @@ describe('binary database', () => {
     const reader = new DneBinaryDatabaseReader(binaryPath);
     try {
       expectAllRowsMatch(reader, sqlitePath);
+      expect(reader.queryMunicipality(3_500_001)).toEqual({ municipio: 'Municipio Codificado', uf: 'SP' });
+      expect(reader.queryMunicipality(3_500_002)).toEqual({ municipio: 'Municipio Unico', uf: 'SP' });
+      expect(reader.queryMunicipality(3_500_006)).toEqual({ municipio: 'Municipio em Codificacao', uf: 'SP' });
+      expect(reader.queryMunicipality(3_500_003)).toBeUndefined();
       expect(reader.queryCep('10000000')).toMatchObject({
         localidade_situacao: 'sem_codificacao_por_logradouro',
         localidade_tipo: 'municipio',

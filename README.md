@@ -59,7 +59,7 @@ O leitor abre a base incluída no pacote, independentemente do diretório de tra
 | Gerar uma base compacta para consultas por CEP | Binário | `build --format binary`         |
 | Executar SQL ou integrar ferramentas SQLite    | SQLite  | `build --db ./dne.db`           |
 
-Os dois leitores oferecem consultas por CEP, bairro e faixas de CEP. Para abrir arquivos próprios na API, use `new DneBinaryDatabaseReader('/dados/dne.bin')` ou `new DneDatabaseReader('/dados/dne.db')`, importados de `@konstit/dne`.
+Os dois leitores oferecem consultas por CEP, bairro e faixas de CEP. O leitor binário também oferece `queryMunicipality(municipioCodIbge)`, que retorna `{ municipio, uf }` a partir do código IBGE, e `queryMunicipalityCodesByUf(uf)`, que lista os códigos IBGE de uma UF. Para abrir arquivos próprios na API, use `new DneBinaryDatabaseReader('/dados/dne.bin')` ou `new DneDatabaseReader('/dados/dne.db')`, importados de `@konstit/dne`.
 
 Na geração do banco binário, o processo valida integralmente os bytes serializados antes de calcular o hash. Cada arquivo termina com um rodapé SHA-256 sobre todos os bytes anteriores, incluindo o cabeçalho e o preenchimento de alinhamento.
 

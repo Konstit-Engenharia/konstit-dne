@@ -54,10 +54,11 @@ import {
   LOCALIDADE_SITUACOES,
   LOCALIDADE_TIPOS,
 } from './schema.ts';
-import type {
-  DneRow,
-  LoadMetadata,
-  UF,
+import {
+  stateCodes,
+  type DneRow,
+  type LoadMetadata,
+  type UF,
 } from './types.ts';
 
 /** Error classes and discriminants used by this module's public operations. */
@@ -234,6 +235,72 @@ export class DneBinaryDatabaseReader {
     this.assertOpen();
     const index = this.findCepIndex(cep);
     return index === -1 ? undefined : this.readRow(index, cep.replace('-', ''));
+  }
+
+  /**
+   * Resolves a municipality's name and UF by its IBGE code.
+   * @param municipioCodIbge - Seven-digit IBGE municipality code represented as an integer.
+   * @returns The municipality and UF, or undefined for an invalid or unknown code.
+   * @throws {DneBinaryDatabaseClosedError} If the reader is closed, including for invalid input.
+   */
+  queryMunicipality(municipioCodIbge: number): Pick<DneRow, 'municipio' | 'uf'> | undefined {
+    this.assertOpen();
+    if (!Number.isInteger(municipioCodIbge) || municipioCodIbge < 1_000_000 || municipioCodIbge > 9_999_999) {
+      return undefined;
+    }
+    const recordWidth = 3 + this.dictionaries.municipio.idWidth + this.dictionaries.uf.idWidth;
+    const offset = this.header.sections.municipalities.offset;
+    let low = 0;
+    let high = this.header.municipalityCount - 1;
+    while (low <= high) {
+      const middle = low + ((high - low) >>> 1);
+      const code = this.readPackedInteger(offset + middle * recordWidth, 3);
+      if (code < municipioCodIbge) {
+        low = middle + 1;
+      } else if (code > municipioCodIbge) {
+        high = middle - 1;
+      } else {
+        const { municipio, uf } = this.readMunicipality(middle + 1);
+        return { municipio, uf };
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Lists the IBGE municipality codes stored for a federative unit.
+   * @param uf - Canonical uppercase Brazilian state abbreviation.
+   * @returns Unique codes in ascending order, or an empty array for an invalid or absent UF.
+   * @throws {DneBinaryDatabaseClosedError} If the reader is closed, including for invalid input.
+   */
+  queryMunicipalityCodesByUf(uf: UF): number[] {
+    this.assertOpen();
+    if (!Object.hasOwn(stateCodes, uf)) {
+      return [];
+    }
+    const minimum = stateCodes[uf] * 100_000;
+    const maximum = minimum + 100_000;
+    const recordWidth = 3 + this.dictionaries.municipio.idWidth + this.dictionaries.uf.idWidth;
+    const offset = this.header.sections.municipalities.offset;
+    let low = 0;
+    let high = this.header.municipalityCount;
+    while (low < high) {
+      const middle = low + ((high - low) >>> 1);
+      if (this.readPackedInteger(offset + middle * recordWidth, 3) < minimum) {
+        low = middle + 1;
+      } else {
+        high = middle;
+      }
+    }
+    const codes: number[] = [];
+    for (let index = low; index < this.header.municipalityCount; index++) {
+      const code = this.readPackedInteger(offset + index * recordWidth, 3);
+      if (code >= maximum) {
+        break;
+      }
+      codes.push(code);
+    }
+    return codes;
   }
 
   /**
