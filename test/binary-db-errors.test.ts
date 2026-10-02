@@ -87,6 +87,30 @@ describe('binary reader error contract', () => {
     }
   });
 
+  test('retains its snapshot when the source file is changed or removed', async () => {
+    const snapshotPath = join(workDir, 'snapshot.bin');
+    await Bun.write(snapshotPath, original);
+    const reader = new DneBinaryDatabaseReader(snapshotPath);
+    try {
+      await Bun.write(snapshotPath, 'replaced');
+      expect(reader.queryCep('21000000')?.bairro).toBe('Centro');
+      rmSync(snapshotPath);
+      expect(reader.queryCep('21000000')?.bairro).toBe('Centro');
+      expect(reader.rowCount()).toBe(20);
+    } finally {
+      reader.close();
+    }
+  });
+
+  test('reports an empty database as invalid binary content', async () => {
+    const emptyPath = join(workDir, 'empty.bin');
+    await Bun.write(emptyPath, new Uint8Array());
+    const error = captureError(() => new DneBinaryDatabaseReader(emptyPath));
+    expect(error).toBeInstanceOf(DneBinaryDatabaseFormatError);
+    expect(error).toMatchObject({ code: 'INVALID_FORMAT' });
+    expect(error.message).toContain('Binary database header is truncated');
+  });
+
   test('retains parsed metadata and row counts after an idempotent close', () => {
     const reader = new DneBinaryDatabaseReader(binaryPath);
     const metadata = reader.metadata();
@@ -113,7 +137,7 @@ describe('binary reader error contract', () => {
     }
   });
 
-  test('rejects altered section offsets before dereferencing the mapped file', async () => {
+  test('rejects altered section offsets before decoding the database bytes', async () => {
     const bytes = original.slice();
     const directoryOffset = SECTION_TABLE_OFFSET + BINARY_SECTION_NAMES.indexOf('logradouroDictionary') * 8;
     new DataView(bytes.buffer).setUint32(directoryOffset, 0xffff_ffff, true);

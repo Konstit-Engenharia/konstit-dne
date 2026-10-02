@@ -143,7 +143,7 @@ export async function isBinaryDatabase(path: string): Promise<boolean> {
  *
  * Construction verifies the header and SHA-256 of bytes validated by a trusted generator.
  * Queries decode directly using the invariants guaranteed at generation.
- * Keep the underlying file immutable while the reader is open. Call `close()` when finished.
+ * The database is loaded as a snapshot at construction. Call `close()` when finished.
  * All operational errors extend {@link DneBinaryDatabaseError}; invalid or absent CEPs return `undefined`.
  */
 export class DneBinaryDatabaseReader {
@@ -156,23 +156,23 @@ export class DneBinaryDatabaseReader {
   private localityRuns: LocalityRuns;
   private logradouroIdBits: number;
   private header: BinaryHeader;
-  private mapped: Uint8Array<ArrayBuffer> | null;
+  private bytes: Uint8Array<ArrayBuffer> | null;
   private readonly metadataValue: Readonly<LoadMetadata>;
   private municipalityCache: (DecodedMunicipality | undefined)[];
 
   /**
-   * Opens and verifies a binary database, mapping physical files or reading embedded assets.
+   * Reads and verifies a complete binary database from a physical file or embedded asset.
    * @param databasePath - Optional path to an existing binary database. Defaults to this package's database asset.
-   * @throws {DneBinaryDatabaseIOError} If the file cannot be resolved, mapped, or read.
+   * @throws {DneBinaryDatabaseIOError} If the file cannot be resolved or read.
    * @throws {DneBinaryDatabaseVersionError} If the declared format version is unsupported.
    * @throws {DneBinaryDatabaseFormatError} If the minimum header, file size, or SHA-256 checksum is invalid.
    */
   constructor(databasePath?: string) {
-    let mapped: Uint8Array<ArrayBuffer>;
+    let bytes: Uint8Array<ArrayBuffer>;
     try {
       // Load the asset module only for the default database; Bun follows this literal dependency.
       databasePath ??= (require('./bundled-database') as { default: string; }).default;
-      mapped = readDatabaseBytes(databasePath);
+      bytes = readFileSync(databasePath);
     } catch (cause) {
       throw new DneBinaryDatabaseIOError(
         databasePath ?? fileURLToPath(new URL('../data/dne.bin', import.meta.url)),
@@ -180,17 +180,17 @@ export class DneBinaryDatabaseReader {
       );
     }
     try {
-      const data = new DataView(mapped.buffer, mapped.byteOffset, mapped.byteLength);
+      const data = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
       verifyHeader(data);
-      verifyBinaryDatabaseChecksum(mapped);
+      verifyBinaryDatabaseChecksum(bytes);
       const header = readHeader(data);
       const dictionaries = readDictionaries(data, header);
       const bairros = readNeighborhoods(data, header, dictionaries);
       const bairroRuns = readBairroRunsLayout(data, header.sections.bairroIds, header.rowCount, bairros.idWidth);
       const localityRuns = readLocalityRunsLayout(data, header.sections.municipalityIds, header.rowCount);
-      const metadata = parseMetadata(mapped, header.sections.metadata);
+      const metadata = parseMetadata(bytes, header.sections.metadata);
 
-      this.mapped = mapped;
+      this.bytes = bytes;
       this.data = data;
       this.header = header;
       this.dictionaries = dictionaries;
@@ -202,7 +202,7 @@ export class DneBinaryDatabaseReader {
       this.bairroCache = Array.from({ length: dictionaries.bairro.count + 1 });
       this.municipalityCache = Array.from({ length: header.municipalityCount + 1 });
     } catch (error) {
-      this.mapped = null;
+      this.bytes = null;
       this.data = null;
       if (error instanceof DneBinaryDatabaseError) {
         throw error;
@@ -213,13 +213,13 @@ export class DneBinaryDatabaseReader {
 
   /**
    * Releases this reader's references to the database bytes and decoded caches.
-   * Repeated calls are safe. Bun controls when the mapping is reclaimed; this method does not
-   * guarantee immediate unmapping. Metadata and row count remain available after closing.
+   * Repeated calls are safe. Bun controls when the bytes are reclaimed by garbage collection.
+   * Metadata and row count remain available after closing.
    */
   close(): void {
     this.bairroCache = [];
     this.data = null;
-    this.mapped = null;
+    this.bytes = null;
     this.municipalityCache = [];
   }
 
@@ -554,9 +554,9 @@ export class DneBinaryDatabaseReader {
     rowIndex: number,
     idWidth: 1 | 2 | 3 | 4,
   ) {
-    const mapped = this.mapped as Uint8Array;
+    const bytes = this.bytes as Uint8Array;
     const bitmapByteIndex = rowIndex >>> 3;
-    const bitmapByte = mapped[bitmap.offset + bitmapByteIndex] as number;
+    const bitmapByte = bytes[bitmap.offset + bitmapByteIndex] as number;
     const bitIndex = rowIndex & 7;
     if ((bitmapByte & (1 << bitIndex)) === 0) {
       return 0;
@@ -566,7 +566,7 @@ export class DneBinaryDatabaseReader {
     let denseIndex = this.readUint32(ranks.offset + rankBlock * 4);
     const blockByteOffset = rankBlock * (SPARSE_RANK_ROWS >>> 3);
     for (let offset = blockByteOffset; offset < bitmapByteIndex; offset++) {
-      denseIndex += popcount[mapped[bitmap.offset + offset] as number] as number;
+      denseIndex += popcount[bytes[bitmap.offset + offset] as number] as number;
     }
     denseIndex += popcount[bitmapByte & ((1 << bitIndex) - 1)] as number;
     return this.readPackedInteger(ids.offset + denseIndex * idWidth, idWidth);
@@ -577,9 +577,9 @@ export class DneBinaryDatabaseReader {
       return null;
     }
 
-    const mapped = this.mapped as Uint8Array;
+    const bytes = this.bytes as Uint8Array;
     if (dictionary.codec === DICTIONARY_CODEC_FSST) {
-      return readTrustedFsstString(mapped, this.data as DataView, dictionary, id);
+      return readTrustedFsstString(bytes, this.data as DataView, dictionary, id);
     }
     const index = id - 1;
     const block = index >>> DICTIONARY_BLOCK_SHIFT;
@@ -590,10 +590,10 @@ export class DneBinaryDatabaseReader {
     let previousLength = 0;
 
     for (let currentIndex = blockStart; currentIndex <= index; currentIndex++) {
-      const length = mapped[dictionary.lengthsOffset + currentIndex] as number;
-      const prefixLength = mapped[dictionary.prefixesOffset + currentIndex] as number;
+      const length = bytes[dictionary.lengthsOffset + currentIndex] as number;
+      const prefixLength = bytes[dictionary.prefixesOffset + currentIndex] as number;
       const suffixLength = length - prefixLength;
-      decoded.set(mapped.subarray(cursor, cursor + suffixLength), prefixLength);
+      decoded.set(bytes.subarray(cursor, cursor + suffixLength), prefixLength);
       cursor += suffixLength;
       previousLength = length;
     }
@@ -623,15 +623,15 @@ export class DneBinaryDatabaseReader {
   }
 
   private readPacked10(index: number) {
-    const mapped = this.mapped as Uint8Array;
+    const bytes = this.bytes as Uint8Array;
     const region = this.header.sections.cepSuffixes;
     const bitOffset = index * CEP_SUFFIX_BITS;
     const byteIndex = bitOffset >>> 3;
     const shift = bitOffset & 7;
     const absoluteOffset = region.offset + byteIndex;
-    const value = (mapped[absoluteOffset] as number)
-      | ((mapped[absoluteOffset + 1] as number) << 8)
-      | ((mapped[absoluteOffset + 2] as number) << 16);
+    const value = (bytes[absoluteOffset] as number)
+      | ((bytes[absoluteOffset + 1] as number) << 8)
+      | ((bytes[absoluteOffset + 2] as number) << 16);
     return (value >>> shift) & 0x3ff;
   }
 
@@ -648,7 +648,7 @@ export class DneBinaryDatabaseReader {
  * Opens a binary database, reads its load metadata, and closes the temporary reader.
  * @param path - Path to an existing binary database file.
  * @returns Frozen metadata parsed from the file at open time.
- * @throws {DneBinaryDatabaseIOError} If the file cannot be mapped or read.
+ * @throws {DneBinaryDatabaseIOError} If the file cannot be read.
  * @throws {DneBinaryDatabaseVersionError} If the binary version is unsupported.
  * @throws {DneBinaryDatabaseFormatError} If the minimum header, file size, or SHA-256 checksum is invalid.
  */
@@ -658,21 +658,6 @@ export async function readBinaryDatabaseMetadata(path: string): Promise<Readonly
     return reader.metadata();
   } finally {
     reader.close();
-  }
-}
-
-function readDatabaseBytes(path: string): Uint8Array<ArrayBuffer> {
-  if (path.startsWith('/$bunfs/')) {
-    return readFileSync(path);
-  }
-  try {
-    return Bun.mmap(path, { shared: false });
-  } catch (cause) {
-    // Bun opens mmap files for writing even with MAP_PRIVATE; immutable deployments can still read them.
-    if (cause instanceof Error && 'code' in cause && (cause.code === 'EACCES' || cause.code === 'EROFS')) {
-      return readFileSync(path);
-    }
-    throw cause;
   }
 }
 
@@ -771,6 +756,6 @@ function readNeighborhoods(data: DataView, header: BinaryHeader, dictionaries: B
   };
 }
 
-function parseMetadata(mapped: Uint8Array, region: Region): LoadMetadata {
-  return JSON.parse(textDecoder.decode(mapped.subarray(region.offset, region.offset + region.length))) as LoadMetadata;
+function parseMetadata(bytes: Uint8Array, region: Region): LoadMetadata {
+  return JSON.parse(textDecoder.decode(bytes.subarray(region.offset, region.offset + region.length))) as LoadMetadata;
 }

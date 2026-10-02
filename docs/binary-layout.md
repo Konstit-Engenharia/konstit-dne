@@ -2,7 +2,7 @@
 
 This document specifies version 5 of the `@konstit/dne` binary database format. It is intended for authors of readers in languages other than TypeScript. Version 5 readers do not accept version 1, version 2, version 3, or version 4 files.
 
-The format is an immutable artifact produced by a trusted generation process and is optimized for memory-mapped, read-only CEP lookup. It stores rows in CEP order, splits each CEP into a prefix directory and a packed suffix, interns strings in per-column dictionaries, and stores nullable low-density columns with bitmaps and rank indexes.
+The format is an immutable artifact produced by a trusted generation process and is optimized for read-only CEP lookup directly from its bytes in memory. It stores rows in CEP order, splits each CEP into a prefix directory and a packed suffix, interns strings in per-column dictionaries, and stores nullable low-density columns with bitmaps and rank indexes.
 
 Every version 5 file ends with a 32-byte raw SHA-256 digest. The digest covers every preceding byte, including the header and alignment padding, and excludes the digest itself. The canonical writer validates the complete serialized byte sequence before computing the digest. Under the trusted-producer and immutability contract, an opening reader checks the minimum header, version, declared size, actual size, and digest before using the layout; it does not need to rescan every section, ID, offset, or relationship. Queries validate their input and decode the selected row directly. SHA-256 verifies integrity against the stored digest; it does not authenticate the producer, since an actor able to rewrite the file and digest can create another internally consistent artifact outside this contract.
 
@@ -648,14 +648,14 @@ The canonical writer must apply the following checks to the complete serialized 
 
 ## Opening and query contract
 
-The trusted reader opens a file in this order:
+The trusted reader loads the complete file or embedded asset into memory, then verifies that snapshot in this order:
 
-1. Check that the mapped input contains the fixed header, then read the magic, version, header size, and declared file size.
+1. Check that the input bytes contain the fixed header, then read the magic, version, header size, and declared file size.
 2. Reject a version other than `5`, a header other than `256`, or a declared size that differs from the actual file length or cannot contain the footer.
 3. Treat the final 32 bytes as the footer and compare its raw value with SHA-256 of all preceding bytes.
 4. After the digest matches, parse the section directory and dictionaries using the generation invariants above; the trusted layout places the footer after the aligned end of the final section. Do not rescan every ID, offset, string, or relationship at open time.
 
-Queries retain invalid-input handling and the closed-reader check, then decode the requested row directly from the trusted layout. The public reader continues to report I/O, unsupported-version, size, checksum, and closed-reader errors. The trusted supplier and immutability contract requires that a memory-mapped file is not truncated or replaced in place while readers use it. A SHA-256 match alone does not establish producer authenticity.
+Queries retain invalid-input handling and the closed-reader check, then decode the requested row directly from the trusted layout. The public reader continues to report I/O, unsupported-version, size, checksum, and closed-reader errors. The source file must remain immutable during loading; later changes or deletion do not affect the reader's snapshot. A SHA-256 match alone does not establish producer authenticity.
 
 ## Compatibility
 

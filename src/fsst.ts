@@ -6,7 +6,7 @@ import {
   FSST_SYMBOL_COUNT,
 } from './binary-db-format.ts';
 
-/** Validated locations of an FSST dictionary within the mapped database. */
+/** Validated locations of an FSST dictionary within the database bytes. */
 export type FsstDictionary = {
   blockCount: number;
   blockOffsetsOffset: number;

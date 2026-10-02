@@ -48,7 +48,7 @@ afterAll(() => {
 });
 
 describe('binary database', () => {
-  test('exports interned SoA data and looks it up through mmap', async () => {
+  test('exports interned SoA data and queries it from memory', async () => {
     const sourcePath = join(workDir, 'source');
     const sqlitePath = join(workDir, 'source.db');
     const binaryPath = join(workDir, 'source.bin');

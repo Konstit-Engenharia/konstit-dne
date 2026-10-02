@@ -78,7 +78,7 @@ test('builds a version 5 database that can be opened, closed, and reopened', () 
   }
 });
 
-test('reads an FSST logradouro dictionary through mmap and after reopening', () => {
+test('reads an FSST logradouro dictionary from memory and after reopening', () => {
   expect(fsstLayout.count).toBeGreaterThan(DICTIONARY_BLOCK_SIZE);
   const reader = new DneBinaryDatabaseReader(fsstPath);
   try {

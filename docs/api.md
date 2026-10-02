@@ -12,7 +12,7 @@ A biblioteca pode ser importada diretamente. Importá-la não executa a CLI nem 
 
 ## Leitor binário
 
-`DneBinaryDatabaseReader` faz consultas síncronas em uma base binária local. Para arquivos físicos, usa mapeamento em memória quando permitido. Sem argumento, ele abre `data/dne.bin` dentro do pacote instalado, independentemente do diretório de trabalho:
+`DneBinaryDatabaseReader` carrega uma base binária integralmente em memória e faz consultas síncronas nessa cópia. Sem argumento, ele abre `data/dne.bin` dentro do pacote instalado, independentemente do diretório de trabalho:
 
 ```typescript
 import {
@@ -35,9 +35,9 @@ Nenhum download é feito na instalação ou na consulta. A base incluída corres
 const reader = new DneBinaryDatabaseReader('/dados/dne.bin');
 ```
 
-O banco padrão é um asset reconhecido pelo bundler do Bun. `bun build --target=bun` o inclui no diretório de saída, que deve ser distribuído por inteiro. `bun build --compile` o incorpora no executável. Ambos preservam `new DneBinaryDatabaseReader()` sem configuração específica no Dockerfile. O leitor usa `mmap` para arquivos físicos e leitura síncrona em memória para assets embutidos em `/$bunfs/`, sem extrair a base para disco. Como o `mmap` do Bun exige abrir o arquivo para escrita, erros `EACCES` ou `EROFS` também usam leitura síncrona. A validação e as consultas são as mesmas em todos os modos.
+O banco padrão é um asset reconhecido pelo bundler do Bun. `bun build --target=bun` o inclui no diretório de saída, que deve ser distribuído por inteiro. `bun build --compile` o incorpora no executável. Ambos preservam `new DneBinaryDatabaseReader()` sem configuração específica no Dockerfile. O leitor usa `readFileSync()` para arquivos físicos e assets embutidos, sem extrair a base para disco nem exigir permissão de escrita. A validação e as consultas são as mesmas em todos os modos. Cada leitor mantém os bytes da base em memória até liberar suas referências com `close()`; o runtime controla quando a memória é recuperada.
 
-O arquivo deve permanecer imutável enquanto o leitor estiver aberto. A geração valida integralmente os bytes serializados antes de registrar o SHA-256. Ao abrir, o construtor verifica o cabeçalho mínimo, a versão, o tamanho declarado e o checksum; depois usa o layout validado para preparar o leitor. `close()` pode ser chamado mais de uma vez. Depois de fechar, as consultas lançam `DneBinaryDatabaseClosedError`; `metadata()` e `rowCount()` continuam disponíveis.
+O arquivo deve permanecer imutável durante o carregamento. Alterar ou remover o arquivo depois da abertura não modifica a cópia do leitor; abra outro leitor para receber uma versão atualizada. A geração valida integralmente os bytes serializados antes de registrar o SHA-256. Ao abrir, o construtor verifica o cabeçalho mínimo, a versão, o tamanho declarado e o checksum; depois usa o layout validado para preparar o leitor. `close()` pode ser chamado mais de uma vez. Depois de fechar, as consultas lançam `DneBinaryDatabaseClosedError`; `metadata()` e `rowCount()` continuam disponíveis.
 
 ## Leitor SQLite
 

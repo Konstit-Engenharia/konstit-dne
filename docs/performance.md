@@ -4,6 +4,8 @@
 
 Estas medições usam os formatos atuais: **binário v5** e **SQLite de esquema 4**, com os leitores e geradores do projeto.
 
+Os resultados abaixo foram obtidos em 01/10/2026, antes da mudança de carregamento do leitor binário. O leitor atual carrega arquivos físicos e assets integralmente em memória com `readFileSync()`. Estes resultados históricos não medem a abertura ou o consumo de memória desse modo de carregamento.
+
 ## Base e ambiente
 
 Medição realizada em **01/10/2026**, em um **Apple M4 com 16 GiB de RAM**, macOS 26.6.2 e Bun 1.4.2. A fonte local `eDNE_Basico_26092/Delimitado` produziu **1.611.629 CEPs, 84.952 bairros e 139.746 faixas de bairros**.

@@ -39,7 +39,7 @@ bunx @konstit/dne build --db ./dne.db --check --json
 
 Cada carga grava a versão do `@konstit/dne` em `edne_metadata` (ou no cabeçalho do arquivo binário). Ao usar uma fonte remota, a CLI também grava `Last-Modified`, ETag, tamanho do conteúdo, URL da fonte e horário da carga. Todos os validadores disponíveis devem continuar iguais para a base ser considerada atual. Uma execução posterior de `build` não recria a base se a fonte não mudou e mostra o `Last-Modified` remoto na saída textual. `--check` valida a estrutura de uma fonte local ou verifica se há uma atualização remota, sem alterar a base. `--force` ignora os metadados e recria a base.
 
-O formato binário é selecionado explicitamente com `--format binary`. Ele mantém os mesmos dez campos da consulta por CEP em um layout próprio para `mmap`: o CEP usa um diretório de prefixos e sufixos de 10 bits; município e UF são compartilhados; campos opcionais usam bitmaps; os indicadores da localidade ocupam um byte por CEP; e as strings ficam em dicionários por coluna com front-coding em blocos de oito. `get`, `status` e `schema` detectam o formato automaticamente. O comando `sql` continua disponível somente para bases SQLite.
+O formato binário é selecionado explicitamente com `--format binary`. Ele mantém os mesmos dez campos da consulta por CEP em um layout próprio para consultas em memória: o CEP usa um diretório de prefixos e sufixos de 10 bits; município e UF são compartilhados; campos opcionais usam bitmaps; os indicadores da localidade ocupam um byte por CEP; e as strings ficam em dicionários por coluna com front-coding em blocos de oito. `get`, `status` e `schema` detectam o formato automaticamente. O comando `sql` continua disponível somente para bases SQLite.
 
 A especificação completa para implementar leitores em outras linguagens está em [Formato binário](binary-layout.md).
 
@@ -104,7 +104,7 @@ printf '01001000\n20040002\n' | bunx @konstit/dne get --jsonl
 
 Os formatos aceitos são `01001000` e `01001-000`. A entrada por arquivo ou stdin pode usar espaços, vírgulas ou pontos e vírgulas como separadores.
 
-`get` abre o SQLite em modo somente leitura ou mapeia o arquivo binário com `mmap`. Se o caminho da base não existir, nenhum arquivo será criado. O formato JSONL lê a entrada e grava cada resultado de forma incremental, sem manter o lote completo na memória.
+`get` abre o SQLite em modo somente leitura ou carrega o arquivo binário integralmente em memória. Se o caminho da base não existir, nenhum arquivo será criado. O formato JSONL lê a entrada e grava cada resultado de forma incremental, sem manter o lote completo na memória.
 
 ## Inspecionar a base
 

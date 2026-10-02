@@ -17,7 +17,7 @@ export abstract class DneBinaryDatabaseError extends Error {
   }
 }
 
-/** The database file could not be opened, mapped, or read. Inspect `cause` for the operating-system error. */
+/** The database file could not be opened or read. Inspect `cause` for the operating-system error. */
 export class DneBinaryDatabaseIOError extends DneBinaryDatabaseError {
   /** Identifies a failure to access the database file. */
   readonly code = 'IO_ERROR';
