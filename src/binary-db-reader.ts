@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
   readBairroRunIndex,
@@ -138,7 +139,7 @@ export async function isBinaryDatabase(path: string): Promise<boolean> {
 }
 
 /**
- * Provides synchronous, read-only CEP lookups over a memory-mapped DNE binary database.
+ * Provides synchronous, read-only CEP lookups over a physical or embedded DNE binary database.
  *
  * Construction verifies the header and SHA-256 of bytes validated by a trusted generator.
  * Queries decode directly using the invariants guaranteed at generation.
@@ -160,18 +161,23 @@ export class DneBinaryDatabaseReader {
   private municipalityCache: (DecodedMunicipality | undefined)[];
 
   /**
-   * Opens and verifies a binary database using Bun's memory-mapping API.
-   * @param databasePath - Optional path to an existing binary database. Defaults to `data/dne.bin` inside this package.
-   * @throws {DneBinaryDatabaseIOError} If the file cannot be mapped.
+   * Opens and verifies a binary database, mapping physical files or reading embedded assets.
+   * @param databasePath - Optional path to an existing binary database. Defaults to this package's database asset.
+   * @throws {DneBinaryDatabaseIOError} If the file cannot be resolved, mapped, or read.
    * @throws {DneBinaryDatabaseVersionError} If the declared format version is unsupported.
    * @throws {DneBinaryDatabaseFormatError} If the minimum header, file size, or SHA-256 checksum is invalid.
    */
-  constructor(databasePath = fileURLToPath(new URL('../data/dne.bin', import.meta.url))) {
+  constructor(databasePath?: string) {
     let mapped: Uint8Array<ArrayBuffer>;
     try {
-      mapped = Bun.mmap(databasePath, { shared: false });
+      // Load the asset module only for the default database; Bun follows this literal dependency.
+      databasePath ??= (require('./bundled-database') as { default: string; }).default;
+      mapped = readDatabaseBytes(databasePath);
     } catch (cause) {
-      throw new DneBinaryDatabaseIOError(databasePath, { cause });
+      throw new DneBinaryDatabaseIOError(
+        databasePath ?? fileURLToPath(new URL('../data/dne.bin', import.meta.url)),
+        { cause },
+      );
     }
     try {
       const data = new DataView(mapped.buffer, mapped.byteOffset, mapped.byteLength);
@@ -206,7 +212,7 @@ export class DneBinaryDatabaseReader {
   }
 
   /**
-   * Releases this reader's references to the mapping and decoded caches.
+   * Releases this reader's references to the database bytes and decoded caches.
    * Repeated calls are safe. Bun controls when the mapping is reclaimed; this method does not
    * guarantee immediate unmapping. Metadata and row count remain available after closing.
    */
@@ -642,7 +648,7 @@ export class DneBinaryDatabaseReader {
  * Opens a binary database, reads its load metadata, and closes the temporary reader.
  * @param path - Path to an existing binary database file.
  * @returns Frozen metadata parsed from the file at open time.
- * @throws {DneBinaryDatabaseIOError} If the file cannot be mapped.
+ * @throws {DneBinaryDatabaseIOError} If the file cannot be mapped or read.
  * @throws {DneBinaryDatabaseVersionError} If the binary version is unsupported.
  * @throws {DneBinaryDatabaseFormatError} If the minimum header, file size, or SHA-256 checksum is invalid.
  */
@@ -652,6 +658,21 @@ export async function readBinaryDatabaseMetadata(path: string): Promise<Readonly
     return reader.metadata();
   } finally {
     reader.close();
+  }
+}
+
+function readDatabaseBytes(path: string): Uint8Array<ArrayBuffer> {
+  if (path.startsWith('/$bunfs/')) {
+    return readFileSync(path);
+  }
+  try {
+    return Bun.mmap(path, { shared: false });
+  } catch (cause) {
+    // Bun opens mmap files for writing even with MAP_PRIVATE; immutable deployments can still read them.
+    if (cause instanceof Error && 'code' in cause && (cause.code === 'EACCES' || cause.code === 'EROFS')) {
+      return readFileSync(path);
+    }
+    throw cause;
   }
 }
 

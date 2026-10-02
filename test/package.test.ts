@@ -12,6 +12,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -105,6 +106,85 @@ describe('published package', () => {
     `,
     ], otherCwd);
     expect(output.trim()).toBe('library-ok');
+  });
+
+  test.each(['bundle', 'split', 'compile'])('deploys the %s output without the installed package', (mode) => {
+    const app = join(consumer, `app-${mode}.ts`);
+    writeFileSync(
+      app,
+      `
+      ${
+        mode === 'split'
+          ? 'const { DneBinaryDatabaseReader, DneBinaryDatabaseClosedError } = await import(\'@konstit/dne\');'
+          : 'import { DneBinaryDatabaseReader, DneBinaryDatabaseClosedError } from \'@konstit/dne\';'
+      }
+      import { strict as assert } from 'node:assert';
+      const reader = new DneBinaryDatabaseReader();
+      assert.equal(reader.rowCount(), 20);
+      assert.equal(reader.queryCep('21000000').bairro, 'Centro');
+      assert.equal(reader.queryCep('13000000').localidade_tipo, 'distrito');
+      assert.equal(reader.queryMunicipality(3500001).uf, 'SP');
+      assert.equal(reader.queryNeighborhoodByCep('21000000').bairro_id, 11);
+      assert.equal(reader.queryNeighborhoodCepRanges(11).length, 2);
+      assert.equal(reader.queryCep('invalid'), undefined);
+      assert.equal(typeof reader.metadata().loaded_at, 'string');
+      reader.close();
+      assert.throws(() => reader.queryCep('21000000'), DneBinaryDatabaseClosedError);
+      console.log('deployment-ok');
+    `,
+    );
+    const output = join(consumer, `build-${mode}`);
+    const executable = join(output, 'app');
+    run('bun', [
+      'build',
+      app,
+      '--target=bun',
+      '--minify',
+      ...(mode === 'compile' ? ['--compile', '--outfile', executable] : ['--outdir', output]),
+      ...(mode === 'split' ? ['--splitting', '--chunk-naming', 'chunks/[name]-[hash].[ext]'] : []),
+    ], consumer);
+    const deployment = join(workDir, `deployment with spaces-${mode}`);
+    cpSync(output, deployment, { recursive: true });
+    const hiddenPackage = `${installed}-hidden`;
+    renameSync(installed, hiddenPackage);
+    rmSync(output, { recursive: true });
+    try {
+      const result = mode === 'compile'
+        ? run(join(deployment, 'app'), [], otherCwd)
+        : run('bun', [join(deployment, `app-${mode}.js`)], otherCwd);
+      expect(result.trim()).toBe('deployment-ok');
+    } finally {
+      renameSync(hiddenPackage, installed);
+    }
+  });
+
+  test('imports and accepts a custom database when the packaged asset is missing', () => {
+    const asset = join(installed, 'data/dne.bin');
+    const custom = join(otherCwd, 'custom.bin');
+    renameSync(asset, custom);
+    try {
+      const output = run('bun', [
+        '--eval',
+        `
+        import { DneBinaryDatabaseReader, DneBinaryDatabaseIOError } from '@konstit/dne';
+        import { strict as assert } from 'node:assert';
+        const reader = new DneBinaryDatabaseReader('./custom.bin');
+        assert.equal(reader.rowCount(), 20);
+        reader.close();
+        assert.throws(() => new DneBinaryDatabaseReader(), (error) => {
+          assert.ok(error instanceof DneBinaryDatabaseIOError);
+          assert.equal(error.code, 'IO_ERROR');
+          assert.ok(error.path.endsWith('/data/dne.bin'));
+          assert.ok(error.cause instanceof Error);
+          return true;
+        });
+        console.log('custom-database-ok');
+      `,
+      ], otherCwd);
+      expect(output.trim()).toBe('custom-database-ok');
+    } finally {
+      renameSync(custom, asset);
+    }
   });
 
   test('retains the CLI executable and its Bun shebang', () => {

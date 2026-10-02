@@ -44,6 +44,8 @@ Outros scripts de benchmark específicos estão listados em [`package.json`](../
 
 `bun run build` gera a CLI em `dist/index.js` e a biblioteca com declarações TypeScript em `dist/library.js` e `dist/library.d.ts`. `npm pack` e `bun pm pack` executam `prepack`: compilam essas entradas e geram `data/dne.bin` a partir da fonte pública dos Correios. A base completa acompanha o tarball; não há script de instalação para baixá-la. Os testes de publicação verificam a CLI e a leitura da base no pacote instalado.
 
+O módulo `src/bundled-database.ts` declara a base como asset com `with { type: 'file' }`. O leitor carrega esse módulo somente quando nenhum caminho é informado, permitindo importar a biblioteca e gerar bases próprias antes de existir uma base do pacote. A compilação da CLI mantém esse asset externo porque seus comandos sempre recebem um caminho de banco; a biblioteca emitida por TypeScript preserva a dependência para o build da aplicação consumidora. Os testes de publicação também executam bundles, chunks e executáveis compilados após mover somente a saída e ocultar o pacote instalado.
+
 Para empacotar a partir de um diretório ou ZIP local, informe `DNE_PACKAGE_SOURCE`:
 
 ```sh

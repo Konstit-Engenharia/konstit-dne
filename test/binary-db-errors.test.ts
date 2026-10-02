@@ -6,6 +6,7 @@ import {
   test,
 } from 'bun:test';
 import {
+  chmodSync,
   mkdtempSync,
   rmSync,
 } from 'node:fs';
@@ -62,6 +63,28 @@ describe('binary reader error contract', () => {
     expect(await isBinaryDatabase(missing)).toBe(false);
     const metadataError = await readBinaryDatabaseMetadata(missing).catch((cause: unknown) => cause);
     expect(metadataError).toBeInstanceOf(DneBinaryDatabaseIOError);
+  });
+
+  test('wraps failures to read embedded database assets', () => {
+    const missing = '/$bunfs/root/missing-dne.bin';
+    const error = captureError(() => new DneBinaryDatabaseReader(missing));
+    expect(error).toBeInstanceOf(DneBinaryDatabaseIOError);
+    expect(error).toMatchObject({ code: 'IO_ERROR', path: missing });
+    expect(error.cause).toBeInstanceOf(Error);
+  });
+
+  test('reads a database without write permissions', async () => {
+    const readonlyPath = join(workDir, 'readonly.bin');
+    await Bun.write(readonlyPath, original);
+    chmodSync(readonlyPath, 0o444);
+    const reader = new DneBinaryDatabaseReader(readonlyPath);
+    try {
+      expect(reader.rowCount()).toBe(20);
+      expect(reader.queryCep('21000000')?.bairro).toBe('Centro');
+    } finally {
+      reader.close();
+      chmodSync(readonlyPath, 0o644);
+    }
   });
 
   test('retains parsed metadata and row counts after an idempotent close', () => {
