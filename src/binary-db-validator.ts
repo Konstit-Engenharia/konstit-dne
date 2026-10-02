@@ -288,7 +288,7 @@ function validateUfDictionary(dictionary: BinaryDictionary) {
 
 function requireCanonicalUf(value: string, index: number) {
   const parsed = parseUF(value);
-  if (parsed === null) {
+  if (parsed === undefined) {
     throw new DneBinaryDatabaseFormatError(`Invalid binary UF dictionary entry: ${index}`);
   }
   if (value !== parsed) {

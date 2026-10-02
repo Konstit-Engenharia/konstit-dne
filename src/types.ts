@@ -128,12 +128,12 @@ export type StoredDneRow = Omit<DneRow, 'localidade_situacao' | 'localidade_tipo
  * Parsing is case-insensitive and returns the canonical uppercase value.
  *
  * @param value Federative-unit abbreviation, for example `MG`.
- * @returns The canonical supported state abbreviation, or `null` for an unknown value.
+ * @returns The canonical supported state abbreviation, or `undefined` for an unknown value.
  */
-export function parseUF(value: string): UF | null {
+export function parseUF(value: string): UF | undefined {
   const state = value.trim().toUpperCase();
   if (!Object.hasOwn(stateCodes, state)) {
-    return null;
+    return undefined;
   }
   return state as UF;
 }
@@ -146,7 +146,7 @@ export function parseUF(value: string): UF | null {
 // oxlint-disable-next-line typescript/no-redundant-type-constituents -- Preserve the requested public UF | string signature.
 export function ufToStateName(uf: UF | string): string | undefined {
   const state = parseUF(uf);
-  return state === null ? undefined : stateNames[state];
+  return state === undefined ? undefined : stateNames[state];
 }
 
 /**
@@ -166,7 +166,7 @@ export function stateNameToUF(name: string): UF | undefined {
 // oxlint-disable-next-line typescript/no-redundant-type-constituents -- Preserve the requested public UF | string signature.
 export function ufToStateCode(uf: UF | string): number | undefined {
   const state = parseUF(uf);
-  return state === null ? undefined : stateCodes[state];
+  return state === undefined ? undefined : stateCodes[state];
 }
 
 /**
