@@ -96,7 +96,7 @@ O leitor binário oferece `queryMunicipalityCodesByUf(uf: UF): number[]` para li
 const codigos = binaryReader.queryMunicipalityCodesByUf('SP');
 ```
 
-Os códigos são únicos e retornados em ordem crescente. A UF deve ser uma sigla canônica em maiúsculas; uma entrada inválida ou uma UF sem municípios na base retorna `[]`. Use `parseUF()` para normalizar uma sigla recebida como texto. Depois de `close()`, o método lança `DneBinaryDatabaseClosedError`, inclusive para entrada inválida.
+Os códigos são únicos e retornados em ordem crescente. A UF deve ser uma sigla canônica em maiúsculas; uma entrada inválida ou uma UF sem municípios na base retorna `[]`. Use `parseUF()` para normalizar uma sigla recebida como texto e verifique se o retorno é diferente de `null` antes da consulta. Depois de `close()`, o método lança `DneBinaryDatabaseClosedError`, inclusive para entrada inválida.
 
 A consulta localiza o início do intervalo estadual por busca binária e percorre apenas seus códigos, com custo O(log M + K), onde K é a quantidade de municípios retornados. Usa a tabela existente e não exige regenerar o binário.
 
@@ -192,7 +192,7 @@ import type {
 } from '@konstit/dne';
 ```
 
-`UF` é a união das siglas federativas suportadas. `parseUF()` aceita a sigla sem diferenciar maiúsculas e minúsculas e retorna a forma canônica; uma sigla desconhecida lança `Error`. `LocalidadeTipo` e `LocalidadeSituacao` são unions das strings retornadas por `queryCep()`. Os códigos numéricos e as strings correspondentes estão documentados em [Indicadores de localidade](sqlite.md#indicadores-de-localidade).
+`UF` é a união das siglas federativas suportadas. `parseUF()` aceita a sigla sem diferenciar maiúsculas e minúsculas, remove espaços nas extremidades e retorna a forma canônica; uma sigla desconhecida retorna `null`. `LocalidadeTipo` e `LocalidadeSituacao` são unions das strings retornadas por `queryCep()`. Os códigos numéricos e as strings correspondentes estão documentados em [Indicadores de localidade](sqlite.md#indicadores-de-localidade).
 
 ## Erros
 

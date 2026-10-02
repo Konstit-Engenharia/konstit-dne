@@ -16,6 +16,6 @@ test('parses UF abbreviations case-insensitively and trims whitespace', () => {
   expect(stateCodes.SP).toBe(35);
 });
 
-test.each(['', 'ZZ', 'São Paulo', '35', 'toString', '__proto__'])('rejects unknown UF %p', (value) => {
-  expect(() => parseUF(value)).toThrow(`Unknown UF: ${value}`);
+test.each(['', 'ZZ', 'São Paulo', '35', 'toString', '__proto__'])('returns null for unknown UF %p', (value) => {
+  expect(parseUF(value)).toBeNull();
 });

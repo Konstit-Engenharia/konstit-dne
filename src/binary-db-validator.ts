@@ -287,11 +287,9 @@ function validateUfDictionary(dictionary: BinaryDictionary) {
 }
 
 function requireCanonicalUf(value: string, index: number) {
-  let parsed: ReturnType<typeof parseUF>;
-  try {
-    parsed = parseUF(value);
-  } catch (cause) {
-    throw new DneBinaryDatabaseFormatError(`Invalid binary UF dictionary entry: ${index}`, { cause });
+  const parsed = parseUF(value);
+  if (parsed === null) {
+    throw new DneBinaryDatabaseFormatError(`Invalid binary UF dictionary entry: ${index}`);
   }
   if (value !== parsed) {
     throw new DneBinaryDatabaseFormatError(`Binary UF dictionary entry is not canonical: ${index}`);

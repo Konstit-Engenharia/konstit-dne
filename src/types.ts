@@ -40,7 +40,7 @@ export const stateCodes = {
 export type UF = keyof typeof stateCodes;
 
 /** All supported Brazilian federative units in `stateCodes` order. */
-export const ALL_UFS = Object.keys(stateCodes).map(parseUF);
+export const ALL_UFS = Object.keys(stateCodes) as UF[];
 
 /** String-valued provenance and quality metadata stored alongside the imported CEP rows. */
 export type LoadMetadata = Record<string, string> & {
@@ -96,13 +96,12 @@ export type StoredDneRow = Omit<DneRow, 'localidade_situacao' | 'localidade_tipo
  * Parsing is case-insensitive and returns the canonical uppercase value.
  *
  * @param value Federative-unit abbreviation, for example `MG`.
- * @returns The canonical supported state abbreviation.
- * @throws {Error} If `value` is not a supported federative unit.
+ * @returns The canonical supported state abbreviation, or `null` for an unknown value.
  */
-export function parseUF(value: string): UF {
+export function parseUF(value: string): UF | null {
   const state = value.trim().toUpperCase();
   if (!Object.hasOwn(stateCodes, state)) {
-    throw new Error(`Unknown UF: ${value}`);
+    return null;
   }
   return state as UF;
 }
