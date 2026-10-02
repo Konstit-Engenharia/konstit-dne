@@ -49,7 +49,7 @@ Execute com `bun consulta.ts`. Saída para a base usada neste exemplo:
 
 O leitor abre a base incluída no pacote, independentemente do diretório de trabalho, sem baixar dados adicionais. Ela representa a fonte usada no empacotamento daquela versão: atualize o pacote para receber outra cópia ou informe o caminho de uma base própria ao construtor.
 
-Ao empacotar uma aplicação com `bun build --target=bun`, o Bun inclui a base como asset no diretório de saída. Distribua esse diretório completo, por exemplo com um `COPY` genérico de `dist/` no Dockerfile. Com `bun build --compile`, a base fica embutida no executável. Nos dois casos, o construtor continua sem argumento; não é necessário configurar o pacote no Dockerfile ou marcar a biblioteca como externa ao bundle. Arquivos físicos e assets embutidos são lidos integralmente em memória, sem criar arquivos temporários ou exigir permissão de escrita. As consultas usam essa cópia até o leitor ser fechado.
+Ao empacotar uma aplicação com `bun build --target=bun`, o Bun inclui a base como asset no diretório de saída. Distribua esse diretório completo. Com `bun build --compile`, a base fica embutida no executável. Nos dois casos, o construtor continua sem argumento. Arquivos físicos e assets embutidos são lidos integralmente em memória, sem criar arquivos temporários ou exigir permissão de escrita. As consultas usam essa cópia até o leitor ser fechado.
 
 `queryCep()` aceita `01141000` ou `01141-000` e retorna `undefined` para CEPs inválidos ou ausentes. Consulte a [referência da API](https://github.com/Konstit-Engenharia/konstit-dne/blob/main/docs/api.md) para consultas de bairros e faixas de CEP, tipos e tratamento de erros.
 
@@ -65,7 +65,7 @@ Os dois leitores oferecem consultas por CEP, bairro e faixas de CEP. O leitor bi
 
 Na geração do banco binário, o processo valida integralmente os bytes serializados antes de calcular o hash. Cada arquivo termina com um rodapé SHA-256 sobre todos os bytes anteriores, incluindo o cabeçalho e o preenchimento de alinhamento.
 
-O fluxo pressupõe uma base gerada por um processo confiável e mantida imutável durante o uso. A abertura verifica cabeçalho, versão, tamanho e checksum antes de usar o layout validado. As consultas verificam a entrada e o estado de `close()` e decodificam diretamente. Os erros de E/S, versão, tamanho, checksum e leitor fechado continuam tipados. O SHA-256 verifica a integridade do arquivo, mas não autentica a origem do produtor. A especificação do layout está em [Formato binário](docs/binary-layout.md).
+O fluxo pressupõe uma base gerada por um processo confiável e mantida imutável durante o carregamento. A abertura verifica cabeçalho, versão, tamanho e checksum antes de usar o layout validado. As consultas verificam a entrada e o estado de `close()` e decodificam diretamente da cópia em memória. Os erros de E/S, versão, tamanho, checksum e leitor fechado continuam tipados. O SHA-256 verifica a integridade do arquivo, mas não autentica a origem do produtor. A especificação do layout está em [Formato binário](docs/binary-layout.md).
 
 ## CLI: criar e consultar sua própria base
 
@@ -115,15 +115,15 @@ As consultas abrem a base somente para leitura. `--json` grava os dados em stdou
 
 ## Desempenho
 
-No benchmark de **01/10/2026**, em um **Apple M4 com Bun 1.4.2**, o leitor binário v5 foi **19,7× mais rápido que o leitor SQLite de esquema 4** da biblioteca na mesma carga:
+No benchmark de **02/10/2026**, em um **Apple M4 com Bun 1.4.2**, o leitor binário v5 foi **19,2× mais rápido que o leitor SQLite de esquema 4** da biblioteca na mesma carga:
 
 | Métrica                                        |          Binário |    SQLite |
 | ---------------------------------------------- | ---------------: | --------: |
-| Mediana por 100 mil consultas                  |     **27,76 ms** | 546,45 ms |
-| Consultas por segundo, calculadas pela mediana | **3,60 milhões** | 183,0 mil |
+| Mediana por 100 mil consultas                  |     **27,63 ms** | 531,46 ms |
+| Consultas por segundo, calculadas pela mediana | **3,62 milhões** | 188,2 mil |
 | Tamanho da base                                |     **19,12 MB** | 109,22 MB |
 
-A base continha 1.611.629 CEPs. Cada formato foi medido em três processos, com duas rodadas de aquecimento e nove medições de 50 mil CEPs existentes e 50 mil ausentes. A tabela usa a mediana das três medianas. Os tempos excluem a abertura da base; os tamanhos estão em MB decimais.
+A base continha 1.611.629 CEPs. O leitor binário atual carrega o arquivo integralmente em memória com `readFileSync()`. Cada formato foi medido em três processos, com duas rodadas de aquecimento e nove medições de 50 mil CEPs existentes e 50 mil ausentes. A tabela usa a mediana das três medianas. Os tempos excluem a abertura da base; os tamanhos estão em MB decimais.
 
 Veja a [metodologia, os comandos de reprodução e os tempos de geração dos bancos](https://github.com/Konstit-Engenharia/konstit-dne/blob/main/docs/performance.md).
 
