@@ -23,27 +23,24 @@ Salve como `consulta.ts`:
 import { DneBinaryDatabaseReader } from '@konstit/dne';
 
 const db = new DneBinaryDatabaseReader();
-try {
-  console.log(JSON.stringify(db.queryCep('01141-000'), null, 2));
-} finally {
-  db.close();
-}
+console.log(db.queryCep('01141-000'));
+db.close();
 ```
 
 Execute com `bun consulta.ts`. Saída para a base usada neste exemplo:
 
-```json
+```text
 {
-  "bairro": "Várzea da Barra Funda",
-  "cep": "01141000",
-  "complemento": null,
-  "localidade_situacao": "codificada_por_logradouro",
-  "localidade_tipo": "municipio",
-  "logradouro": "Rua Rubens Meireles",
-  "municipio": "São Paulo",
-  "municipio_cod_ibge": 3550308,
-  "nome": null,
-  "uf": "SP"
+  bairro: "Várzea da Barra Funda",
+  cep: "01141000",
+  complemento: null,
+  localidade_situacao: "codificada_por_logradouro",
+  localidade_tipo: "municipio",
+  logradouro: "Rua Rubens Meireles",
+  municipio: "São Paulo",
+  municipio_cod_ibge: 3550308,
+  nome: null,
+  uf: "SP",
 }
 ```
 
