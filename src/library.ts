@@ -28,6 +28,6 @@ export {
 /** CEP helpers and address records shared by both readers. */
 export { CEP_RANGES, cepToU32, formatCep, normalizeCep, ufForCep } from './cep.ts';
 export type { DneRow, LoadMetadata, UF } from './types.ts';
-export { ALL_UFS, parseUF } from './types.ts';
+export { ALL_UFS, parseUF, stateCodeToUF, stateNameToUF, ufToStateCode, ufToStateName } from './types.ts';
 /** Descriptive locality classification and postal coding status returned by CEP lookups. */
 export type { LocalidadeSituacao, LocalidadeTipo } from './schema.ts';

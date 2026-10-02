@@ -176,6 +176,28 @@ const result = sqliteReader.querySql(
 
 Também são exportados `readDatabaseMetadata()`, `hasTable()`, `sqlitePathFromDatabaseUrl()`, `isBinaryDatabase()`, `parseUF()` e os helpers de CEP. `sqlitePathFromDatabaseUrl()` aceita caminhos comuns, `:memory:` e URLs `sqlite:///`; outros esquemas são rejeitados.
 
+## Conversões de UF
+
+As funções abaixo são exportadas da raiz do pacote. Os códigos numéricos são os códigos de UF do IBGE, com dois dígitos.
+
+| Função | Retorno | Normalização da entrada |
+| --- | --- | --- |
+| `ufToStateName(uf: UF \| string)` | `string \| undefined` | Remove espaços nas extremidades e converte a sigla para maiúsculas. |
+| `stateNameToUF(name: string)` | `UF \| undefined` | Remove espaços nas extremidades e aceita nomes sem distinguir caixa ou acentos. |
+| `ufToStateCode(uf: UF \| string)` | `number \| undefined` | Remove espaços nas extremidades e converte a sigla para maiúsculas. |
+| `stateCodeToUF(code: number)` | `UF \| undefined` | Aceita apenas os códigos numéricos de UF. |
+
+Entradas inválidas retornam `undefined`. Os nomes retornados preservam a grafia em português, incluindo acentos. As conversões incluem as 26 unidades estaduais e o Distrito Federal.
+
+```typescript
+import { stateCodeToUF, stateNameToUF, ufToStateCode, ufToStateName } from '@konstit/dne';
+
+ufToStateName(' sp '); // 'São Paulo'
+stateNameToUF(' sao paulo '); // 'SP'
+ufToStateCode(' sp '); // 35
+stateCodeToUF(35); // 'SP'
+```
+
 ## Tipos exportados
 
 Os tipos públicos podem ser importados da raiz do pacote:

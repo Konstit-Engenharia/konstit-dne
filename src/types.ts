@@ -42,6 +42,38 @@ export type UF = keyof typeof stateCodes;
 /** All supported Brazilian federative units in `stateCodes` order. */
 export const ALL_UFS = Object.keys(stateCodes) as UF[];
 
+const stateNames: Record<UF, string> = {
+  RO: 'Rondônia',
+  AC: 'Acre',
+  AM: 'Amazonas',
+  RR: 'Roraima',
+  PA: 'Pará',
+  AP: 'Amapá',
+  TO: 'Tocantins',
+  MA: 'Maranhão',
+  PI: 'Piauí',
+  CE: 'Ceará',
+  RN: 'Rio Grande do Norte',
+  PB: 'Paraíba',
+  PE: 'Pernambuco',
+  AL: 'Alagoas',
+  SE: 'Sergipe',
+  BA: 'Bahia',
+  MG: 'Minas Gerais',
+  ES: 'Espírito Santo',
+  RJ: 'Rio de Janeiro',
+  SP: 'São Paulo',
+  PR: 'Paraná',
+  SC: 'Santa Catarina',
+  RS: 'Rio Grande do Sul',
+  MS: 'Mato Grosso do Sul',
+  MT: 'Mato Grosso',
+  GO: 'Goiás',
+  DF: 'Distrito Federal',
+};
+const stateUfsByName = new Map(ALL_UFS.map((uf) => [normalizeStateName(stateNames[uf]), uf]));
+const stateUfsByCode = new Map<number, UF>(ALL_UFS.map((uf) => [stateCodes[uf], uf]));
+
 /** String-valued provenance and quality metadata stored alongside the imported CEP rows. */
 export type LoadMetadata = Record<string, string> & {
   /** Version of the package that performed the import. */
@@ -104,4 +136,48 @@ export function parseUF(value: string): UF | null {
     return null;
   }
   return state as UF;
+}
+
+/**
+ * Resolves a federative-unit abbreviation to its accented Portuguese name.
+ * @param uf - State abbreviation, matched case-insensitively after trimming whitespace.
+ * @returns The state name, or `undefined` for an invalid abbreviation.
+ */
+// oxlint-disable-next-line typescript/no-redundant-type-constituents -- Preserve the requested public UF | string signature.
+export function ufToStateName(uf: UF | string): string | undefined {
+  const state = parseUF(uf);
+  return state === null ? undefined : stateNames[state];
+}
+
+/**
+ * Resolves a Portuguese state name to its canonical abbreviation.
+ * @param name - State name, matched without case or accent distinctions after trimming whitespace.
+ * @returns The state abbreviation, or `undefined` for an unknown name.
+ */
+export function stateNameToUF(name: string): UF | undefined {
+  return stateUfsByName.get(normalizeStateName(name));
+}
+
+/**
+ * Resolves a federative-unit abbreviation to its two-digit IBGE code.
+ * @param uf - State abbreviation, matched case-insensitively after trimming whitespace.
+ * @returns The numeric state code, or `undefined` for an invalid abbreviation.
+ */
+// oxlint-disable-next-line typescript/no-redundant-type-constituents -- Preserve the requested public UF | string signature.
+export function ufToStateCode(uf: UF | string): number | undefined {
+  const state = parseUF(uf);
+  return state === null ? undefined : stateCodes[state];
+}
+
+/**
+ * Resolves a numeric IBGE state code to its canonical abbreviation.
+ * @param code - Two-digit IBGE state code.
+ * @returns The state abbreviation, or `undefined` for an invalid code.
+ */
+export function stateCodeToUF(code: number): UF | undefined {
+  return stateUfsByCode.get(code);
+}
+
+function normalizeStateName(name: string): string {
+  return name.trim().normalize('NFD').replace(/\p{M}/gu, '').toUpperCase();
 }
