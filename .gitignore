@@ -5,6 +5,8 @@ coverage/
 /outputs/
 .*.fetch.lock
 
+*.ignore.ts
+
 data/
 .codegraph/
 .codegraph/**

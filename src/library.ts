@@ -27,6 +27,7 @@ export {
 } from './sqlite-db-reader.ts';
 /** CEP helpers and address records shared by both readers. */
 export { CEP_RANGES, cepToU32, formatCep, normalizeCep, ufForCep } from './cep.ts';
+export { expand as expandAddress } from './expand.ts';
 export type { DneRow, LoadMetadata, UF } from './types.ts';
 export { ALL_UFS, parseUF, stateCodeToUF, stateNameToUF, ufToStateCode, ufToStateName } from './types.ts';
 /** Descriptive locality classification and postal coding status returned by CEP lookups. */

@@ -5,6 +5,7 @@ import {
 import {
   cepToU32,
   DneBinaryDatabaseReader,
+  expandAddress,
   formatCep,
   normalizeCep,
   parseUF,
@@ -29,4 +30,11 @@ test('exposes state conversions through the public library entry point', () => {
   expect(stateNameToUF(' sao paulo ')).toBe('SP');
   expect(ufToStateCode(' sp ')).toBe(35);
   expect(stateCodeToUF(35)).toBe('SP');
+});
+
+test('exposes address expansion through the public library entry point', () => {
+  expect(expandAddress('Av. Dr. João, 123')).toBe('AVENIDA DOUTOR JOAO 123');
+  expect(expandAddress('CH BRIG ED GOMES')).toBe('CHACARA BRIGADEIRO ED GOMES');
+  expect(expandAddress('CONJ HAB J BONIFACIO')).toBe('CONJUNTO HABITACIONAL J BONIFACIO');
+  expect(expandAddress('PQ. AMERICA')).toBe('PARQUE AMERICA');
 });
