@@ -28,6 +28,7 @@ export type AddressSearchIndex = {
   rowMunicipalities: number;
   rowFields: number;
   fieldOffsets: number;
+  fieldCount: number;
   fieldTokens: number;
   fieldWidth: ByteWidth;
   tokenWidth: ByteWidth;
@@ -235,6 +236,7 @@ export function parseAddressSearchIndex(bytes: Uint8Array, checksum: string, row
     rowMunicipalities,
     rowFields,
     fieldOffsets,
+    fieldCount,
     fieldTokens,
     fieldWidth,
     tokenWidth,
@@ -288,19 +290,18 @@ export function parseAddressSearchIndex(bytes: Uint8Array, checksum: string, row
     throw new Error('Invalid address search posting offsets');
   }
   for (let id = 0; id < count; id++) {
-    readPosting(index, id, false);
+    visitSearchPosting(index, id);
   }
   return index;
 }
 
-/** Decodes one ordered posting list, checking delta and range invariants. */
-export function readPosting(index: AddressSearchIndex, id: number, collect = true): number[] {
+/** Visits an ordered posting without materializing it, checking delta and range invariants. */
+export function visitSearchPosting(index: AddressSearchIndex, id: number, visit?: (row: number) => void): void {
   let offset = index.data.getUint32(index.offsets + id * 4, true);
   const end = index.data.getUint32(index.offsets + (id + 1) * 4, true);
   if (end <= offset || end > index.postings.length) {
     throw new Error('Invalid address search posting range');
   }
-  const result: number[] = [];
   let previous = -1;
   while (offset < end) {
     let delta = 0;
@@ -318,12 +319,9 @@ export function readPosting(index: AddressSearchIndex, id: number, collect = tru
     if (delta === 0 || row >= index.rowCount) {
       throw new Error('Invalid address search posting row');
     }
-    if (collect) {
-      result.push(row);
-    }
+    visit?.(row);
     previous = row;
   }
-  return result;
 }
 
 /** Resolves an index row ID to the eight-digit CEP used by the database reader. */

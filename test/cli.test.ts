@@ -12,10 +12,13 @@ import {
   appendFileSync,
   copyFileSync,
   existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -28,6 +31,11 @@ import {
   runCli as executeCli,
 } from '../src/cli.ts';
 import { DneDatabaseReader } from '../src/db.ts';
+import {
+  buildAddressSearchIndex,
+  DneAddressSearch,
+  DneBinaryDatabaseReader,
+} from '../src/library.ts';
 import {
   createFixture,
   createNestedZipFixture,
@@ -48,6 +56,70 @@ afterAll(() => {
 });
 
 describe('CLI contract', () => {
+  test('builds a usable search index with default or explicit output and stable JSON', async () => {
+    const binary = join(workDir, 'search-source.bin');
+    const built = await runCli(['build', '--format', 'binary', '--db', binary, '--source', sourcePath, '--quiet']);
+    expect(built.status).toBe(0);
+    const result = await runCli(['build-search-index', '--db', binary]);
+    expect(result.status).toBe(0);
+    const index = join(workDir, 'search-source.search.bin');
+    expect(result.stdout).toContain(`Índice de busca criado: ${index}`);
+    expect(result.stderr).toContain('Construindo o índice de busca');
+    const reader = new DneBinaryDatabaseReader(binary);
+    const search = new DneAddressSearch(reader, index);
+    try {
+      expect(search.searchAddresses('30000001')).toHaveLength(1);
+      expect(search.searchAddresses('30000001')[0]).toEqual(reader.queryCep('30000001'));
+      expect(readFileSync(index)).toEqual(Buffer.from(buildAddressSearchIndex(reader)));
+      const output = join(workDir, 'custom-index', 'autocomplete.bin');
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const json = await runCli(['--db', binary, 'build-search-index', '--output', output, '--json', '--quiet']);
+        expect(json.status).toBe(0);
+        expect(json.stderr).toBe('');
+        expect(parseJson(json.stdout)).toMatchObject({
+          ok: true,
+          data: { database: binary, index: output, row_count: reader.rowCount(), size_bytes: readFileSync(index).length },
+        });
+        expect(parseJson(json.stdout).data.elapsed_ms).toBeGreaterThan(0);
+        expect(readFileSync(output)).toEqual(readFileSync(index));
+        expect(readdirSync(join(workDir, 'custom-index'))).toEqual(['autocomplete.bin']);
+      }
+    } finally {
+      search.close();
+      reader.close();
+    }
+  });
+
+  test('rejects invalid search-index inputs and preserves the database and output on failure', async () => {
+    const binary = join(workDir, 'protected-source.bin');
+    expect((await runCli(['build', '--format', 'binary', '--db', binary, '--source', sourcePath, '--quiet'])).status).toBe(0);
+    const original = readFileSync(binary);
+    const alias = join(workDir, 'directory-alias');
+    symlinkSync(workDir, alias, 'dir');
+    const hardLink = join(workDir, 'hard-link.bin');
+    linkSync(binary, hardLink);
+    for (const output of [binary, join(alias, 'protected-source.bin'), hardLink]) {
+      const invalid = await runCli(['build-search-index', '--db', binary, '--output', output, '--json']);
+      expect(invalid.status).toBe(2);
+      expect(parseJson(invalid.stderr).error.code).toBe('invalid-output');
+    }
+    expect(readFileSync(binary)).toEqual(original);
+    const sqlite = await runCli(['build-search-index', '--db', databasePath, '--json']);
+    expect(sqlite.status).toBe(2);
+    expect(parseJson(sqlite.stderr).error.code).toBe('invalid-format');
+    const missing = await runCli(['build-search-index', '--db', join(workDir, 'missing.bin'), '--json']);
+    expect(missing.status).toBe(1);
+    expect(parseJson(missing.stderr).error.code).toBe('database-not-found');
+    const output = join(workDir, 'search-output-directory');
+    mkdirSync(output);
+    writeFileSync(join(output, 'preserved'), 'existing content');
+    const failed = await runCli(['build-search-index', '--db', binary, '--output', output, '--json', '--quiet']);
+    expect(failed.status).toBe(1);
+    expect(readFileSync(join(output, 'preserved'), 'utf8')).toBe('existing content');
+    expect(readdirSync(workDir).some((name) => name.startsWith('.dne-search-'))).toBe(false);
+    expect(readFileSync(binary)).toEqual(original);
+  });
+
   test('runs the executable entry point', () => {
     const result = spawnSync('bun', ['run', 'src/index.ts', '--version'], { encoding: 'utf8' });
     expect(result.status).toBe(0);

@@ -91,6 +91,34 @@ function ceps(rows: DneRow[]): string[] {
 }
 
 describe('address autocomplete', () => {
+  test('loads a file snapshot directly and keeps it independent of later file changes', async () => {
+    const path = join(directory, 'direct.search.bin');
+    await Bun.write(path, bytes);
+    const own = new DneAddressSearch(database, path);
+    try {
+      await Bun.write(path, 'replaced');
+      expect(own.searchAddresses('rubens mei')).toEqual(search.searchAddresses('rubens mei'));
+      expect(() => new DneAddressSearch(database, path)).toThrow('Invalid address search index header');
+      expect(() => new DneAddressSearch(database, `${path}.missing`)).toThrow();
+    } finally {
+      own.close();
+    }
+  });
+
+  test('reuses bitmaps and scores without leaking candidates across queries or word boundaries', () => {
+    const rows = [...database.entries()];
+    for (const query of ['teste 6', 'teste', 'teste 29', 'recife', 'rubens', 'teste 6']) {
+      const words = addressTokens(query);
+      const rank = createAddressRanker(words);
+      const fields = (row: DneRow) => [row.logradouro, row.nome, row.bairro, row.municipio];
+      const expected = rows.filter((row) => {
+        const terms = fields(row).flatMap((field) => addressTokens(field ?? ''));
+        return words.every((word, position) => terms.some((term) => position === words.length - 1 ? term.startsWith(word) : term === word));
+      }).sort((a, b) => rank(fields(b)) - rank(fields(a)) || a.cep.localeCompare(b.cep)).slice(0, 50);
+      expect(search.searchAddresses(query, { limit: 50 })).toEqual(expected);
+    }
+  });
+
   test('matches the original text ranking using only indexed fields and word positions', () => {
     const rows = [...database.entries()];
     for (

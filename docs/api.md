@@ -146,7 +146,7 @@ As faixas preservam zeros à esquerda e os intervalos originais do e-DNE. Perten
 
 ## Autocomplete experimental
 
-`DneAddressSearch` oferece `searchAddresses(text, { uf?, municipioCodIbge?, limit? })`, retornando `DneRow[]`. A busca usa um índice opcional gerado por `buildAddressSearchIndex(reader)` e permite inferir o município a partir de um CEP no texto. Consulte [autocomplete de endereços](address-search.md) para exemplos, ciclo de vida e regras de combinação dos filtros.
+`DneAddressSearch` oferece `searchAddresses(text, { uf?, municipioCodIbge?, limit? })`, retornando `DneRow[]`. Seu construtor aceita o leitor binário e o caminho do índice (`new DneAddressSearch(reader, './dne.search.bin')`) ou bytes em `Uint8Array`. Prefira o caminho para evitar uma cópia adicional em memória. Gere o índice com `buildAddressSearchIndex(reader)` ou `dne build-search-index --db ./dne.bin`. A busca permite inferir o município a partir de um CEP no texto. Consulte [autocomplete de endereços](address-search.md) para exemplos, ciclo de vida e regras de combinação dos filtros.
 
 ## Metadados e inspeção
 

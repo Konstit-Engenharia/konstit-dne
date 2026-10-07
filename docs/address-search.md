@@ -7,16 +7,22 @@ O autocomplete experimental usa um índice invertido opcional associado à base 
 Gere o índice a partir da base que será consultada. A geração não modifica `dne.bin`:
 
 ```sh
+bunx @konstit/dne build-search-index --db ./dne.bin
+bunx @konstit/dne build-search-index --db ./dne.bin --output ./indices/autocomplete.bin --json
+```
+
+O comando exige uma base binária existente. Sem `--output`, grava `<base>.search.bin` ao lado da base. Constrói e valida o índice antes de substituir o destino por renomeação atômica. `--quiet` oculta o progresso e `--json` retorna caminho, quantidade de registros, bytes e duração. Para executar os scripts de desenvolvimento:
+
+```sh
 bun run build:search-index data/dne.bin data/dne.search.bin
 bun run benchmark:search data/dne.bin data/dne.search.bin
 ```
 
 ```typescript
-import { readFileSync } from 'node:fs';
 import { DneAddressSearch, DneBinaryDatabaseReader } from '@konstit/dne';
 
-const database = new DneBinaryDatabaseReader();
-const search = new DneAddressSearch(database, readFileSync('data/dne.search.bin'));
+const database = new DneBinaryDatabaseReader('./dne.bin');
+const search = new DneAddressSearch(database, './dne.search.bin');
 
 try {
   console.log(search.searchAddresses('rubens mei', { uf: 'SP', limit: 10 }));
@@ -46,7 +52,7 @@ A API `buildAddressSearchIndex(database)` retorna os bytes para salvar com `Bun.
 - O ranking prioriza nome exato, sequência de palavras e correspondências fora de ordem. Tipos comuns de via podem ser omitidos ao comparar o nome exato: `paulista` prioriza `Avenida Paulista`. O logradouro tem prioridade sobre destinatário, bairro e município dentro da mesma categoria; palavras completas ajudam no desempate. CEP crescente é o desempate final.
 - A primeira versão não corrige erros de digitação, não converte números escritos por extenso, não interpreta números de imóveis nem faz geocodificação. Por exemplo, `25 de março` não encontra `Rua Vinte e Cinco de Março`; use `vinte e cinco de mar` nessa base.
 
-O construtor copia os bytes do índice e valida sua estrutura, integridade e vínculo com a base. `search.close()` libera o índice e mantém o leitor do chamador aberto. Consultas após fechar qualquer um dos dois falham, inclusive consultas vazias. SHA-256 detecta corrupção, mas não autentica o produtor dos arquivos.
+O construtor aceita um caminho ou `Uint8Array`. Um caminho é lido diretamente para um buffer próprio, evitando a cópia adicional; bytes fornecidos pelo chamador continuam sendo copiados para preservar o isolamento. As duas formas validam estrutura, integridade e vínculo com a base. Mudanças posteriores no arquivo não alteram o leitor aberto. `search.close()` libera o índice e os buffers de consulta, mantendo o leitor do chamador aberto. Consultas após fechar qualquer um dos dois falham, inclusive consultas vazias. SHA-256 detecta corrupção, mas não autentica o produtor dos arquivos.
 
 ## Formato do índice experimental
 
@@ -66,7 +72,9 @@ Inteiros são little-endian. Na versão 2, cada registro aponta para quatro sequ
 | Postings | IDs de registros crescentes, codificados como diferenças em varints de 7 bits. O predecessor inicial é `-1`. |
 | Rodapé | SHA-256 de 32 bytes sobre todos os bytes anteriores. |
 
-O leitor valida offsets, referências, posições, CEPs, municípios e todos os postings ao abrir. As consultas localizam os termos por busca binária, unem os termos de um prefixo e intersectam as listas a partir da menor. UF e município são verificados diretamente nas colunas numéricas antes do ranking, sem expandir listas geográficas. O ranking usa somente IDs de campo e posições; apenas os resultados finais são decodificados na base principal. CEPs no texto também são resolvidos pelo índice, sem decodificação prévia de endereço. O limite não limita a quantidade de candidatos avaliados, e as listas de termos ainda são materializadas.
+O leitor valida offsets, referências, posições, CEPs, municípios e todos os postings ao abrir. As consultas localizam os termos por busca binária e percorrem os postings diretamente, unindo prefixos e intersectando palavras em dois bitmaps reutilizáveis. UF e município são verificados nas colunas numéricas antes do ranking, sem expandir listas geográficas. O ranking lê IDs e posições diretamente, com pontuações em um `Uint16Array` reutilizável; apenas os resultados finais são decodificados na base principal. CEPs no texto também são resolvidos pelo índice. O limite não limita a quantidade de candidatos avaliados.
+
+Os buffers de trabalho são alocados na primeira consulta textual com termos conhecidos e reutilizados até `close()`: `8 × ceil(registros / 32) + 2 × sequências` bytes. Na base medida, são **2,17 MB por instância**, sem listas de candidatos ou objetos por campo. As consultas são síncronas e reinicializam esses buffers a cada chamada.
 
 ## Resultado do primeiro experimento em 07/10/2026 — versão 1
 
@@ -115,3 +123,37 @@ bun run bench/address-search-verify.bench.ts data/dne.bin /copia-v1/src/library.
 ```
 
 A suíte completa passou com **947 testes e 100% de cobertura de linhas e funções**. Os novos testes comparam pontuações numéricas ao ranking textual original, validam referências geográficas e posições corrompidas e contam chamadas a `queryCep()` para garantir exatamente uma decodificação por resultado retornado. TypeScript, lint, build e auditoria passaram.
+
+## Terceiro experimento em 07/10/2026 — memória e CLI
+
+A comparação usa o commit `a01e7f6` como referência, o mesmo índice v2 de **58,73 MB**, a mesma base, Apple M4 e Bun 1.4.2. O formato do arquivo não mudou; um índice v2 existente continua válido. Além dos bitmaps e do cache numérico reutilizável, a seleção dos melhores resultados deixou de criar uma função temporária por candidato. A API agora pode ler o arquivo diretamente, evitando a cópia defensiva necessária quando recebe bytes do chamador.
+
+| RSS do processo | Referência v2, bytes | Atual, caminho | Atual, bytes |
+| --- | ---: | ---: | ---: |
+| Após abrir e solicitar GC | 218,61 MB | 149,08 MB | 209,73 MB |
+| Ao terminar as consultas, antes de novo GC | 687,59 MB | 166,41 MB | 231,65 MB |
+| Após solicitar GC novamente | 687,65 MB | 166,45 MB | 232,54 MB |
+
+Com abertura por caminho, o RSS ao final caiu **75,8%** nesta carga; mantendo a entrada por bytes, caiu **66,3%**. RSS mede o processo inteiro, incluindo runtime, buffers e memória retida pelo alocador. O benchmark também registra o maior RSS observado após cada consulta, sem afirmar que esse valor seja o pico do processo. A geração do índice não foi otimizada para memória neste experimento.
+
+| Consulta | Filtro | p95 referência | p95 atual, caminho |
+| --- | --- | ---: | ---: |
+| `rubens mei` | UF SP | 0,28 ms | 0,65 ms |
+| `paulista` | UF SP | 4,58 ms | 2,51 ms |
+| `joao` | UF SP | 7,26 ms | 5,26 ms |
+| `sao` | Município 3550308 | 18,20 ms | 8,83 ms |
+| `sao` | Nenhum | 44,77 ms | 17,70 ms |
+
+Consultas pequenas passaram a ter o custo fixo de limpar e percorrer bitmaps e o cache; algumas ficaram mais lentas, embora abaixo de 1 ms nos casos medidos. Consultas amplas reduziram tempo e alocações. Os tempos mantêm três aquecimentos e vinte amostras por consulta em processos separados, com abertura excluída. Consulte os relatórios [de referência](address-search-memory-before.json), [com abertura por caminho](address-search-memory-after.json) e [com entrada por bytes](address-search-memory-after-bytes.json).
+
+Para reproduzir com uma cópia do código anterior:
+
+```sh
+bun run bench/address-search.bench.ts data/dne.bin data/dne.search.bin /copia-a01e7f6/src/library.ts bytes
+bun run bench/address-search.bench.ts data/dne.bin data/dne.search.bin
+bun run bench/address-search.bench.ts data/dne.bin data/dne.search.bin src/library.ts bytes
+```
+
+O [teste de equivalência](address-search-memory-equivalence.json) confirmou novamente os mesmos campos e a mesma ordem em **173 consultas e 966 resultados**. A suíte passou com **951 testes e 100% de cobertura agregada de linhas e funções**, além de TypeScript, lint, build e auditoria. Os novos testes cobrem reutilização de buffers, limites entre palavras do bitmap, abertura por caminho, saída padrão e personalizada da CLI, JSON, substituição de índice, proteção da base e limpeza de temporários após falha.
+
+O comando `build-search-index --db data/dne.bin --output data/dne.search.cli.bin --quiet --json` gerou o índice completo em **20,22 s**, com bytes idênticos ao gerador existente. Ele grava um temporário no diretório de saída e só então substitui o destino por renomeação.

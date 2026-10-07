@@ -66,7 +66,7 @@ O fluxo pressupõe uma base gerada por um processo confiável e mantida imutáve
 
 ## Autocomplete experimental
 
-A API `DneAddressSearch` pesquisa endereços por palavras e prefixo, com filtros por UF e código IBGE. Um CEP completo no texto pode determinar o município da busca. O recurso usa um índice opcional gerado a partir da base binária; veja [autocomplete de endereços](docs/address-search.md) para geração, exemplos e regras.
+A API `DneAddressSearch` pesquisa endereços por palavras e prefixo, com filtros por UF e código IBGE. Um CEP completo no texto pode determinar o município da busca. Gere o índice opcional com `bunx @konstit/dne build-search-index --db ./dne.bin`; veja [autocomplete de endereços](docs/address-search.md) para exemplos e regras.
 
 ## CLI: criar e consultar sua própria base
 

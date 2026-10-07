@@ -47,6 +47,17 @@ Para fontes HTTP ou HTTPS, a CLI tenta obter os metadados com `HEAD`. Se o servi
 
 As entradas do ZIP são verificadas com seus valores CRC32 durante a leitura. A carga também valida CEP, UF, código IBGE, campos obrigatórios e referências entre os arquivos. Qualquer rejeição interrompe a transação. Uma carga válida grava em `quality_report` as linhas lidas, aceitas e rejeitadas por etapa e arquivo.
 
+## Construir o índice de busca
+
+```sh
+bunx @konstit/dne build-search-index --db ./dne.bin
+bunx @konstit/dne build-search-index --db ./dne.bin --output ./indices/autocomplete.bin --quiet --json
+```
+
+`build-search-index` gera o índice opcional de autocomplete de uma base binária existente. Informe o caminho com `--db`; bases SQLite são rejeitadas. Sem `--output`, o destino é `<base>.search.bin` no diretório da base. O comando cria os diretórios necessários e substitui um índice existente somente depois de construir, validar e gravar um arquivo temporário no mesmo diretório. O caminho de saída não pode ser o da base.
+
+`--json` retorna o envelope padrão com `database`, `index`, `row_count`, `size_bytes` e `elapsed_ms`. O progresso vai para stderr; `--quiet` o oculta. Gere novamente o índice após atualizar a base. O arquivo mantém o checksum da base utilizada na geração, e a API rejeita combinações incompatíveis. Consulte [autocomplete de endereços](address-search.md) para abrir e consultar o índice.
+
 ## Acesso simultâneo
 
 ### Lock de importação

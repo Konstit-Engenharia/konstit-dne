@@ -1,9 +1,10 @@
+import { readFileSync } from 'node:fs';
 import {
   findSearchCep,
   parseAddressSearchIndex,
-  readPosting,
   searchRowCep,
   searchRowMunicipality,
+  visitSearchPosting,
   type AddressSearchIndex,
 } from './address-search-index.ts';
 import {
@@ -32,15 +33,18 @@ export type AddressSearchOptions = {
 /** Optional address autocomplete over an immutable binary database and its matching search index. */
 export class DneAddressSearch {
   private index: AddressSearchIndex | null;
+  private workspace: { candidates: Uint32Array; matches: Uint32Array; scores: Uint16Array; } | null = null;
 
-  /** Copies and validates index bytes. The caller retains ownership of the database reader. */
-  constructor(private readonly database: DneBinaryDatabaseReader, bytes: Uint8Array) {
-    this.index = parseAddressSearchIndex(new Uint8Array(bytes), database.checksum(), database.rowCount());
+  /** Reads an owned file buffer or copies caller bytes, then validates. The caller owns the database reader. */
+  constructor(private readonly database: DneBinaryDatabaseReader, source: string | Uint8Array) {
+    const bytes = typeof source === 'string' ? readFileSync(source) : new Uint8Array(source);
+    this.index = parseAddressSearchIndex(bytes, database.checksum(), database.rowCount());
   }
 
   /** Releases the search index without closing the caller's database. Repeated calls are safe. */
   close(): void {
     this.index = null;
+    this.workspace = null;
   }
 
   /**
@@ -100,38 +104,65 @@ export class DneAddressSearch {
       return [];
     }
 
-    const lists: number[][] = [];
-    for (const [id, token,] of tokens.entries()) {
-      lists.push(this.matchTerm(token, id === tokens.length - 1));
+    const index = this.index;
+    const ranges = tokens.map((token, position) => {
+      const low = findSearchTerm(index.terms, token);
+      const high = position === tokens.length - 1
+        ? findSearchTerm(index.terms, `${token}\uffff`)
+        : low + Number(index.terms[low] === token);
+      return { low, high };
+    });
+    if (ranges.some(({ low, high }) => low === high)) {
+      return [];
     }
-    lists.sort((a, b) => a.length - b.length);
-    let candidates = lists[0] as number[];
-    for (const list of lists.slice(1)) {
-      candidates = intersect(candidates, list);
-      if (candidates.length === 0) {
-        return [];
+    this.workspace ??= {
+      candidates: new Uint32Array(Math.ceil(index.rowCount / 32)),
+      matches: new Uint32Array(Math.ceil(index.rowCount / 32)),
+      scores: new Uint16Array(index.fieldCount),
+    };
+    const { candidates, matches, scores } = this.workspace;
+    for (const [position, range,] of ranges.entries()) {
+      const target = position === 0 ? candidates : matches;
+      target.fill(0);
+      this.matchTerm(range.low, range.high, target);
+      if (position > 0) {
+        let any = 0;
+        for (let word = 0; word < candidates.length; word++) {
+          const value = (candidates[word] as number) & (matches[word] as number);
+          candidates[word] = value;
+          any |= value;
+        }
+        if (!any) {
+          return [];
+        }
       }
     }
 
     const best: { row: number; rank: number; }[] = [];
-    const rankAddress = createIndexedAddressRanker(this.index, tokens);
-    for (const id of candidates) {
-      const rowMunicipality = searchRowMunicipality(this.index, id);
-      if (
-        (municipality !== undefined && rowMunicipality !== municipality)
-        || (uf !== undefined && this.index.municipalityUfs[rowMunicipality] !== uf)
-      ) {
-        continue;
-      }
-      const rank = rankAddress(id);
-      const position = best.findIndex((candidate) => rank > candidate.rank);
-      if (position !== -1) {
-        best.splice(position, 0, { row: id, rank });
-      } else if (best.length < limit) {
-        best.push({ row: id, rank });
-      }
-      if (best.length > limit) {
-        best.pop();
+    const rankAddress = createIndexedAddressRanker(this.index, tokens, scores);
+    for (let word = 0; word < candidates.length; word++) {
+      let bits = candidates[word] as number;
+      while (bits !== 0) {
+        const id = word * 32 + 31 - Math.clz32(bits & -bits);
+        bits &= bits - 1;
+        const rowMunicipality = searchRowMunicipality(this.index, id);
+        if (
+          (municipality !== undefined && rowMunicipality !== municipality)
+          || (uf !== undefined && this.index.municipalityUfs[rowMunicipality] !== uf)
+        ) {
+          continue;
+        }
+        const rank = rankAddress(id);
+        let position = 0;
+        while (position < best.length && rank <= (best[position] as { rank: number; }).rank) {
+          position++;
+        }
+        if (position < limit) {
+          best.splice(position, 0, { row: id, rank });
+        }
+        if (best.length > limit) {
+          best.pop();
+        }
       }
     }
     return best.map(({ row }) => this.readAddress(row));
@@ -141,40 +172,14 @@ export class DneAddressSearch {
     return this.database.queryCep(searchRowCep(this.index as AddressSearchIndex, id)) as DneRow;
   }
 
-  private matchTerm(term: string, prefix: boolean): number[] {
+  private matchTerm(low: number, high: number, matches: Uint32Array): void {
     const index = this.index as AddressSearchIndex;
-    const low = findSearchTerm(index.terms, term);
-    const lists: number[][] = [];
-    for (let id = low; id < index.terms.length; id++) {
-      const candidate = index.terms[id] as string;
-      if (prefix ? !candidate.startsWith(term) : candidate !== term) {
-        break;
-      }
-      lists.push(readPosting(index, id));
-    }
-    if (lists.length === 1) {
-      return lists[0] as number[];
-    }
-    return [...new Set(lists.flat())].sort((a, b) => a - b);
-  }
-}
-
-function intersect(left: readonly number[], right: readonly number[]): number[] {
-  const result: number[] = [];
-  let i = 0;
-  let j = 0;
-  while (i < left.length && j < right.length) {
-    const a = left[i] as number;
-    const b = right[j] as number;
-    if (a < b) {
-      i++;
-    } else if (a > b) {
-      j++;
-    } else {
-      result.push(a);
-      i++;
-      j++;
+    const mark = (row: number) => {
+      const word = row >>> 5;
+      matches[word] = (matches[word] as number) | (1 << (row & 31));
+    };
+    for (let id = low; id < high; id++) {
+      visitSearchPosting(index, id, mark);
     }
   }
-  return result;
 }

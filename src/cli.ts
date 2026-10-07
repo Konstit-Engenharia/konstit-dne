@@ -8,17 +8,23 @@ import {
   type HandlerContext,
 } from '@konstit/cli';
 import { Database } from 'bun:sqlite';
+import { statSync } from 'node:fs';
 import {
   copyFile,
   mkdir,
+  mkdtemp,
   rename,
   rm,
 } from 'node:fs/promises';
 import {
   basename,
   dirname,
+  extname,
   join,
+  resolve,
 } from 'node:path';
+import { buildAddressSearchIndex } from './address-search-index.ts';
+import { DneBinaryDatabaseReader } from './binary-db-reader.ts';
 import { buildBinaryDatabase } from './binary-db-writer.ts';
 import {
   collectCepInputs,
@@ -120,6 +126,7 @@ export const cli = command(BINARY_NAME, {
     'Exemplos:',
     '  bunx @konstit/dne build --db ./dne.db',
     '  bunx @konstit/dne build --format binary',
+    '  bunx @konstit/dne build-search-index --db ./dne.bin',
     '  bunx @konstit/dne get 01001-000 --db ./dne.db',
     '  bunx @konstit/dne status --db ./dne.db',
     '  bunx @konstit/dne cron install --db ./dne.db',
@@ -149,6 +156,17 @@ export const cli = command(BINARY_NAME, {
       about: 'Criar ou atualizar a base SQLite ou binária',
       conflicts: [['force', 'check']],
       handler: (args, context) => fetchDatabase(args, globalOptions(context)),
+    }),
+    command('build-search-index', {
+      about: 'Construir o índice de autocomplete de uma base binária existente',
+      args: [
+        option('output', parsers.string, {
+          describe: 'Caminho do índice; padrão: <base>.search.bin, ao lado da base.',
+          valueName: 'CAMINHO',
+          valueHint: 'file',
+        }),
+      ],
+      handler: (args, context) => buildSearchIndex(args, globalOptions(context)),
     }),
     command('get', {
       args: [
@@ -604,6 +622,56 @@ async function lookupCep(options: LookupOptions, globals: GlobalOptions) {
       return;
     }
     results.push(result);
+  }
+}
+
+async function buildSearchIndex(options: { output: string | undefined; }, globals: GlobalOptions) {
+  const startedAt = performance.now();
+  const source = databasePath(globals.database);
+  const reader = await openReadyDatabase(source);
+  const progress = createProgress(globals.quiet);
+  try {
+    if (!(reader instanceof DneBinaryDatabaseReader)) {
+      throw new UserError(
+        'invalid-format',
+        'O índice de busca exige uma base binária. Use build --format binary primeiro.',
+        EXIT_INVALID_INPUT,
+      );
+    }
+    const output = resolve(options.output ?? `${source.slice(0, source.length - extname(source).length)}.search.bin`);
+    const sourceInfo = statSync(source);
+    const outputInfo = statSync(output, { throwIfNoEntry: false });
+    if (outputInfo?.dev === sourceInfo.dev && outputInfo?.ino === sourceInfo.ino) {
+      throw new UserError('invalid-output', 'O caminho do índice deve ser diferente do caminho da base.', EXIT_INVALID_INPUT);
+    }
+    await mkdir(dirname(output), { recursive: true });
+    progress('Construindo o índice de busca');
+    const bytes = buildAddressSearchIndex(reader);
+    const temporary = await mkdtemp(join(dirname(output), '.dne-search-'));
+    try {
+      const path = join(temporary, 'index.bin');
+      await Bun.write(path, bytes);
+      await rename(path, output);
+    } finally {
+      await rm(temporary, { recursive: true, force: true });
+    }
+    progress.finish();
+    const result = {
+      database: source,
+      index: output,
+      row_count: reader.rowCount(),
+      size_bytes: bytes.length,
+      elapsed_ms: performance.now() - startedAt,
+    };
+    if (globals.json) {
+      writeJson(result);
+    } else {
+      console.log(`Índice de busca criado: ${output} (${result.row_count} registros, ${result.size_bytes} bytes)`);
+    }
+    return 0;
+  } finally {
+    reader.close();
+    progress.finish();
   }
 }
 
