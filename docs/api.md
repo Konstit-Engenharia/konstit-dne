@@ -144,6 +144,10 @@ type DneFaixaCep = {
 
 As faixas preservam zeros à esquerda e os intervalos originais do e-DNE. Pertencer a uma faixa não garante, por si só, que o CEP esteja cadastrado na tabela de endereços.
 
+## Autocomplete experimental
+
+`DneAddressSearch` oferece `searchAddresses(text, { uf?, municipioCodIbge?, limit? })`, retornando `DneRow[]`. A busca usa um índice opcional gerado por `buildAddressSearchIndex(reader)` e permite inferir o município a partir de um CEP no texto. Consulte [autocomplete de endereços](address-search.md) para exemplos, ciclo de vida e regras de combinação dos filtros.
+
 ## Metadados e inspeção
 
 Ambos os leitores expõem `metadata()`. O leitor binário expõe `rowCount()`; o leitor SQLite recebe o nome da tabela em `rowCount(tableName)`:

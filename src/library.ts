@@ -1,3 +1,6 @@
+/** Optional address autocomplete and its database-bound index builder. */
+export { buildAddressSearchIndex } from './address-search-index.ts';
+export { type AddressSearchOptions, DneAddressSearch } from './address-search.ts';
 /** Public binary reader, format constants, file helpers, errors, and neighborhood types. */
 export {
   BINARY_DATABASE_HEADER_SIZE,

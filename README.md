@@ -64,6 +64,10 @@ Na geração do banco binário, o processo valida integralmente os bytes seriali
 
 O fluxo pressupõe uma base gerada por um processo confiável e mantida imutável durante o carregamento. A abertura verifica cabeçalho, versão, tamanho e checksum antes de usar o layout validado. As consultas verificam a entrada e o estado de `close()` e decodificam diretamente da cópia em memória. Os erros de E/S, versão, tamanho, checksum e leitor fechado continuam tipados. O SHA-256 verifica a integridade do arquivo, mas não autentica a origem do produtor. A especificação do layout está em [Formato binário](docs/binary-layout.md).
 
+## Autocomplete experimental
+
+A API `DneAddressSearch` pesquisa endereços por palavras e prefixo, com filtros por UF e código IBGE. Um CEP completo no texto pode determinar o município da busca. O recurso usa um índice opcional gerado a partir da base binária; veja [autocomplete de endereços](docs/address-search.md) para geração, exemplos e regras.
+
 ## CLI: criar e consultar sua própria base
 
 Execute sem instalação global. Para criar uma base SQLite a partir do arquivo público do e-DNE e consultar um CEP:

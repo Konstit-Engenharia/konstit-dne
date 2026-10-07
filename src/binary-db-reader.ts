@@ -369,6 +369,28 @@ export class DneBinaryDatabaseReader {
     return this.header.rowCount;
   }
 
+  /** Returns the verified database SHA-256 used to bind optional indexes to this snapshot. */
+  checksum(): string {
+    this.assertOpen();
+    return Buffer.from((this.bytes as Uint8Array).subarray(-BINARY_DATABASE_CHECKSUM_SIZE)).toString('hex');
+  }
+
+  /** Streams addresses in CEP order. Advancing the iterator after close() throws. */
+  *entries(): IterableIterator<DneRow> {
+    this.assertOpen();
+    const region = this.header.sections.cepPrefixOffsets;
+    const width = this.header.cepPrefixOffsetWidth;
+    let prefix = 0;
+    for (let index = 0; index < this.header.rowCount; index++) {
+      while (index >= this.readPackedInteger(region.offset + (prefix + 1) * width, width)) {
+        prefix++;
+      }
+      const cep = String(prefix * 1_000 + this.readPacked10(index)).padStart(8, '0');
+      yield this.readRow(index, cep);
+      this.assertOpen();
+    }
+  }
+
   private assertOpen(): void {
     if (this.data === null) {
       throw new DneBinaryDatabaseClosedError();
