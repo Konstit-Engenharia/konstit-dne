@@ -1,12 +1,17 @@
 import {
+  findSearchCep,
   parseAddressSearchIndex,
   readPosting,
   searchRowCep,
+  searchRowMunicipality,
   type AddressSearchIndex,
 } from './address-search-index.ts';
 import {
+  createIndexedAddressRanker,
+  findSearchTerm,
+} from './address-search-rank.ts';
+import {
   addressTokens,
-  createAddressRanker,
   hasSearchableWords,
 } from './address-search-text.ts';
 import type { DneBinaryDatabaseReader } from './binary-db-reader.ts';
@@ -55,10 +60,11 @@ export class DneAddressSearch {
       throw new RangeError('Address search requires limit 1..50 and at most 256 query characters');
     }
     const uf = options.uf === undefined ? undefined : parseUF(options.uf);
-    let municipality = options.municipioCodIbge;
+    let municipality = options.municipioCodIbge === undefined ? undefined : this.index.municipalityByCode.get(options.municipioCodIbge);
     if (
       (options.uf !== undefined && uf === undefined)
-      || (municipality !== undefined && this.database.queryMunicipality(municipality) === undefined)
+      || (options.municipioCodIbge !== undefined && municipality === undefined)
+      || (municipality !== undefined && uf !== undefined && this.index.municipalityUfs[municipality] !== uf)
     ) {
       return [];
     }
@@ -68,32 +74,33 @@ export class DneAddressSearch {
       ceps.push(cep);
       return ' ';
     });
-    const exactRows: DneRow[] = [];
+    const exactRows: number[] = [];
     for (const cep of ceps) {
-      const row = this.database.queryCep(cep);
-      if (!row || (municipality !== undefined && row.municipio_cod_ibge !== municipality) || (uf !== undefined && row.uf !== uf)) {
+      const row = findSearchCep(this.index, cep);
+      if (row === -1) {
         return [];
       }
-      municipality = row.municipio_cod_ibge;
-      if (!exactRows.some((existing) => existing.cep === row.cep)) {
+      const candidateMunicipality = searchRowMunicipality(this.index, row);
+      if (
+        (municipality !== undefined && candidateMunicipality !== municipality)
+        || (uf !== undefined && this.index.municipalityUfs[candidateMunicipality] !== uf)
+      ) {
+        return [];
+      }
+      municipality = candidateMunicipality;
+      if (!exactRows.includes(row)) {
         exactRows.push(row);
       }
     }
     const tokens = addressTokens(remainder);
     if (tokens.length === 0) {
-      return exactRows.sort((a, b) => a.cep.localeCompare(b.cep)).slice(0, limit);
+      return exactRows.sort((a, b) => a - b).slice(0, limit).map((id) => this.readAddress(id));
     }
     if (!hasSearchableWords(tokens)) {
       return [];
     }
 
     const lists: number[][] = [];
-    if (municipality !== undefined) {
-      lists.push(this.matchTerm(`#municipio:${municipality}`, false));
-    }
-    if (uf !== undefined) {
-      lists.push(this.matchTerm(`#uf:${uf}`, false));
-    }
     for (const [id, token,] of tokens.entries()) {
       lists.push(this.matchTerm(token, id === tokens.length - 1));
     }
@@ -106,36 +113,37 @@ export class DneAddressSearch {
       }
     }
 
-    const best: { row: DneRow; rank: number; }[] = [];
-    const rankAddress = createAddressRanker(tokens);
+    const best: { row: number; rank: number; }[] = [];
+    const rankAddress = createIndexedAddressRanker(this.index, tokens);
     for (const id of candidates) {
-      const row = this.database.queryCep(searchRowCep(this.index, id)) as DneRow;
-      const rank = rankAddress([row.logradouro, row.nome, row.bairro, row.municipio]);
-      const position = best.findIndex((candidate) => rank > candidate.rank || (rank === candidate.rank && row.cep < candidate.row.cep));
+      const rowMunicipality = searchRowMunicipality(this.index, id);
+      if (
+        (municipality !== undefined && rowMunicipality !== municipality)
+        || (uf !== undefined && this.index.municipalityUfs[rowMunicipality] !== uf)
+      ) {
+        continue;
+      }
+      const rank = rankAddress(id);
+      const position = best.findIndex((candidate) => rank > candidate.rank);
       if (position !== -1) {
-        best.splice(position, 0, { row, rank });
+        best.splice(position, 0, { row: id, rank });
       } else if (best.length < limit) {
-        best.push({ row, rank });
+        best.push({ row: id, rank });
       }
       if (best.length > limit) {
         best.pop();
       }
     }
-    return best.map(({ row }) => row);
+    return best.map(({ row }) => this.readAddress(row));
+  }
+
+  private readAddress(id: number): DneRow {
+    return this.database.queryCep(searchRowCep(this.index as AddressSearchIndex, id)) as DneRow;
   }
 
   private matchTerm(term: string, prefix: boolean): number[] {
     const index = this.index as AddressSearchIndex;
-    let low = 0;
-    let high = index.terms.length;
-    while (low < high) {
-      const middle = low + ((high - low) >>> 1);
-      if ((index.terms[middle] as string) < term) {
-        low = middle + 1;
-      } else {
-        high = middle;
-      }
-    }
+    const low = findSearchTerm(index.terms, term);
     const lists: number[][] = [];
     for (let id = low; id < index.terms.length; id++) {
       const candidate = index.terms[id] as string;

@@ -1,0 +1,276 @@
+{
+  "runtime": "1.4.2",
+  "cpu": "Apple M4",
+  "databaseChecksum": "6da88554ac7fb9a800787c614ea0f5b52d8b879614bfa1547a8d9ff7b5ec8d82",
+  "rows": 1611629,
+  "databaseBytes": 19121800,
+  "indexBytes": 58729615,
+  "databaseOpenMs": 14.830792,
+  "searchOpenMs": 108.07766600000002,
+  "databaseRss": 56868864,
+  "searchRss": 216612864,
+  "finalRss": 702218240,
+  "warmups": 3,
+  "iterations": 20,
+  "measurements": [
+    {
+      "query": "rubens mei",
+      "p50Ms": 0.18616699999998332,
+      "p95Ms": 0.23887499999997885,
+      "results": 6,
+      "first": [
+        {
+          "cep": "01141000",
+          "logradouro": "Rua Rubens Meireles",
+          "municipio": "São Paulo"
+        },
+        {
+          "cep": "83753274",
+          "logradouro": "Rua João Rubens Meira",
+          "municipio": "Lapa"
+        },
+        {
+          "cep": "13711090",
+          "logradouro": "Rua Rubens Martins Vilella",
+          "municipio": "Tambaú"
+        }
+      ]
+    },
+    {
+      "query": "rubens mei",
+      "options": {
+        "uf": "SP"
+      },
+      "p50Ms": 0.14995799999999804,
+      "p95Ms": 0.16037499999998772,
+      "results": 2,
+      "first": [
+        {
+          "cep": "01141000",
+          "logradouro": "Rua Rubens Meireles",
+          "municipio": "São Paulo"
+        },
+        {
+          "cep": "13711090",
+          "logradouro": "Rua Rubens Martins Vilella",
+          "municipio": "Tambaú"
+        }
+      ]
+    },
+    {
+      "query": "rubens mei",
+      "options": {
+        "municipioCodIbge": 3550308
+      },
+      "p50Ms": 0.1366249999999809,
+      "p95Ms": 0.15745799999999122,
+      "results": 1,
+      "first": [
+        {
+          "cep": "01141000",
+          "logradouro": "Rua Rubens Meireles",
+          "municipio": "São Paulo"
+        }
+      ]
+    },
+    {
+      "query": "rubens mei 01141-000",
+      "options": {
+        "uf": "SP"
+      },
+      "p50Ms": 0.15674999999998818,
+      "p95Ms": 0.1720420000000047,
+      "results": 1,
+      "first": [
+        {
+          "cep": "01141000",
+          "logradouro": "Rua Rubens Meireles",
+          "municipio": "São Paulo"
+        }
+      ]
+    },
+    {
+      "query": "paulista",
+      "options": {
+        "uf": "SP"
+      },
+      "p50Ms": 3.947833000000003,
+      "p95Ms": 4.521625,
+      "results": 10,
+      "first": [
+        {
+          "cep": "01310000",
+          "logradouro": "Avenida Paulista",
+          "municipio": "São Paulo"
+        },
+        {
+          "cep": "01310100",
+          "logradouro": "Avenida Paulista",
+          "municipio": "São Paulo"
+        },
+        {
+          "cep": "01310200",
+          "logradouro": "Avenida Paulista",
+          "municipio": "São Paulo"
+        }
+      ]
+    },
+    {
+      "query": "paulista",
+      "options": {
+        "municipioCodIbge": 3550308
+      },
+      "p50Ms": 0.8924580000000333,
+      "p95Ms": 1.2875000000000227,
+      "results": 10,
+      "first": [
+        {
+          "cep": "01310000",
+          "logradouro": "Avenida Paulista",
+          "municipio": "São Paulo"
+        },
+        {
+          "cep": "01310100",
+          "logradouro": "Avenida Paulista",
+          "municipio": "São Paulo"
+        },
+        {
+          "cep": "01310200",
+          "logradouro": "Avenida Paulista",
+          "municipio": "São Paulo"
+        }
+      ]
+    },
+    {
+      "query": "25 de mar",
+      "options": {
+        "municipioCodIbge": 3550308
+      },
+      "p50Ms": 10.205750000000023,
+      "p95Ms": 11.128540999999984,
+      "results": 0,
+      "first": []
+    },
+    {
+      "query": "joao",
+      "options": {
+        "uf": "SP"
+      },
+      "p50Ms": 6.229791999999975,
+      "p95Ms": 7.043333000000075,
+      "results": 10,
+      "first": [
+        {
+          "cep": "02167132",
+          "logradouro": "Viela João",
+          "municipio": "São Paulo"
+        },
+        {
+          "cep": "01014010",
+          "logradouro": "Rua João Brícola",
+          "municipio": "São Paulo"
+        },
+        {
+          "cep": "01014900",
+          "logradouro": "Rua João Brícola",
+          "municipio": "São Paulo"
+        }
+      ]
+    },
+    {
+      "query": "joao",
+      "options": {
+        "municipioCodIbge": 3550308
+      },
+      "p50Ms": 2.1771250000000464,
+      "p95Ms": 2.3154160000000275,
+      "results": 10,
+      "first": [
+        {
+          "cep": "02167132",
+          "logradouro": "Viela João",
+          "municipio": "São Paulo"
+        },
+        {
+          "cep": "01014010",
+          "logradouro": "Rua João Brícola",
+          "municipio": "São Paulo"
+        },
+        {
+          "cep": "01014900",
+          "logradouro": "Rua João Brícola",
+          "municipio": "São Paulo"
+        }
+      ]
+    },
+    {
+      "query": "sao",
+      "options": {
+        "municipioCodIbge": 3550308
+      },
+      "p50Ms": 16.214500000000044,
+      "p95Ms": 18.014083000000028,
+      "results": 10,
+      "first": [
+        {
+          "cep": "01005010",
+          "logradouro": "Largo São Francisco",
+          "municipio": "São Paulo"
+        },
+        {
+          "cep": "01005020",
+          "logradouro": "Rua São Francisco",
+          "municipio": "São Paulo"
+        },
+        {
+          "cep": "01010000",
+          "logradouro": "Rua São Bento",
+          "municipio": "São Paulo"
+        }
+      ]
+    },
+    {
+      "query": "sao",
+      "p50Ms": 43.260749999999916,
+      "p95Ms": 46.20074999999997,
+      "results": 10,
+      "first": [
+        {
+          "cep": "01005010",
+          "logradouro": "Largo São Francisco",
+          "municipio": "São Paulo"
+        },
+        {
+          "cep": "01005020",
+          "logradouro": "Rua São Francisco",
+          "municipio": "São Paulo"
+        },
+        {
+          "cep": "01010000",
+          "logradouro": "Rua São Bento",
+          "municipio": "São Paulo"
+        }
+      ]
+    },
+    {
+      "query": "zzzzzzzzzz",
+      "p50Ms": 0.00687500000003638,
+      "p95Ms": 0.015000000000327418,
+      "results": 0,
+      "first": []
+    },
+    {
+      "query": "01141-000",
+      "p50Ms": 0.004625000000032742,
+      "p95Ms": 0.008708000000297034,
+      "results": 1,
+      "first": [
+        {
+          "cep": "01141000",
+          "logradouro": "Rua Rubens Meireles",
+          "municipio": "São Paulo"
+        }
+      ]
+    }
+  ]
+}

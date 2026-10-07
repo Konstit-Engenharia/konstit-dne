@@ -6,25 +6,10 @@ import { cpus } from 'node:os';
 import {
   DneAddressSearch,
   DneBinaryDatabaseReader,
-  type AddressSearchOptions,
 } from '../src/library.ts';
+import { addressSearchCases } from './address-search-cases.ts';
 
 const [databasePath = 'data/dne.bin', indexPath = 'data/dne.search.bin',] = Bun.argv.slice(2);
-const cases: { query: string; options?: AddressSearchOptions; }[] = [
-  { query: 'rubens mei' },
-  { query: 'rubens mei', options: { uf: 'SP' } },
-  { query: 'rubens mei', options: { municipioCodIbge: 3550308 } },
-  { query: 'rubens mei 01141-000', options: { uf: 'SP' } },
-  { query: 'paulista', options: { uf: 'SP' } },
-  { query: 'paulista', options: { municipioCodIbge: 3550308 } },
-  { query: '25 de mar', options: { municipioCodIbge: 3550308 } },
-  { query: 'joao', options: { uf: 'SP' } },
-  { query: 'joao', options: { municipioCodIbge: 3550308 } },
-  { query: 'sao', options: { municipioCodIbge: 3550308 } },
-  { query: 'sao' },
-  { query: 'zzzzzzzzzz' },
-  { query: '01141-000' },
-];
 const before = performance.now();
 const database = new DneBinaryDatabaseReader(databasePath);
 const databaseOpenMs = performance.now() - before;
@@ -37,7 +22,7 @@ Bun.gc(true);
 const searchRss = process.memoryUsage().rss;
 
 try {
-  const measurements = cases.map(({ query, options }) => {
+  const measurements = addressSearchCases.map(({ query, options }) => {
     for (let warmup = 0; warmup < 3; warmup++) {
       search.searchAddresses(query, options);
     }

@@ -28,7 +28,7 @@ try {
 }
 ```
 
-A API `buildAddressSearchIndex(database)` retorna os bytes para salvar com `Bun.write()` ou outra API de arquivos. O índice não acompanha automaticamente o pacote e não é aberto por `queryCep()`. Após atualizar a base, gere um novo índice. O construtor rejeita um índice cujo checksum da base ou quantidade de registros difere do leitor informado.
+A API `buildAddressSearchIndex(database)` retorna os bytes para salvar com `Bun.write()` ou outra API de arquivos. O índice não acompanha automaticamente o pacote e não é aberto por `queryCep()`. Após atualizar a base, gere um novo índice. O construtor rejeita um índice cujo checksum da base ou quantidade de registros difere do leitor informado. A versão atual do índice é **2**; índices da versão 1 precisam ser regenerados. O formato do banco principal permanece igual.
 
 `DneBinaryDatabaseReader.entries()` percorre os endereços em ordem de CEP sem materializar a base toda em objetos. `checksum()` retorna o SHA-256 verificado ao abrir a base. Ambos exigem um leitor aberto.
 
@@ -50,20 +50,25 @@ O construtor copia os bytes do índice e valida sua estrutura, integridade e ví
 
 ## Formato do índice experimental
 
-Inteiros são little-endian. O formato é independente da versão do banco principal:
+Inteiros são little-endian. Na versão 2, cada registro aponta para quatro sequências de palavras, na ordem `logradouro`, `nome`, `bairro`, `municipio`. Sequências iguais compartilham um ID, inclusive entre campos. A posição de cada palavra é a sua posição na sequência. O formato é independente da versão do banco principal:
 
 | Parte | Conteúdo |
 | --- | --- |
-| Cabeçalho de 64 bytes | Magic `DNESRCH1`, versão `u32` em 8, quantidade de CEPs em 12, tamanho do vocabulário em 16, quantidade de termos em 20, tamanho dos postings em 24, reservado zero em 28, SHA-256 da base em 32..63. |
+| Cabeçalho de 80 bytes | Magic da família `DNESRCH1`, versão `u32` em 8, quantidade de CEPs em 12, bytes do vocabulário em 16, quantidade de termos em 20, bytes dos postings em 24, quantidade de sequências em 28, SHA-256 da base em 32..63, quantidade total de posições em 64, quantidade de municípios em 68. Bytes 72, 73 e 74 indicam as larguras de IDs de sequência, termo e município. Bytes 75..79 são reservados e zero. |
 | CEPs | Um `u32` por registro, em ordem crescente. |
+| Municípios dos registros | Um ID por registro, com a largura declarada no cabeçalho. |
+| Campos dos registros | Quatro IDs de sequência por registro, com a largura declarada no cabeçalho. |
+| Municípios | Um código IBGE `u32` e dois bytes ASCII da UF por município. |
+| Offsets das sequências | `quantidade de sequências + 1` valores `u32`, em posições de palavras. |
+| Palavras das sequências | IDs de termos na ordem original, com a largura declarada no cabeçalho. |
 | Offsets dos postings | `quantidade de termos + 1` valores `u32`, relativos ao início dos postings. |
-| Vocabulário | Array JSON UTF-8 de termos únicos em ordem lexicográfica, incluindo filtros `#uf:XX` e `#municipio:NNNNNNN`. |
+| Vocabulário | Array JSON UTF-8 de termos únicos em ordem lexicográfica. Não contém listas de filtros geográficos. |
 | Postings | IDs de registros crescentes, codificados como diferenças em varints de 7 bits. O predecessor inicial é `-1`. |
 | Rodapé | SHA-256 de 32 bytes sobre todos os bytes anteriores. |
 
-O leitor valida offsets, CEPs e todos os postings ao abrir. As consultas localizam os termos por busca binária, unem os termos de um prefixo, intersectam as listas a partir da menor e classificam os candidatos. O limite de resultados não limita a quantidade de candidatos avaliados; consultas amplas exigem medição na carga da aplicação.
+O leitor valida offsets, referências, posições, CEPs, municípios e todos os postings ao abrir. As consultas localizam os termos por busca binária, unem os termos de um prefixo e intersectam as listas a partir da menor. UF e município são verificados diretamente nas colunas numéricas antes do ranking, sem expandir listas geográficas. O ranking usa somente IDs de campo e posições; apenas os resultados finais são decodificados na base principal. CEPs no texto também são resolvidos pelo índice, sem decodificação prévia de endereço. O limite não limita a quantidade de candidatos avaliados, e as listas de termos ainda são materializadas.
 
-## Resultado do experimento em 07/10/2026
+## Resultado do primeiro experimento em 07/10/2026 — versão 1
 
 Base local com **1.611.629 CEPs**, Apple M4 e Bun 1.4.2. O benchmark executou três aquecimentos e vinte medições por consulta em um processo, com limite de dez resultados. Os percentis abaixo descrevem essa pequena amostra local e excluem abertura e geração. Os [resultados completos](address-search-benchmark.json) incluem o checksum da base e exemplos dos resultados.
 
@@ -83,6 +88,30 @@ O índice ocupa **25,86 MB**, além dos 19,12 MB da base. A geração com cache 
 
 O RSS total do processo passou de 57,61 MB com apenas a base aberta para 141,21 MB após abrir o índice e solicitar GC; ao fim das consultas, sem novo GC, estava em 637,86 MB. RSS inclui o runtime, buffers e memória retida pelo alocador, e não corresponde ao tamanho lógico do índice nem a uma medição isolada de pico.
 
-As consultas específicas funcionaram bem neste experimento. **A implementação ainda não está adequada para autocomplete irrestrito com termos genéricos**, especialmente porque palavras de município como `sao` selecionam muitos endereços. O ranking ainda decodifica os candidatos antes de escolher os dez resultados. Uma próxima otimização deve classificar usando informações de campo e posição no índice e decodificar somente os resultados finais, além de evitar materializar listas grandes para filtros geográficos. Esta versão não foi comparada com FTS5.
+No primeiro experimento, consultas específicas funcionaram bem, mas buscas genéricas eram lentas. O ranking da versão 1 decodificava os candidatos antes de escolher os dez resultados. Isso motivou a classificação numérica e os filtros geográficos diretos da versão 2, medidos abaixo. Nenhuma das versões foi comparada com FTS5.
 
 Validação: 944 testes passaram, com 100% de cobertura agregada de linhas e funções, incluindo normalização, filtros cumulativos, CEPs desconhecidos e conflitantes, ordenação, integridade do índice e reprodução pelo comando de geração. TypeScript, Biome, Oxlint, build e auditoria de dependências passaram. O exemplo de CEP no texto também foi verificado com a biblioteca compilada em `dist`.
+
+## Segundo experimento em 07/10/2026 — versão 2
+
+Os dois leitores foram medidos novamente em processos separados, com a mesma base, Apple M4, Bun 1.4.2 e carga de treze consultas. Cada consulta teve três aquecimentos e vinte medições; tempos de abertura foram medidos separadamente. A referência usa o commit `970fd5c`. Consulte os resultados brutos [antes](address-search-benchmark-before-v2.json) e [depois](address-search-benchmark-v2.json). São percentis de uma pequena amostra local, não uma garantia de latência em produção.
+
+| Consulta | Filtro | p95 v1 | p95 v2 | Redução de tempo |
+| --- | --- | ---: | ---: | ---: |
+| `rubens mei` | UF SP | 3,20 ms | 0,16 ms | 20,0× |
+| `rubens mei 01141-000` | UF SP + município inferido | 2,58 ms | 0,17 ms | 15,0× |
+| `paulista` | UF SP | 123,03 ms | 4,52 ms | 27,2× |
+| `paulista` | Município 3550308 | 17,29 ms | 1,29 ms | 13,4× |
+| `joao` | UF SP | 252,89 ms | 7,04 ms | 35,9× |
+| `sao` | Município 3550308 | 733,33 ms | 18,01 ms | 40,7× |
+| `sao` | Nenhum | 2.927,50 ms | 46,20 ms | 63,4× |
+
+O ganho tem custo de armazenamento: o índice aumentou de **25,86 MB para 58,73 MB (2,27×)**. A geração levou 19,21 s. A abertura passou de 82,49 ms para 108,08 ms. RSS após abertura e GC passou de 142,11 MB para 216,61 MB; ao fim das consultas, sem novo GC, de 617,38 MB para 702,22 MB. A redução de trabalho por consulta não resultou em redução global de memória nesta medição. RSS inclui runtime e memória retida pelo alocador; não representa pico nem somente dados vivos. Materialização de listas textuais e caches temporários de ranking continuam sendo oportunidades para reduzir alocações.
+
+Uma comparação adicional verificou **173 consultas e 966 endereços retornados**, preservando todos os campos e a ordem em relação à versão 1. Inclui a carga fixa e consultas derivadas de quarenta endereços espaçados pela base, com prefixos, palavras em ordem inversa, filtros por UF/IBGE, limites de 3/10/50 e CEP no texto. O [registro de equivalência](address-search-equivalence-v2.json) inclui o checksum da base. Para reproduzir com uma cópia da biblioteca anterior e seu índice:
+
+```sh
+bun run bench/address-search-verify.bench.ts data/dne.bin /copia-v1/src/library.ts data/dne.search.v1.bin data/dne.search.bin
+```
+
+A suíte completa passou com **947 testes e 100% de cobertura de linhas e funções**. Os novos testes comparam pontuações numéricas ao ranking textual original, validam referências geográficas e posições corrompidas e contam chamadas a `queryCep()` para garantir exatamente uma decodificação por resultado retornado. TypeScript, lint, build e auditoria passaram.

@@ -4,6 +4,7 @@ import {
   beforeAll,
   describe,
   expect,
+  spyOn,
   test,
 } from 'bun:test';
 import { createHash } from 'node:crypto';
@@ -14,9 +15,12 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  addressTokens,
-  createAddressRanker,
-} from '../src/address-search-text.ts';
+  parseAddressSearchIndex,
+  type AddressSearchIndex,
+} from '../src/address-search-index.ts';
+import { createIndexedAddressRanker } from '../src/address-search-rank.ts';
+import { addressTokens } from '../src/address-search-text.ts';
+import { writePackedInteger } from '../src/binary-db-format.ts';
 import { buildBinaryDatabase } from '../src/binary-db-writer.ts';
 import {
   buildAddressSearchIndex,
@@ -28,12 +32,14 @@ import {
 } from '../src/library.ts';
 import { buildSchema } from '../src/schema.ts';
 import { prepareDatabaseForLoad } from '../src/sqlite-db-schema.ts';
+import { createAddressRanker } from './address-search-reference.ts';
 
 const directory = mkdtempSync(join(tmpdir(), 'dne-search-'));
 const binaryPath = join(directory, 'dne.bin');
 let database: DneBinaryDatabaseReader;
 let search: DneAddressSearch;
 let bytes: Uint8Array;
+let layout: AddressSearchIndex;
 
 beforeAll(async () => {
   const path = join(directory, 'dne.db');
@@ -70,6 +76,7 @@ beforeAll(async () => {
   await buildBinaryDatabase(path, binaryPath);
   database = new DneBinaryDatabaseReader(binaryPath);
   bytes = buildAddressSearchIndex(database);
+  layout = parseAddressSearchIndex(bytes, database.checksum(), database.rowCount());
   search = new DneAddressSearch(database, bytes);
 });
 
@@ -84,6 +91,48 @@ function ceps(rows: DneRow[]): string[] {
 }
 
 describe('address autocomplete', () => {
+  test('matches the original text ranking using only indexed fields and word positions', () => {
+    const rows = [...database.entries()];
+    for (
+      const query of [
+        'rubens',
+        'rubens mei',
+        'meireles rubens',
+        'rua rubens meireles',
+        'pauli',
+        'paulista',
+        'sao',
+        'sao paulo',
+        'sao pa',
+        'rua pauli paulino',
+        'rubens rubens',
+        'ru',
+        'teste 29',
+        'zzzz',
+        '25 de marco',
+      ]
+    ) {
+      const words = addressTokens(query);
+      const reference = createAddressRanker(words);
+      const numeric = createIndexedAddressRanker(layout, words);
+      for (const [id, row,] of rows.entries()) {
+        expect(numeric(id)).toBe(reference([row.logradouro, row.nome, row.bairro, row.municipio]));
+      }
+    }
+  });
+
+  test('decodes only returned addresses, including queries with a CEP anchor', () => {
+    const queryCep = spyOn(database, 'queryCep');
+    try {
+      for (const query of ['teste', 'teste 50000000', '50000000 50000001', 'rubens 50000000', 'inexistente', '00000000']) {
+        queryCep.mockClear();
+        const rows = search.searchAddresses(query, { uf: 'PE', limit: 3 });
+        expect(queryCep).toHaveBeenCalledTimes(rows.length);
+      }
+    } finally {
+      queryCep.mockRestore();
+    }
+  });
   test('normalizes accents, case, abbreviations, punctuation and decomposed Unicode', () => {
     expect(ceps(search.searchAddresses('R. 25 de MARÇ'))).toEqual(['01142000']);
     expect(ceps(search.searchAddresses('av. pauli'))).toEqual(['01141000']);
@@ -238,7 +287,7 @@ describe('search index validation', () => {
         }),
       )
     ).toThrow('header');
-    expect(() => new DneAddressSearch(database, corrupt((data) => data.setUint32(8, 2, true)))).toThrow('version');
+    expect(() => new DneAddressSearch(database, corrupt((data) => data.setUint32(8, 1, true)))).toThrow('version');
     const broken = bytes.slice();
     broken[broken.length - 1] = (broken[broken.length - 1] as number) ^ 1;
     expect(() => new DneAddressSearch(database, broken)).toThrow('checksum');
@@ -257,13 +306,13 @@ describe('search index validation', () => {
   test('rejects invalid sizes, CEP ordering and vocabulary', () => {
     expect(() => new DneAddressSearch(database, corrupt((data) => data.setUint32(16, 0xffffffff, true)))).toThrow('size');
     expect(() => new DneAddressSearch(database, corrupt((data) => data.setUint32(28, 1, true)))).toThrow('size');
-    expect(() => new DneAddressSearch(database, corrupt((data) => data.setUint32(64, 100000000, true)))).toThrow('CEP');
-    expect(() => new DneAddressSearch(database, corrupt((data) => data.setUint32(68, data.getUint32(64, true), true)))).toThrow('CEP');
+    expect(() => new DneAddressSearch(database, corrupt((data) => data.setUint32(80, 100000000, true)))).toThrow('CEP');
+    expect(() => new DneAddressSearch(database, corrupt((data) => data.setUint32(84, data.getUint32(80, true), true)))).toThrow('CEP');
     expect(() =>
       new DneAddressSearch(
         database,
         corrupt((data, copy) => {
-          const lexiconOffset = 64 + data.getUint32(12, true) * 4 + (data.getUint32(20, true) + 1) * 4;
+          const lexiconOffset = layout.offsets + (data.getUint32(20, true) + 1) * 4;
           copy[lexiconOffset + 2] = 126;
         }),
       )
@@ -272,7 +321,7 @@ describe('search index validation', () => {
       new DneAddressSearch(
         database,
         corrupt((data, copy) => {
-          const lexiconOffset = 64 + data.getUint32(12, true) * 4 + (data.getUint32(20, true) + 1) * 4;
+          const lexiconOffset = layout.offsets + (data.getUint32(20, true) + 1) * 4;
           copy[lexiconOffset] = 33;
         }),
       )
@@ -280,7 +329,7 @@ describe('search index validation', () => {
   });
 
   test('rejects inconsistent posting offsets, truncated varints, and invalid row IDs', () => {
-    const offsets = 64 + database.rowCount() * 4;
+    const offsets = layout.offsets;
     expect(() => new DneAddressSearch(database, corrupt((data) => data.setUint32(offsets, 1, true)))).toThrow('offsets');
     expect(() => new DneAddressSearch(database, corrupt((data) => data.setUint32(offsets + 4, 0, true)))).toThrow('range');
     expect(() => new DneAddressSearch(database, corrupt((data) => data.setUint32(offsets + 4, 0xffffffff, true)))).toThrow('range');
@@ -288,7 +337,7 @@ describe('search index validation', () => {
       new DneAddressSearch(
         database,
         corrupt((data, copy) => {
-          const postingsOffset = 64 + database.rowCount() * 4 + (data.getUint32(20, true) + 1) * 4 + data.getUint32(16, true);
+          const postingsOffset = layout.offsets + (data.getUint32(20, true) + 1) * 4 + data.getUint32(16, true);
           copy[postingsOffset] = 0;
         }),
       )
@@ -297,7 +346,7 @@ describe('search index validation', () => {
       new DneAddressSearch(
         database,
         corrupt((data, copy) => {
-          const postingsOffset = 64 + database.rowCount() * 4 + (data.getUint32(20, true) + 1) * 4 + data.getUint32(16, true);
+          const postingsOffset = layout.offsets + (data.getUint32(20, true) + 1) * 4 + data.getUint32(16, true);
           const end = data.getUint32(offsets + 4, true);
           copy.fill(255, postingsOffset, postingsOffset + end);
         }),
@@ -307,11 +356,49 @@ describe('search index validation', () => {
       new DneAddressSearch(
         database,
         corrupt((data, copy) => {
-          const postingsOffset = 64 + database.rowCount() * 4 + (data.getUint32(20, true) + 1) * 4 + data.getUint32(16, true);
-          copy[postingsOffset] = 255;
-          copy[postingsOffset + 1] = 127;
+          const postingsOffset = layout.offsets + (data.getUint32(20, true) + 1) * 4 + data.getUint32(16, true);
+          const start = data.getUint32(layout.offsets + layout.terms.indexOf('rubens') * 4, true);
+          copy[postingsOffset + start] = 255;
+          copy[postingsOffset + start + 1] = 127;
         }),
       )
     ).toThrow('row');
+  });
+
+  test('rejects invalid numeric geography, field references, and positions', () => {
+    expect(() => new DneAddressSearch(database, corrupt((data) => data.setUint8(72, 0)))).toThrow('width');
+    const municipalities = layout.rowFields + layout.rowCount * 4 * layout.fieldWidth;
+    expect(() => new DneAddressSearch(database, corrupt((data) => data.setUint32(municipalities, 1, true)))).toThrow('municipality');
+    expect(() => new DneAddressSearch(database, corrupt((data) => data.setUint8(municipalities + 4, 0)))).toThrow('municipality');
+    expect(() =>
+      new DneAddressSearch(database, corrupt((data) => data.setUint32(municipalities + 6, data.getUint32(municipalities, true), true)))
+    )
+      .toThrow('municipality');
+    expect(() =>
+      new DneAddressSearch(
+        database,
+        corrupt((_data, copy) =>
+          writePackedInteger(copy, layout.rowMunicipalities, layout.municipalityCodes.length, layout.municipalityWidth)
+        ),
+      )
+    )
+      .toThrow('municipality reference');
+    expect(() =>
+      new DneAddressSearch(
+        database,
+        corrupt((data, copy) => writePackedInteger(copy, layout.rowFields, data.getUint32(28, true), layout.fieldWidth)),
+      )
+    )
+      .toThrow('field reference');
+    expect(() => new DneAddressSearch(database, corrupt((data) => data.setUint32(layout.fieldOffsets, 1, true)))).toThrow('field offsets');
+    expect(() => new DneAddressSearch(database, corrupt((data) => data.setUint32(layout.fieldOffsets + 4, 0xffffffff, true))))
+      .toThrow('field range');
+    expect(() =>
+      new DneAddressSearch(
+        database,
+        corrupt((_data, copy) => writePackedInteger(copy, layout.fieldTokens, layout.terms.length, layout.tokenWidth)),
+      )
+    )
+      .toThrow('field token');
   });
 });
