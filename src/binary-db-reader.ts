@@ -147,7 +147,7 @@ export async function isBinaryDatabase(path: string): Promise<boolean> {
  * The database is loaded as a snapshot at construction. Call `close()` when finished.
  * All operational errors extend {@link DneBinaryDatabaseError}; invalid or absent CEPs return `undefined`.
  */
-export class DneBinaryDatabaseReader {
+export class DneBinaryDatabaseReader implements Disposable {
   private bairroCache: (string | undefined)[];
   private data: DataView | null;
   private decodeScratch = new Uint8Array(0xff);
@@ -215,6 +215,11 @@ export class DneBinaryDatabaseReader {
     this.data = null;
     this.bytes = null;
     this.municipalityCache = [];
+  }
+
+  /** Calls close() when a using declaration leaves its scope. Repeated calls are safe. */
+  [Symbol.dispose](): void {
+    this.close();
   }
 
   /**

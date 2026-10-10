@@ -1,3 +1,5 @@
+/// <reference lib="esnext.disposable" preserve="true" />
+
 /** Optional address autocomplete and its database-bound index builder. */
 export { buildAddressSearchIndex } from './address-search-index.ts';
 export {

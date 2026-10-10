@@ -21,18 +21,16 @@ bun run benchmark:search data/dne.bin data/dne.search.bin
 ```typescript
 import { DneAddressSearch, DneBinaryDatabaseReader } from '@konstit/dne';
 
-const database = new DneBinaryDatabaseReader('./dne.bin');
-const search = new DneAddressSearch(database, './dne.search.bin');
-
-try {
+{
+  using database = new DneBinaryDatabaseReader('./dne.bin');
+  using search = new DneAddressSearch(database, './dne.search.bin');
   console.log(search.searchAddresses('rubens mei', { uf: 'SP', limit: 10 }));
   console.log(search.searchAddresses('rubens mei', { municipioCodIbge: 3550308 }));
   console.log(search.searchAddresses('rubens mei CEP: 01141-000', { uf: 'SP' }));
-} finally {
-  search.close();
-  database.close();
 }
 ```
+
+`DneAddressSearch` implementa `Disposable`: `[Symbol.dispose]()` chama `close()` e permite usar `using`. O descarte é idempotente e libera somente o índice e os buffers da busca, mantendo o leitor associado aberto. No exemplo, declarar o leitor antes da busca faz o descarte ocorrer na ordem inversa: primeiro a busca, depois o leitor, inclusive quando há uma exceção. `close()` continua disponível para fechamento explícito.
 
 A API `buildAddressSearchIndex(database)` retorna os bytes para salvar com `Bun.write()` ou outra API de arquivos. O índice não acompanha automaticamente o pacote e não é aberto por `queryCep()`. Após atualizar a base, gere um novo índice. O construtor rejeita um índice cujo checksum da base ou quantidade de registros difere do leitor informado. A versão atual do índice é **2**; índices da versão 1 precisam ser regenerados. O formato do banco principal permanece igual.
 

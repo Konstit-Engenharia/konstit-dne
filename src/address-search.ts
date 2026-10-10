@@ -31,7 +31,7 @@ export type AddressSearchOptions = {
 };
 
 /** Optional address autocomplete over an immutable binary database and its matching search index. */
-export class DneAddressSearch {
+export class DneAddressSearch implements Disposable {
   private index: AddressSearchIndex | null;
   private workspace: { candidates: Uint32Array; matches: Uint32Array; scores: Uint16Array; } | null = null;
 
@@ -50,6 +50,11 @@ export class DneAddressSearch {
   close(): void {
     this.index = null;
     this.workspace = null;
+  }
+
+  /** Calls close() on scope exit without closing the caller's database. Repeated calls are safe. */
+  [Symbol.dispose](): void {
+    this.close();
   }
 
   /**

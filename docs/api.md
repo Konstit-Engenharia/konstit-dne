@@ -59,6 +59,26 @@ A base incluída no pacote é binária. Para usar o leitor SQLite, informe o cam
 
 Os dois leitores aceitam CEP com oito dígitos (`01141000`) ou no formato `01141-000`. Espaços ao redor não são aceitos. `queryCep()` retorna `undefined` quando a entrada é inválida ou o CEP não existe.
 
+## Fechamento automático com `using`
+
+`DneBinaryDatabaseReader` e `DneDatabaseReader` implementam `Disposable`. O método `[Symbol.dispose]()` chama `close()`, permitindo liberar os recursos automaticamente ao sair de um bloco, inclusive por `return` ou exceção:
+
+```typescript
+import { DneBinaryDatabaseReader, DneDatabaseReader } from '@konstit/dne';
+
+{
+  using binary = new DneBinaryDatabaseReader();
+  console.log(binary.queryCep('01141-000'));
+}
+
+{
+  using sqlite = new DneDatabaseReader('/dados/dne.db');
+  console.log(sqlite.queryCep('01141-000'));
+}
+```
+
+O descarte é síncrono e idempotente. `close()` continua disponível e pode ser combinado com `[Symbol.dispose]()`. As regras após o fechamento permanecem iguais: o leitor binário conserva `metadata()` e `rowCount()`, enquanto as consultas são rejeitadas; no SQLite, qualquer leitura é rejeitada. Falhas ao fechar a conexão SQLite continuam sendo `DneDatabaseIOError`. Veja o [exemplo executável](../examples/reader-disposal.ts).
+
 ## Consultas
 
 Os dois leitores oferecem as mesmas consultas de CEP e de bairros:

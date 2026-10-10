@@ -11,8 +11,9 @@ Os exemplos usam somente exports de [`src/library.ts`](../src/library.ts), o pon
 | [`binary-reader.ts`](binary-reader.ts) | `DneBinaryDatabaseReader`: abertura padrão ou por caminho, `queryCep`, `queryMunicipality`, `queryMunicipalityCodesByUf`, `queryNeighborhood`, `queryNeighborhoodByCep`, `queryNeighborhoodCepRanges`, `metadata`, `rowCount`, `checksum`, `entries`, `close`. | Base binária. |
 | [`binary-inspection.ts`](binary-inspection.ts) | `BINARY_DATABASE_VERSION`, `BINARY_DATABASE_HEADER_SIZE`, `isBinaryDatabase`, `readBinaryDatabaseMetadata`. | Caminho de um arquivo. |
 | [`sqlite-reader.ts`](sqlite-reader.ts) | `DneDatabaseReader`: abertura por caminho, `queryCep`, `queryNeighborhood`, `queryNeighborhoodByCep`, `queryNeighborhoodCepRanges`, `metadata`, `hasTable`, `rowCount`, `tableSchema`, `querySql`, `close`. | Base SQLite. |
+| [`reader-disposal.ts`](reader-disposal.ts) | `Disposable`, `using` e `[Symbol.dispose]()` nos leitores binário e SQLite, com fechamento automático ao sair do bloco. | Base binária e SQLite. |
 | [`build-search-index.ts`](build-search-index.ts) | `buildAddressSearchIndex`, geração dos bytes e gravação em um arquivo novo. | Base binária e caminho de saída. |
-| [`address-search.ts`](address-search.ts) | `DneAddressSearch`: construtor com caminho ou `Uint8Array`, `searchAddresses`, `close`; filtros com `AddressSearchOptions`. | Base binária e índice compatível. |
+| [`address-search.ts`](address-search.ts) | `DneAddressSearch`: construtor com caminho ou `Uint8Array`, `searchAddresses`, `using` e `[Symbol.dispose]()` delegando a `close()`; filtros com `AddressSearchOptions`. | Base binária e índice compatível. |
 | [`address-search-pool.ts`](address-search-pool.ts) | `DneAddressSearchPool.open`, `searchAddresses`, `close`, concorrência, cancelamento, drenagem e erros; `AddressSearchPoolOptions` e `AddressSearchAsyncOptions`. | Base binária e índice compatível. |
 | [`database-errors.ts`](database-errors.ts) | Classes e códigos de erro dos dois leitores, descritos abaixo. | Base binária e SQLite; caminhos inválidos também demonstram o tratamento de erro. |
 | [`address-search-server.ts`](address-search-server.ts) | Pool persistente em `Bun.serve`, filtros, validação HTTP, prazo, fila limitada e encerramento. | Base binária e índice compatível. |
@@ -51,6 +52,7 @@ Para uma fonte já disponível, acrescente `--source /dados/eDNE_Basico.zip` ou 
 DNE_DATABASE=./data/dne.bin bun examples/binary-reader.ts 01001-000
 bun examples/binary-inspection.ts ./data/dne.bin
 DNE_SQLITE_DATABASE=./data/dne.db bun examples/sqlite-reader.ts 01001-000
+DNE_DATABASE=./data/dne.bin DNE_SQLITE_DATABASE=./data/dne.db bun examples/reader-disposal.ts 01001-000
 DNE_DATABASE=./data/dne.bin DNE_SQLITE_DATABASE=./data/dne.db bun examples/database-errors.ts
 ```
 
@@ -64,7 +66,7 @@ DNE_DATABASE=./data/dne.bin DNE_SEARCH_INDEX=./data/dne.bin.search.bin bun examp
 DNE_DATABASE=./data/dne.bin DNE_SEARCH_INDEX=./data/dne.bin.search.bin bun examples/address-search-pool.ts 'paulista'
 ```
 
-`DNE_SEARCH_INDEX` tem padrão `<DNE_DATABASE>.search.bin`, ou `./data/dne.bin.search.bin` quando a base padrão é usada. O exemplo síncrono mostra separadamente as duas formas de abrir o índice; em uma aplicação, escolha uma delas e reutilize a busca. O exemplo do pool usa dois workers e oito posições de espera. Todos os leitores e pools são fechados em `finally`.
+`DNE_SEARCH_INDEX` tem padrão `<DNE_DATABASE>.search.bin`, ou `./data/dne.bin.search.bin` quando a base padrão é usada. O exemplo síncrono mostra separadamente as duas formas de abrir o índice; em uma aplicação, escolha uma delas e reutilize a busca. O exemplo do pool usa dois workers e oito posições de espera. Os exemplos usam `finally`, `using` ou descarte explícito para fechar os leitores e pools.
 
 ## Endpoint de autocomplete com Bun
 

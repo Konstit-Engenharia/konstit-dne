@@ -133,14 +133,15 @@ describe('SQLite reader errors', () => {
     }
   });
 
-  test('wraps a close failure and permits retrying the close', () => {
+  test.each(['close', 'dispose'])('wraps a %s failure and permits retrying cleanup', (method) => {
     const reader = new DneDatabaseReader(emptyPath);
+    const cleanup = () => method === 'close' ? reader.close() : reader[Symbol.dispose]();
     const cause = new Error('Close failed');
     const close = spyOn(Database.prototype, 'close').mockImplementationOnce(() => {
       throw cause;
     });
     try {
-      const error = captureError(() => reader.close());
+      const error = captureError(cleanup);
       expect(error).toMatchObject({ code: 'IO_ERROR', path: emptyPath });
       expect(error.cause).toBe(cause);
       expect(reader.hasTable('dne')).toBe(false);
@@ -148,6 +149,26 @@ describe('SQLite reader errors', () => {
       close.mockRestore();
       reader.close();
     }
+    expect(cleanup).not.toThrow();
+  });
+
+  test.each([false, true])('disposes a reader when leaving a using scope, throwing=%s', (throwing) => {
+    const reader = new DneDatabaseReader(emptyPath);
+    const failure = new Error('Scope failed');
+    const read = () => {
+      using scoped = reader;
+      expect(scoped.querySql('SELECT 42 AS value', 1).rows).toEqual([{ value: 42 }]);
+      if (throwing) {
+        throw failure;
+      }
+    };
+    if (throwing) {
+      expect(read).toThrow(failure);
+    } else {
+      read();
+    }
+    expect(() => reader.hasTable('dne')).toThrow(DneDatabaseClosedError);
+    expect(() => reader[Symbol.dispose]()).not.toThrow();
     expect(() => reader.close()).not.toThrow();
   });
 

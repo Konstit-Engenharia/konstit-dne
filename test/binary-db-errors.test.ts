@@ -111,12 +111,34 @@ describe('binary reader error contract', () => {
     expect(error.message).toContain('Binary database header is truncated');
   });
 
-  test('retains parsed metadata and row counts after an idempotent close', () => {
+  test.each([false, true])('disposes a reader when leaving a using scope, throwing=%s', (throwing) => {
+    const reader = new DneBinaryDatabaseReader(binaryPath);
+    const failure = new Error('Scope failed');
+    const read = () => {
+      using scoped = reader;
+      expect(scoped.queryCep('21000000')?.bairro).toBe('Centro');
+      if (throwing) {
+        throw failure;
+      }
+    };
+    if (throwing) {
+      expect(read).toThrow(failure);
+    } else {
+      read();
+    }
+    expect(() => reader.queryCep('21000000')).toThrow(DneBinaryDatabaseClosedError);
+    expect(reader.rowCount()).toBe(20);
+    expect(reader.metadata()).toHaveProperty('loaded_at');
+  });
+
+  test('retains parsed metadata and row counts after repeated close and disposal', () => {
     const reader = new DneBinaryDatabaseReader(binaryPath);
     const metadata = reader.metadata();
     const count = reader.rowCount();
     reader.close();
+    reader[Symbol.dispose]();
     reader.close();
+    reader[Symbol.dispose]();
     expect(reader.metadata()).toEqual(metadata);
     expect(reader.rowCount()).toBe(count);
     const queries = [

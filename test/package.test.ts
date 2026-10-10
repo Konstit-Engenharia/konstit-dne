@@ -93,7 +93,7 @@ describe('published package', () => {
       assert.equal(reader.queryCep('13000000').localidade_situacao, 'em_codificacao_por_logradouro');
       assert.equal(reader.queryNeighborhoodByCep('21000000').bairro_id, 11);
       assert.equal(reader.queryNeighborhoodCepRanges(11).length, 2);
-      reader.close();
+      reader[Symbol.dispose]();
       assert.throws(() => reader.queryCep('21000000'), DneBinaryDatabaseClosedError);
       assert.throws(() => new DneBinaryDatabaseReader('./missing.bin'), DneBinaryDatabaseIOError);
       const sqlite = new Database('./reader.db');
@@ -106,7 +106,7 @@ describe('published package', () => {
           rows: [{ value: 42 }], truncated: false,
         });
       } finally {
-        sqliteReader.close();
+        sqliteReader[Symbol.dispose]();
       }
       assert.throws(() => sqliteReader.rowCount('sample'), DneDatabaseClosedError);
       assert.throws(() => new DneDatabaseReader('./missing.db'), DneDatabaseIOError);
@@ -126,7 +126,7 @@ describe('published package', () => {
       const database = new DneBinaryDatabaseReader();
       const bytes = buildAddressSearchIndex(database);
       await Bun.write('./pool.search.bin', bytes);
-      const sync = new DneAddressSearch(database, bytes);
+      using sync = new DneAddressSearch(database, bytes);
       const pool = await DneAddressSearchPool.open({ indexPath: './pool.search.bin', workers: 2 });
       try {
         assert.deepEqual(await pool.searchAddresses('principal'), sync.searchAddresses('principal'));
@@ -323,8 +323,9 @@ describe('published package', () => {
         type DneRow, type DneBairro, type DneFaixaCep, type LoadMetadata, type UF,
         type LocalidadeTipo, type LocalidadeSituacao, type DneBinaryDatabaseErrorCode,
       } from '@konstit/dne';
-      const reader = new DneBinaryDatabaseReader();
-      new DneAddressSearch(reader, './dne.search.bin');
+      using reader = new DneBinaryDatabaseReader();
+      using search = new DneAddressSearch(reader, './dne.search.bin');
+      search.searchAddresses('principal');
       new DneAddressSearch(reader, new Uint8Array(0));
       DneAddressSearchPool.open({ indexPath: './dne.search.bin', workers: 2, maxQueue: 64 });
       // @ts-expect-error Shared snapshots are internal to the pool, not a new public constructor input.
@@ -362,7 +363,7 @@ describe('published package', () => {
       new DneBinaryDatabaseIOError('missing');
       new DneBinaryDatabaseFormatError('invalid');
       new DneBinaryDatabaseVersionError(2, 1);
-      const sqliteReader = new DneDatabaseReader('./dne.db');
+      using sqliteReader = new DneDatabaseReader('./dne.db');
       const sqliteRow: DneRow | undefined = sqliteReader.queryCep('21000000');
       const sqliteBairro: DneBairro | undefined = sqliteReader.queryNeighborhoodByCep('21000000');
       const sqliteNeighborhood: DneBairro | undefined = sqliteReader.queryNeighborhood(11);

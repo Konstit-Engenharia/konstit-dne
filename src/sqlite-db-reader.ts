@@ -48,7 +48,7 @@ export {
 export type { DneRow, LoadMetadata } from './types.ts';
 
 /** Read-only SQLite access for CEP lookup, schema inspection, metadata, and bounded SQL queries. */
-export class DneDatabaseReader {
+export class DneDatabaseReader implements Disposable {
   private readonly db: Database;
   private closed = false;
   private normalizedSchemaReady = false;
@@ -88,6 +88,14 @@ export class DneDatabaseReader {
     } catch (cause) {
       throw new DneDatabaseIOError(this.databasePath, { cause });
     }
+  }
+
+  /**
+   * Calls close() when a using declaration leaves its scope. Repeated calls are safe.
+   * @throws {DneDatabaseIOError} If SQLite cannot close the connection.
+   */
+  [Symbol.dispose](): void {
+    this.close();
   }
 
   /**

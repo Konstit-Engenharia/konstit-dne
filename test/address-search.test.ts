@@ -257,12 +257,34 @@ describe('address autocomplete', () => {
     }
   });
 
+  test.each([false, true])('disposes search on scope exit without closing its reader, throwing=%s', (throwing) => {
+    const own = new DneAddressSearch(database, bytes);
+    const failure = new Error('Scope failed');
+    const query = () => {
+      using scoped = own;
+      expect(scoped.searchAddresses('rubens')).not.toBeEmpty();
+      if (throwing) {
+        throw failure;
+      }
+    };
+    if (throwing) {
+      expect(query).toThrow(failure);
+    } else {
+      query();
+    }
+    expect(() => own.searchAddresses('')).toThrow('Address search is closed');
+    expect(database.queryCep('01001000')).toBeDefined();
+    expect(search.searchAddresses('rubens')).not.toBeEmpty();
+  });
+
   test('owns its index bytes and releases search independently of the database', () => {
     const source = bytes.slice();
     const own = new DneAddressSearch(database, source);
     source.fill(0);
     expect(own.searchAddresses('rubens')).not.toBeEmpty();
+    own[Symbol.dispose]();
     own.close();
+    own[Symbol.dispose]();
     own.close();
     expect(() => own.searchAddresses('')).toThrow('Address search is closed');
     expect(database.queryCep('01141000')).toBeDefined();
