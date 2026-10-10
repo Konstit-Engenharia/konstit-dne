@@ -194,6 +194,7 @@ describe('SQLite reader errors', () => {
     expect(() => reader.queryNeighborhood(-1)).toThrow(DneDatabaseClosedError);
     expect(() => reader.queryNeighborhoodByCep('invalid')).toThrow(DneDatabaseClosedError);
     expect(() => reader.queryNeighborhoodCepRanges(-1)).toThrow(DneDatabaseClosedError);
+    expect(() => reader.querySql('SELECT 1', Number.NaN)).toThrow(DneDatabaseClosedError);
   });
 
   test.each(readOperations)('preserves native failures from %s in a typed query error', (_name, read) => {
@@ -258,8 +259,43 @@ describe('SQLite reader errors', () => {
     }
   });
 
+  test.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, 1.5, Number.MAX_SAFE_INTEGER + 1])(
+    'rejects invalid SQL row limit %s before preparing the statement',
+    (limit) => {
+      using reader = new DneDatabaseReader(emptyPath);
+      const error = captureError(() => reader.querySql('SELECT * FROM missing', limit));
+      expect(error).toBeInstanceOf(DneDatabaseQueryError);
+      expect(error).toMatchObject({ code: 'QUERY_ERROR', message: 'SQL row limit must be a positive safe integer.' });
+      expect(reader.querySql('SELECT 1 AS value', 1)).toEqual({ rows: [{ value: 1 }], truncated: false });
+    },
+  );
+
+  test('bounds SQL results and distinguishes an exact limit from truncation', () => {
+    using reader = new DneDatabaseReader(emptyPath);
+    const sql = 'SELECT 1 AS value UNION ALL SELECT 2 UNION ALL SELECT 3';
+    expect(reader.querySql(sql, 2)).toEqual({ rows: [{ value: 1 }, { value: 2 }], truncated: true });
+    expect(reader.querySql(sql, 3)).toEqual({ rows: [{ value: 1 }, { value: 2 }, { value: 3 }], truncated: false });
+    expect(reader.querySql('SELECT 1 AS value WHERE 0', 1)).toEqual({ rows: [], truncated: false });
+  });
+
+  test.each(['bairros', 'bairro_faixas'])('reports an incomplete normalized schema containing only %s', (table) => {
+    const path = createDatabase(`
+      CREATE VIEW dne_consulta AS SELECT '01001000' AS cep;
+      CREATE TABLE ${table} (bairro_id INTEGER);
+    `);
+    using reader = new DneDatabaseReader(path);
+    expect(() => reader.queryCep('01001000')).toThrow(DneDatabaseSchemaError);
+    expect(() => reader.queryNeighborhood(1)).toThrow(DneDatabaseSchemaError);
+    expect(() => reader.queryNeighborhoodByCep('01001000')).toThrow(DneDatabaseSchemaError);
+    expect(() => reader.queryNeighborhoodCepRanges(1)).toThrow(DneDatabaseSchemaError);
+  });
+
   test('identifies a lookup view that lacks locality columns', () => {
-    const path = createDatabase('CREATE VIEW dne_consulta AS SELECT \'01001000\' AS cep');
+    const path = createDatabase(`
+      CREATE TABLE bairros (bairro_id INTEGER);
+      CREATE TABLE bairro_faixas (bairro_id INTEGER);
+      CREATE VIEW dne_consulta AS SELECT '01001000' AS cep;
+    `);
     const reader = new DneDatabaseReader(path);
     try {
       const error = captureError(() => reader.queryCep('01001000'));
@@ -272,7 +308,9 @@ describe('SQLite reader errors', () => {
 
   test.each([[4, 'M'], [1, 'Z'], [null, 'M']])('identifies invalid locality data (%s, %s)', (situation, type) => {
     const path = createDatabase(
-      `CREATE VIEW dne_consulta AS SELECT '01001000' AS cep, ${situation ?? 'NULL'} AS localidade_situacao, '${type}' AS localidade_tipo`,
+      `CREATE TABLE bairros (bairro_id INTEGER);
+       CREATE TABLE bairro_faixas (bairro_id INTEGER);
+       CREATE VIEW dne_consulta AS SELECT '01001000' AS cep, ${situation ?? 'NULL'} AS localidade_situacao, '${type}' AS localidade_tipo`,
     );
     const reader = new DneDatabaseReader(path);
     try {

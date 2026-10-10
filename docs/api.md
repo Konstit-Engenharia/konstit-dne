@@ -196,7 +196,7 @@ const result = sqliteReader.querySql(
 // { rows: Record<string, unknown>[], truncated: boolean }
 ```
 
-`tableSchema()` retorna a instrução `CREATE TABLE` armazenada no catálogo ou `undefined` quando não há definição. `querySql()` usa a conexão somente leitura, mantém no máximo `limit` linhas na memória e informa em `truncated` se havia outra linha disponível. Ele não aplica o filtro de comandos SQL da CLI; valide e limite o SQL da aplicação conforme necessário.
+`tableSchema()` retorna a instrução `CREATE TABLE` armazenada no catálogo ou `undefined` quando não há definição. `querySql()` usa a conexão somente leitura, mantém no máximo `limit` linhas no resultado e informa em `truncated` se havia outra linha disponível. O limite deve ser um inteiro positivo seguro (`Number.isSafeInteger`); valores inválidos lançam `DneDatabaseQueryError` antes da preparação do SQL. Ele não aplica o filtro de comandos SQL da CLI; valide e limite o SQL da aplicação conforme necessário.
 
 Na raiz do pacote também são exportados `readBinaryDatabaseMetadata()`, `isBinaryDatabase()`, `parseUF()` e os helpers de CEP. A inspeção SQLite usa os métodos `metadata()` e `hasTable()` de `DneDatabaseReader`; os helpers internos `readDatabaseMetadata()`, `hasTable()` e `sqlitePathFromDatabaseUrl()` não fazem parte dos exports públicos.
 
@@ -253,7 +253,7 @@ Todas as exceções SQLite herdam de `DneDatabaseError`.
 | `DneDatabaseIOError`     | `IO_ERROR`       | Falha ao abrir, configurar ou fechar a conexão. A propriedade `path` identifica a base. |
 | `DneDatabaseSchemaError` | `INVALID_SCHEMA` | A base não tem a view normalizada, os bairros ou os campos de localidade necessários.   |
 | `DneDatabaseDataError`   | `INVALID_DATA`   | O registro consultado contém indicadores de localidade inválidos.                       |
-| `DneDatabaseQueryError`  | `QUERY_ERROR`    | O SQLite não conseguiu preparar ou executar uma leitura.                                |
+| `DneDatabaseQueryError`  | `QUERY_ERROR`    | O limite de `querySql()` é inválido ou o SQLite não conseguiu preparar ou executar uma leitura. |
 | `DneDatabaseClosedError` | `READER_CLOSED`  | Uma operação foi feita depois de `close()`.                                             |
 
 O tipo `DneDatabaseErrorCode` reúne esses cinco códigos. Uma base criada antes do esquema normalizado precisa ser recriada; consulte [Migrações e compatibilidade](sqlite.md#migrações-e-compatibilidade).

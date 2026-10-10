@@ -6,7 +6,7 @@ import type { LoadMetadata } from './types.ts';
  * Determines whether a database uses the current schema and matches every available remote validator.
  * @param metadata - Metadata from the last successful import.
  * @param remoteInfo - Current URL and HTTP validators for the source.
- * @returns True only for the same remote URL, current schema, and at least one matching validator with no mismatches.
+ * @returns True only for the same remote URL, current schema, and matching ETag or Last-Modified with no validator mismatches.
  */
 export function remoteMetadataMatches(
   metadata: LoadMetadata,
@@ -16,6 +16,7 @@ export function remoteMetadataMatches(
     metadata.schema_version !== DATABASE_SCHEMA_VERSION
     || metadata.source_kind !== 'remote'
     || metadata.source_url !== remoteInfo.url
+    || (!remoteInfo.etag && !remoteInfo.lastModified)
   ) {
     return false;
   }
@@ -26,7 +27,7 @@ export function remoteMetadataMatches(
     validatorMatches(metadata.source_content_length, remoteInfo.contentLength),
   ].filter((value) => value !== null);
 
-  return validators.length > 0 && validators.every(Boolean);
+  return validators.every(Boolean);
 }
 
 /**

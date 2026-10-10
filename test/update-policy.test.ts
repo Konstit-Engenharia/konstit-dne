@@ -45,4 +45,16 @@ describe('remote update policy', () => {
       lastModified: null,
     })).toBe(false);
   });
+
+  test.each([null, ''])('does not treat matching content length as a freshness validator (%s)', (missing) => {
+    const sizeOnly = { ...remote, etag: missing, lastModified: missing };
+    const metadata = buildLoadMetadata(remote.url, sizeOnly, '1.2.3');
+    expect(remoteMetadataMatches(metadata, sizeOnly)).toBe(false);
+  });
+
+  test.each(['etag', 'lastModified'] as const)('can establish freshness using only %s', (validator) => {
+    const info = { ...remote, contentLength: null, etag: null, lastModified: null, [validator]: remote[validator] };
+    const metadata = buildLoadMetadata(remote.url, info, '1.2.3');
+    expect(remoteMetadataMatches(metadata, info)).toBe(true);
+  });
 });

@@ -233,7 +233,7 @@ export class DneDatabaseReader implements Disposable {
       this.normalizedSchemaReady = Boolean(
         this.db.query('SELECT 1 FROM sqlite_master WHERE type = \'view\' AND name = ?')
           .get(cepViewName(SQLITE_CEP_TABLE_NAME)),
-      );
+      ) && this.hasTable(SQLITE_BAIRROS_TABLE_NAME) && this.hasTable(SQLITE_BAIRRO_FAIXAS_TABLE_NAME);
     }
     if (!this.normalizedSchemaReady) {
       throw new DneDatabaseSchemaError('Database schema lacks normalized neighborhoods. Rebuild the database with build --force.');
@@ -273,30 +273,35 @@ export class DneDatabaseReader implements Disposable {
   /**
    * Executes caller-supplied SQL on the read-only connection, retaining a bounded result.
    * @param sql - A statement accepted by SQLite; this method does not apply the CLI's statement filter.
-   * @param limit - Positive maximum number of rows to retain.
+   * @param limit - Positive safe integer specifying the maximum number of rows to retain.
    * @returns Rows plus a flag indicating whether at least one additional row was available.
    * @throws {DneDatabaseClosedError} If the reader is closed, including for invalid input.
-   * @throws {DneDatabaseQueryError} If SQLite cannot prepare or execute the read.
+   * @throws {DneDatabaseQueryError} If the limit is invalid or SQLite cannot prepare or execute the read.
    */
   querySql(sql: string, limit: number) {
     return this.readSafely(() => {
+      if (!Number.isSafeInteger(limit) || limit <= 0) {
+        throw new DneDatabaseQueryError('SQL row limit must be a positive safe integer.');
+      }
       const rows: Record<string, unknown>[] = [];
+      let truncated = false;
       const statement = this.db.query(sql);
 
       try {
         for (const value of statement.iterate()) {
-          rows.push(value as Record<string, unknown>);
-          if (rows.length > limit) {
+          if (rows.length === limit) {
+            truncated = true;
             break;
           }
+          rows.push(value as Record<string, unknown>);
         }
       } finally {
         statement.finalize();
       }
 
       return {
-        rows: rows.slice(0, limit),
-        truncated: rows.length > limit,
+        rows,
+        truncated,
       };
     });
   }
