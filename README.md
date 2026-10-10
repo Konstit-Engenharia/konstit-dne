@@ -64,9 +64,11 @@ Na geração do banco binário, o processo valida integralmente os bytes seriali
 
 O fluxo pressupõe uma base gerada por um processo confiável e mantida imutável durante o carregamento. A abertura verifica cabeçalho, versão, tamanho e checksum antes de usar o layout validado. As consultas verificam a entrada e o estado de `close()` e decodificam diretamente da cópia em memória. Os erros de E/S, versão, tamanho, checksum e leitor fechado continuam tipados. O SHA-256 verifica a integridade do arquivo, mas não autentica a origem do produtor. A especificação do layout está em [Formato binário](docs/binary-layout.md).
 
-## Autocomplete experimental
+## Autocomplete de endereços
 
 A API `DneAddressSearch` pesquisa endereços por palavras e prefixo, com filtros por UF e código IBGE. Um CEP completo no texto pode determinar o município da busca. Gere o índice opcional com `bunx @konstit/dne build-search-index --db ./dne.bin`; veja [autocomplete de endereços](docs/address-search.md) para exemplos e regras.
+
+Para endpoints, `DneAddressSearchPool` oferece a mesma busca de forma assíncrona em workers nativos persistentes do Bun, compartilhando os bytes da base e do índice via `SharedArrayBuffer`, com fila limitada e cancelamento por `AbortSignal`. O código dos workers acompanha a biblioteca e é iniciado por Blob URL, permitindo [bundles e executáveis do Bun](docs/address-search.md#bundles-e-executáveis-do-bun). Veja a [API do pool](docs/address-search.md#pool-assíncrono-de-workers) e o [exemplo documentado com `Bun.serve`](examples/README.md).
 
 ## CLI: criar e consultar sua própria base
 
@@ -133,6 +135,7 @@ Veja a [metodologia, os comandos de reprodução e os tempos de geração dos ba
 | Referência                                                                                           | Conteúdo                                                               |
 | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | [API](https://github.com/Konstit-Engenharia/konstit-dne/blob/main/docs/api.md)                       | Leitores, bairros, faixas de CEP, tipos e exceções.                    |
+| [Exemplos executáveis](examples/README.md)                                                     | Todas as APIs públicas: leitores, busca, pool, helpers, tipos e erros. |
 | [CLI](https://github.com/Konstit-Engenharia/konstit-dne/blob/main/docs/cli.md)                       | Comandos, fontes, atualização automática, JSON e concorrência.         |
 | [SQLite e Drizzle](https://github.com/Konstit-Engenharia/konstit-dne/blob/main/docs/sqlite.md)       | Tabelas, views, indicadores de localidade e migração de bases.         |
 | [Formato binário](https://github.com/Konstit-Engenharia/konstit-dne/blob/main/docs/binary-layout.md) | Especificação para implementar leitores em outras linguagens.          |

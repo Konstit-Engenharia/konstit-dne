@@ -28,4 +28,5 @@
     // Conflicts with Biome's useLiteralKeys.
     "noPropertyAccessFromIndexSignature": true,
   },
+  "exclude": ["dist", "outputs", "node_modules"],
 }

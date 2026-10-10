@@ -12,6 +12,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmSync,
   symlinkSync,
@@ -56,10 +57,17 @@ beforeAll(() => {
 afterAll(() => rmSync(workDir, { recursive: true, force: true }));
 
 describe('published package', () => {
+  test('keeps the generated worker in sync with its source and dependencies', () => {
+    expect(run('bun', ['scripts/build-address-search-worker.ts', '--check'], root)).toBe('');
+  });
+
   test('packs the database, JavaScript, and declarations without source files or SQLite data', () => {
     expect(packedFiles).toContain('data/dne.bin');
     expect(packedFiles).toContain('dist/library.js');
     expect(packedFiles).toContain('dist/library.d.ts');
+    expect(packedFiles).toContain('dist/address-search-worker-source.js');
+    expect(packedFiles).not.toContain('dist/address-search-worker.js');
+    expect(packedFiles).toContain('dist/address-search-pool.d.ts');
     expect(packedFiles).toContain('dist/binary-db-reader.d.ts');
     expect(packedFiles).toContain('dist/sqlite-db-reader.d.ts');
     expect(packedFiles).toContain('dist/sqlite-db-errors.d.ts');
@@ -108,17 +116,58 @@ describe('published package', () => {
     expect(output.trim()).toBe('library-ok');
   });
 
+  test('runs the installed worker pool with the bundled database and an externalized application bundle', () => {
+    const app = join(consumer, 'pool-app.ts');
+    writeFileSync(
+      app,
+      `
+      import { buildAddressSearchIndex, DneAddressSearch, DneAddressSearchPool, DneBinaryDatabaseReader } from '@konstit/dne';
+      import { strict as assert } from 'node:assert';
+      const database = new DneBinaryDatabaseReader();
+      const bytes = buildAddressSearchIndex(database);
+      await Bun.write('./pool.search.bin', bytes);
+      const sync = new DneAddressSearch(database, bytes);
+      const pool = await DneAddressSearchPool.open({ indexPath: './pool.search.bin', workers: 2 });
+      try {
+        assert.deepEqual(await pool.searchAddresses('principal'), sync.searchAddresses('principal'));
+        assert.deepEqual(await pool.searchAddresses('21000000'), sync.searchAddresses('21000000'));
+      } finally {
+        await pool.close();
+        sync.close();
+        database.close();
+      }
+      console.log('pool-ok');
+    `,
+    );
+    expect(run('bun', [app], otherCwd).trim()).toBe('pool-ok');
+    const output = join(consumer, 'pool-app.js');
+    run('bun', ['build', app, '--target=bun', '--external', '@konstit/dne', '--outfile', output], consumer);
+    expect(run('bun', [output], otherCwd).trim()).toBe('pool-ok');
+  });
+
   test.each(['bundle', 'split', 'compile'])('deploys the %s output without the installed package', (mode) => {
     const app = join(consumer, `app-${mode}.ts`);
+    cpSync(join(installed, 'data/dne.bin'), join(consumer, `custom-${mode}.bin`));
+    run('bun', ['--eval', `
+      import { buildAddressSearchIndex, DneBinaryDatabaseReader } from '@konstit/dne';
+      const database = new DneBinaryDatabaseReader();
+      await Bun.write('./app-${mode}.search.bin', buildAddressSearchIndex(database));
+      database.close();
+    `], consumer);
     writeFileSync(
       app,
       `
       ${
         mode === 'split'
-          ? 'const { DneBinaryDatabaseReader, DneBinaryDatabaseClosedError } = await import(\'@konstit/dne\');'
-          : 'import { DneBinaryDatabaseReader, DneBinaryDatabaseClosedError } from \'@konstit/dne\';'
+          ? 'const { DneBinaryDatabaseReader, DneBinaryDatabaseClosedError, DneAddressSearch, DneAddressSearchPool, DneAddressSearchPoolClosedError, DneAddressSearchWorkerError } = await import(\'@konstit/dne\');'
+          : 'import { DneBinaryDatabaseReader, DneBinaryDatabaseClosedError, DneAddressSearch, DneAddressSearchPool, DneAddressSearchPoolClosedError, DneAddressSearchWorkerError } from \'@konstit/dne\';'
       }
       import { strict as assert } from 'node:assert';
+      import { fileURLToPath } from 'node:url';
+      import databaseAsset from './custom-${mode}.bin' with { type: 'file' };
+      import indexAsset from './app-${mode}.search.bin' with { type: 'file' };
+      const databasePath = fileURLToPath(new URL(databaseAsset, import.meta.url));
+      const indexPath = fileURLToPath(new URL(indexAsset, import.meta.url));
       const reader = new DneBinaryDatabaseReader();
       assert.equal(reader.rowCount(), 20);
       assert.equal(reader.queryCep('21000000').bairro, 'Centro');
@@ -128,6 +177,26 @@ describe('published package', () => {
       assert.equal(reader.queryNeighborhoodCepRanges(11).length, 2);
       assert.equal(reader.queryCep('invalid'), undefined);
       assert.equal(typeof reader.metadata().loaded_at, 'string');
+      const sync = new DneAddressSearch(reader, indexPath);
+      const cases = [
+        ['principal', {}], ['21000000', {}], ['principal', { uf: 'SP' }],
+        ['principal', { municipioCodIbge: 3500001, limit: 3 }], ['absent', {}],
+      ];
+      for (const customPath of [undefined, databasePath]) {
+        const pool = await DneAddressSearchPool.open({ databasePath: customPath, indexPath, workers: 3 });
+        try {
+          const queries = Array.from({ length: 32 }, (_, index) => cases[index % cases.length]);
+          const results = Promise.all(queries.map(([text, options]) => pool.searchAddresses(text, options)));
+          await pool.close();
+          assert.deepEqual(await results, queries.map(([text, options]) => sync.searchAddresses(text, options)));
+          await pool.close();
+          await assert.rejects(pool.searchAddresses('principal'), DneAddressSearchPoolClosedError);
+        } finally {
+          await pool.close();
+        }
+      }
+      await assert.rejects(DneAddressSearchPool.open({ databasePath, indexPath: './missing.search.bin', workers: 2 }), DneAddressSearchWorkerError);
+      sync.close();
       reader.close();
       assert.throws(() => reader.queryCep('21000000'), DneBinaryDatabaseClosedError);
       console.log('deployment-ok');
@@ -143,6 +212,9 @@ describe('published package', () => {
       ...(mode === 'compile' ? ['--compile', '--outfile', executable] : ['--outdir', output]),
       ...(mode === 'split' ? ['--splitting', '--chunk-naming', 'chunks/[name]-[hash].[ext]'] : []),
     ], consumer);
+    if (mode === 'compile') {
+      expect(readdirSync(output)).toEqual(['app']);
+    }
     const deployment = join(workDir, `deployment with spaces-${mode}`);
     cpSync(output, deployment, { recursive: true });
     const hiddenPackage = `${installed}-hidden`;
@@ -166,10 +238,14 @@ describe('published package', () => {
       const output = run('bun', [
         '--eval',
         `
-        import { DneBinaryDatabaseReader, DneBinaryDatabaseIOError } from '@konstit/dne';
+        import { DneBinaryDatabaseReader, DneBinaryDatabaseIOError, buildAddressSearchIndex, DneAddressSearchPool, DneAddressSearchWorkerError } from '@konstit/dne';
         import { strict as assert } from 'node:assert';
         const reader = new DneBinaryDatabaseReader('./custom.bin');
         assert.equal(reader.rowCount(), 20);
+        await Bun.write('./custom.search.bin', buildAddressSearchIndex(reader));
+        const pool = await DneAddressSearchPool.open({ databasePath: './custom.bin', indexPath: './custom.search.bin', workers: 2 });
+        assert.equal((await pool.searchAddresses('21000000'))[0].cep, '21000000');
+        await pool.close();
         reader.close();
         assert.throws(() => new DneBinaryDatabaseReader(), (error) => {
           assert.ok(error instanceof DneBinaryDatabaseIOError);
@@ -178,6 +254,7 @@ describe('published package', () => {
           assert.ok(error.cause instanceof Error);
           return true;
         });
+        await assert.rejects(DneAddressSearchPool.open({ indexPath: './custom.search.bin' }), DneAddressSearchWorkerError);
         console.log('custom-database-ok');
       `,
       ], otherCwd);
@@ -239,6 +316,7 @@ describe('published package', () => {
       `
       import {
         DneBinaryDatabaseReader, DneBinaryDatabaseError, DneBinaryDatabaseClosedError,
+        DneAddressSearch, DneAddressSearchPool,
         DneBinaryDatabaseIOError, DneBinaryDatabaseFormatError, DneBinaryDatabaseVersionError,
         DneDatabaseReader, DneDatabaseError, DneDatabaseClosedError, DneDatabaseIOError,
         DneDatabaseSchemaError, DneDatabaseDataError, DneDatabaseQueryError, type DneDatabaseErrorCode,
@@ -246,6 +324,13 @@ describe('published package', () => {
         type LocalidadeTipo, type LocalidadeSituacao, type DneBinaryDatabaseErrorCode,
       } from '@konstit/dne';
       const reader = new DneBinaryDatabaseReader();
+      new DneAddressSearch(reader, './dne.search.bin');
+      new DneAddressSearch(reader, new Uint8Array(0));
+      DneAddressSearchPool.open({ indexPath: './dne.search.bin', workers: 2, maxQueue: 64 });
+      // @ts-expect-error Shared snapshots are internal to the pool, not a new public constructor input.
+      new DneBinaryDatabaseReader(new SharedArrayBuffer(0));
+      // @ts-expect-error Public search inputs still require a path or defensively copied bytes.
+      new DneAddressSearch(reader, new SharedArrayBuffer(0));
       const row: DneRow | undefined = reader.queryCep('21000000');
       const bairro: DneBairro | undefined = reader.queryNeighborhoodByCep('21000000');
       const neighborhood: DneBairro | undefined = reader.queryNeighborhood(11);
@@ -322,7 +407,7 @@ describe('published package', () => {
 });
 
 function run(command: string, args: string[], cwd: string, env = process.env): string {
-  const result = spawnSync(command, args, { cwd, env, encoding: 'utf8' });
+  const result = spawnSync(command, args, { cwd, env, encoding: 'utf8', timeout: 30_000 });
   if (result.status !== 0) {
     throw new Error(`${command} failed: ${result.stderr}\n${result.stdout}`);
   }

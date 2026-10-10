@@ -1,6 +1,6 @@
 # Autocomplete de endereços
 
-O autocomplete experimental usa um índice invertido opcional associado à base binária. Pesquisa palavras de `logradouro`, `bairro`, `municipio` e `nome`, mantendo um resultado por CEP e preservando os campos originais, inclusive `complemento`.
+O autocomplete usa um índice invertido opcional associado à base binária. Pesquisa palavras de `logradouro`, `bairro`, `municipio` e `nome`, mantendo um resultado por CEP e preservando os campos originais, inclusive `complemento`.
 
 ## Gerar e consultar
 
@@ -54,7 +54,125 @@ A API `buildAddressSearchIndex(database)` retorna os bytes para salvar com `Bun.
 
 O construtor aceita um caminho ou `Uint8Array`. Um caminho é lido diretamente para um buffer próprio, evitando a cópia adicional; bytes fornecidos pelo chamador continuam sendo copiados para preservar o isolamento. As duas formas validam estrutura, integridade e vínculo com a base. Mudanças posteriores no arquivo não alteram o leitor aberto. `search.close()` libera o índice e os buffers de consulta, mantendo o leitor do chamador aberto. Consultas após fechar qualquer um dos dois falham, inclusive consultas vazias. SHA-256 detecta corrupção, mas não autentica o produtor dos arquivos.
 
-## Formato do índice experimental
+## Pool assíncrono de workers
+
+`DneAddressSearchPool` executa o mesmo buscador síncrono em threads persistentes usando a API nativa `Worker` do Bun, mantendo o event loop da aplicação disponível. A API síncrona `DneAddressSearch` não mudou. O primeiro worker carrega a base e o índice uma única vez em dois `SharedArrayBuffer`; todos os workers consultam esses mesmos bytes, com validação na abertura e buffers temporários privados.
+
+```typescript
+import { DneAddressSearchPool } from '@konstit/dne';
+
+const search = await DneAddressSearchPool.open({
+  databasePath: './dne.bin',
+  indexPath: './dne.search.bin',
+  workers: 2,
+  maxQueue: 64,
+});
+
+try {
+  const addresses = await search.searchAddresses('rubens mei', {
+    municipioCodIbge: 3550308,
+    limit: 10,
+    signal: AbortSignal.timeout(1_000),
+  });
+  console.log(addresses);
+} finally {
+  await search.close();
+}
+```
+
+Em um servidor, crie o pool na inicialização, reutilize-o em todas as requisições e feche-o no encerramento. O [`examples/address-search-server.ts`](../examples/address-search-server.ts) contém um endpoint completo com `Bun.serve`; o [guia do exemplo](../examples/README.md) documenta execução, configuração e respostas HTTP.
+
+### Configuração e métodos
+
+`DneAddressSearchPool.open(options): Promise<DneAddressSearchPool>` aceita `AddressSearchPoolOptions`:
+
+| Opção | Padrão | Regra |
+| --- | --- | --- |
+| `databasePath` | Base incluída no pacote | Caminho opcional e não vazio. |
+| `indexPath` | Obrigatório | Caminho não vazio do índice já gerado para essa base. |
+| `workers` | `1` | Inteiro positivo e seguro. |
+| `maxQueue` | `64` | Inteiro seguro maior ou igual a zero. Conta apenas consultas aguardando; `0` admite somente consultas que possam iniciar imediatamente. |
+
+Caminhos relativos são resolvidos a partir do diretório atual em `open()`. O índice não acompanha automaticamente o pacote. `open()` só resolve quando todos os workers estão prontos. O primeiro worker publica o snapshot depois de validar o par; os demais recebem os buffers e também validam suas views, sem reler os arquivos. Se houver erro de criação ou carregamento, aguarda o evento de fechamento dos workers criados antes de rejeitar. Mantenha os arquivos imutáveis durante a leitura inicial. Para atualizar os dados, abra outro pool com o novo par de arquivos e drene o anterior.
+
+`searchAddresses(text, options): Promise<DneRow[]>` aceita `AddressSearchAsyncOptions`: os mesmos filtros e limite de `AddressSearchOptions`, mais `signal?: AbortSignal`. Os resultados, campos e ranking são os mesmos do buscador síncrono. Opções são copiadas ao admitir a consulta. Todas as falhas são rejeições da promessa, inclusive pool fechado e fila cheia. Erros de consulta, como `RangeError` para limite inválido, não inutilizam o worker.
+
+Consultas aguardam em ordem de chegada e são distribuídas conforme os workers ficam disponíveis. Com vários workers, a ordem de conclusão pode ser diferente da ordem de envio. O limite de trabalho admitido é `workers + maxQueue`.
+
+`close(): Promise<void>` interrompe imediatamente a admissão, conclui as consultas já aceitas e aguarda a saída de todos os workers. Chamadas repetidas retornam a mesma promessa. Um pool aberto mantém o processo vivo; sempre feche-o ao encerrar a aplicação.
+
+### Cancelamento e falhas
+
+- Um sinal já abortado rejeita imediatamente com `signal.reason`, sem ocupar a fila.
+- Cancelar uma consulta pendente remove-a da fila e libera a vaga.
+- Cancelar uma consulta em execução rejeita a promessa, mas o cálculo síncrono continua no worker. O resultado é descartado, e a vaga só é liberada quando o cálculo termina. `close()` também aguarda esses cálculos.
+- O sinal é tratado na thread chamadora e não é enviado ao worker. Um prazo com `AbortSignal.timeout()` inclui o tempo na fila; não constitui um limite rígido de CPU.
+- Falha inesperada de qualquer worker rejeita as consultas pendentes e em execução e encerra todo o pool. Não há reinício nem repetição automática. A aplicação pode abrir um novo pool após tratar a causa.
+
+Os erros públicos permitem tratamento com `instanceof` ou `code`:
+
+| Classe | `code` | Significado |
+| --- | --- | --- |
+| `DneAddressSearchQueueFullError` | `SEARCH_QUEUE_FULL` | Todos os workers estão ocupados e a fila atingiu o limite. |
+| `DneAddressSearchPoolClosedError` | `SEARCH_POOL_CLOSED` | A aplicação chamou `close()` e tentou enviar outra consulta. |
+| `DneAddressSearchWorkerError` | `SEARCH_WORKER_FAILED` | Inicialização, comunicação ou execução do worker falhou; `cause` contém o diagnóstico. Consultas posteriores também rejeitam com esse erro. |
+
+Contagens inválidas em `open()` geram `RangeError`; caminhos vazios geram `TypeError`. Falhas de leitura e validação nos workers são encapsuladas em `DneAddressSearchWorkerError`, sem garantia de preservar o protótipo dos erros do leitor em `cause`.
+
+### Memória e distribuição
+
+Os bytes da base e do índice são compartilhados dentro de cada pool. Vocabulário decodificado, mapas, caches, buffers de candidatos e pontuação e o heap JavaScript continuam privados de cada worker. Aumentar `workers` ainda tem custo adicional de memória e comunicação; não garante uma consulta individual mais rápida.
+
+Os buffers compartilhados são internos e não são expostos pela API pública. O pool termina todas as escritas antes de publicá-los e nunca os altera depois; `SharedArrayBuffer` não oferece proteção de somente leitura. As consultas não precisam de locks nem de operações atômicas. Fechar um leitor libera apenas suas referências e caches, sem invalidar os outros workers. Na API síncrona, fornecer um `Uint8Array` continua criando uma cópia defensiva. Cada pool possui seu próprio snapshot; pools e processos diferentes não compartilham esses buffers automaticamente.
+
+O [guia de medição HTTP do autocomplete](address-search-http.md) explica como medir latência, vazão, RSS e resposta de outra rota usando a API síncrona e pools de workers sob requisições concorrentes.
+
+### Bundles e executáveis do Bun
+
+O pool cria workers a partir de Blob URLs. O JavaScript do worker e suas dependências são compilados previamente e incorporados à biblioteca como uma string; a aplicação não precisa distribuir um arquivo separado do worker nem compilá-lo em tempo de execução. As URLs são revogadas quando os workers fecham ou quando sua criação falha. A API de `open()`, busca e fechamento permanece igual.
+
+O pacote instalado, bundles ESM simples, bundles com `--splitting` e executáveis `--compile` são suportados. Não é necessário usar `--external @konstit/dne` nem fornecer o worker como um segundo entrypoint. Um bundle JavaScript ainda precisa do Bun para executar. Os arquivos de dados seguem as regras abaixo:
+
+- Caminhos fornecidos como strings em `databasePath` e `indexPath` apontam para arquivos externos. Use caminhos absolutos ou distribua esses arquivos em relação ao diretório de execução.
+- A base padrão do pacote é resolvida no processo principal, antes de iniciar o primeiro worker. O bundler do Bun inclui esse asset no build.
+- Para incorporar o índice, importe-o com `with { type: 'file' }` e resolva seu caminho a partir de `import.meta.url`. O índice precisa corresponder à base.
+- Em bundles JavaScript, distribua todo o diretório de saída, incluindo os arquivos `.bin` e eventuais chunks. Em um executável, os assets importados ficam embutidos no próprio arquivo.
+
+Exemplo de `app.ts` usando a base padrão e um índice já gerado para ela:
+
+```typescript
+import { fileURLToPath } from 'node:url';
+import { DneAddressSearchPool } from '@konstit/dne';
+import indexAsset from './data/dne.search.bin' with { type: 'file' };
+
+const pool = await DneAddressSearchPool.open({
+  indexPath: fileURLToPath(new URL(indexAsset, import.meta.url)),
+  workers: 2,
+});
+try {
+  console.log(await pool.searchAddresses('rubens mei', { uf: 'SP', limit: 10 }));
+} finally {
+  await pool.close();
+}
+```
+
+```sh
+# JavaScript e assets no diretório build/.
+bun build ./app.ts --target=bun --outdir ./build
+bun ./build/app.js
+
+# Um executável contendo runtime, código, base padrão e índice importado.
+bun build ./app.ts --compile --outfile ./address-search
+./address-search
+```
+
+Uma base personalizada também pode ser importada como asset de um arquivo próprio da aplicação e passada por `databasePath`; seu índice deve ser gerado a partir dessa mesma base. Para projetos TypeScript, declare `module '*.bin'` com um export default do tipo `string`, se necessário.
+
+Arquivos externos são lidos diretamente nas alocações compartilhadas. Para assets embutidos que não oferecem um descritor de arquivo nativo no Bun, a carga inicial usa `readFileSync` e uma cópia para `SharedArrayBuffer`. Isso pode aumentar a memória transitória na inicialização; os demais workers continuam recebendo os mesmos buffers, sem uma cópia da base e do índice por worker.
+
+No desenvolvimento da biblioteca, `bun run build:worker` regenera `src/address-search-worker-source.ts` a partir do worker e de suas dependências. Esse arquivo gerado é versionado para permitir o uso direto dos fontes. `bun run build` o atualiza automaticamente; os testes verificam que ele está sincronizado. Após alterar código usado pelo worker, regenere-o antes de rodar os testes. A aplicação consumidora não precisa dessa etapa.
+
+## Formato do índice
 
 Inteiros são little-endian. Na versão 2, cada registro aponta para quatro sequências de palavras, na ordem `logradouro`, `nome`, `bairro`, `municipio`. Sequências iguais compartilham um ID, inclusive entre campos. A posição de cada palavra é a sua posição na sequência. O formato é independente da versão do banco principal:
 
@@ -74,86 +192,4 @@ Inteiros são little-endian. Na versão 2, cada registro aponta para quatro sequ
 
 O leitor valida offsets, referências, posições, CEPs, municípios e todos os postings ao abrir. As consultas localizam os termos por busca binária e percorrem os postings diretamente, unindo prefixos e intersectando palavras em dois bitmaps reutilizáveis. UF e município são verificados nas colunas numéricas antes do ranking, sem expandir listas geográficas. O ranking lê IDs e posições diretamente, com pontuações em um `Uint16Array` reutilizável; apenas os resultados finais são decodificados na base principal. CEPs no texto também são resolvidos pelo índice. O limite não limita a quantidade de candidatos avaliados.
 
-Os buffers de trabalho são alocados na primeira consulta textual com termos conhecidos e reutilizados até `close()`: `8 × ceil(registros / 32) + 2 × sequências` bytes. Na base medida, são **2,17 MB por instância**, sem listas de candidatos ou objetos por campo. As consultas são síncronas e reinicializam esses buffers a cada chamada.
-
-## Resultado do primeiro experimento em 07/10/2026 — versão 1
-
-Base local com **1.611.629 CEPs**, Apple M4 e Bun 1.4.2. O benchmark executou três aquecimentos e vinte medições por consulta em um processo, com limite de dez resultados. Os percentis abaixo descrevem essa pequena amostra local e excluem abertura e geração. Os [resultados completos](address-search-benchmark.json) incluem o checksum da base e exemplos dos resultados.
-
-| Consulta | Filtro | p50 | p95 |
-| --- | --- | ---: | ---: |
-| `rubens mei` | Nenhum | 0,32 ms | 0,45 ms |
-| `rubens mei` | UF SP | 2,86 ms | 3,12 ms |
-| `rubens mei` | Município 3550308 | 0,45 ms | 0,50 ms |
-| `rubens mei 01141-000` | UF SP + município inferido | 2,31 ms | 2,64 ms |
-| `paulista` | UF SP | 116,36 ms | 124,29 ms |
-| `paulista` | Município 3550308 | 17,55 ms | 18,02 ms |
-| `joao` | Município 3550308 | 26,53 ms | 28,25 ms |
-| `sao` | Município 3550308 | 657,39 ms | 740,47 ms |
-| `sao` | Nenhum | 2.687,90 ms | 2.929,66 ms |
-
-O índice ocupa **25,86 MB**, além dos 19,12 MB da base. A geração com cache de normalização de localidades levou 18,23 s em uma execução separada. A abertura do leitor principal levou 14,56 ms, e a leitura, cópia e validação do índice levaram 68,24 ms.
-
-O RSS total do processo passou de 57,61 MB com apenas a base aberta para 141,21 MB após abrir o índice e solicitar GC; ao fim das consultas, sem novo GC, estava em 637,86 MB. RSS inclui o runtime, buffers e memória retida pelo alocador, e não corresponde ao tamanho lógico do índice nem a uma medição isolada de pico.
-
-No primeiro experimento, consultas específicas funcionaram bem, mas buscas genéricas eram lentas. O ranking da versão 1 decodificava os candidatos antes de escolher os dez resultados. Isso motivou a classificação numérica e os filtros geográficos diretos da versão 2, medidos abaixo. Nenhuma das versões foi comparada com FTS5.
-
-Validação: 944 testes passaram, com 100% de cobertura agregada de linhas e funções, incluindo normalização, filtros cumulativos, CEPs desconhecidos e conflitantes, ordenação, integridade do índice e reprodução pelo comando de geração. TypeScript, Biome, Oxlint, build e auditoria de dependências passaram. O exemplo de CEP no texto também foi verificado com a biblioteca compilada em `dist`.
-
-## Segundo experimento em 07/10/2026 — versão 2
-
-Os dois leitores foram medidos novamente em processos separados, com a mesma base, Apple M4, Bun 1.4.2 e carga de treze consultas. Cada consulta teve três aquecimentos e vinte medições; tempos de abertura foram medidos separadamente. A referência usa o commit `970fd5c`. Consulte os resultados brutos [antes](address-search-benchmark-before-v2.json) e [depois](address-search-benchmark-v2.json). São percentis de uma pequena amostra local, não uma garantia de latência em produção.
-
-| Consulta | Filtro | p95 v1 | p95 v2 | Redução de tempo |
-| --- | --- | ---: | ---: | ---: |
-| `rubens mei` | UF SP | 3,20 ms | 0,16 ms | 20,0× |
-| `rubens mei 01141-000` | UF SP + município inferido | 2,58 ms | 0,17 ms | 15,0× |
-| `paulista` | UF SP | 123,03 ms | 4,52 ms | 27,2× |
-| `paulista` | Município 3550308 | 17,29 ms | 1,29 ms | 13,4× |
-| `joao` | UF SP | 252,89 ms | 7,04 ms | 35,9× |
-| `sao` | Município 3550308 | 733,33 ms | 18,01 ms | 40,7× |
-| `sao` | Nenhum | 2.927,50 ms | 46,20 ms | 63,4× |
-
-O ganho tem custo de armazenamento: o índice aumentou de **25,86 MB para 58,73 MB (2,27×)**. A geração levou 19,21 s. A abertura passou de 82,49 ms para 108,08 ms. RSS após abertura e GC passou de 142,11 MB para 216,61 MB; ao fim das consultas, sem novo GC, de 617,38 MB para 702,22 MB. A redução de trabalho por consulta não resultou em redução global de memória nesta medição. RSS inclui runtime e memória retida pelo alocador; não representa pico nem somente dados vivos. Materialização de listas textuais e caches temporários de ranking continuam sendo oportunidades para reduzir alocações.
-
-Uma comparação adicional verificou **173 consultas e 966 endereços retornados**, preservando todos os campos e a ordem em relação à versão 1. Inclui a carga fixa e consultas derivadas de quarenta endereços espaçados pela base, com prefixos, palavras em ordem inversa, filtros por UF/IBGE, limites de 3/10/50 e CEP no texto. O [registro de equivalência](address-search-equivalence-v2.json) inclui o checksum da base. Para reproduzir com uma cópia da biblioteca anterior e seu índice:
-
-```sh
-bun run bench/address-search-verify.bench.ts data/dne.bin /copia-v1/src/library.ts data/dne.search.v1.bin data/dne.search.bin
-```
-
-A suíte completa passou com **947 testes e 100% de cobertura de linhas e funções**. Os novos testes comparam pontuações numéricas ao ranking textual original, validam referências geográficas e posições corrompidas e contam chamadas a `queryCep()` para garantir exatamente uma decodificação por resultado retornado. TypeScript, lint, build e auditoria passaram.
-
-## Terceiro experimento em 07/10/2026 — memória e CLI
-
-A comparação usa o commit `a01e7f6` como referência, o mesmo índice v2 de **58,73 MB**, a mesma base, Apple M4 e Bun 1.4.2. O formato do arquivo não mudou; um índice v2 existente continua válido. Além dos bitmaps e do cache numérico reutilizável, a seleção dos melhores resultados deixou de criar uma função temporária por candidato. A API agora pode ler o arquivo diretamente, evitando a cópia defensiva necessária quando recebe bytes do chamador.
-
-| RSS do processo | Referência v2, bytes | Atual, caminho | Atual, bytes |
-| --- | ---: | ---: | ---: |
-| Após abrir e solicitar GC | 218,61 MB | 149,08 MB | 209,73 MB |
-| Ao terminar as consultas, antes de novo GC | 687,59 MB | 166,41 MB | 231,65 MB |
-| Após solicitar GC novamente | 687,65 MB | 166,45 MB | 232,54 MB |
-
-Com abertura por caminho, o RSS ao final caiu **75,8%** nesta carga; mantendo a entrada por bytes, caiu **66,3%**. RSS mede o processo inteiro, incluindo runtime, buffers e memória retida pelo alocador. O benchmark também registra o maior RSS observado após cada consulta, sem afirmar que esse valor seja o pico do processo. A geração do índice não foi otimizada para memória neste experimento.
-
-| Consulta | Filtro | p95 referência | p95 atual, caminho |
-| --- | --- | ---: | ---: |
-| `rubens mei` | UF SP | 0,28 ms | 0,65 ms |
-| `paulista` | UF SP | 4,58 ms | 2,51 ms |
-| `joao` | UF SP | 7,26 ms | 5,26 ms |
-| `sao` | Município 3550308 | 18,20 ms | 8,83 ms |
-| `sao` | Nenhum | 44,77 ms | 17,70 ms |
-
-Consultas pequenas passaram a ter o custo fixo de limpar e percorrer bitmaps e o cache; algumas ficaram mais lentas, embora abaixo de 1 ms nos casos medidos. Consultas amplas reduziram tempo e alocações. Os tempos mantêm três aquecimentos e vinte amostras por consulta em processos separados, com abertura excluída. Consulte os relatórios [de referência](address-search-memory-before.json), [com abertura por caminho](address-search-memory-after.json) e [com entrada por bytes](address-search-memory-after-bytes.json).
-
-Para reproduzir com uma cópia do código anterior:
-
-```sh
-bun run bench/address-search.bench.ts data/dne.bin data/dne.search.bin /copia-a01e7f6/src/library.ts bytes
-bun run bench/address-search.bench.ts data/dne.bin data/dne.search.bin
-bun run bench/address-search.bench.ts data/dne.bin data/dne.search.bin src/library.ts bytes
-```
-
-O [teste de equivalência](address-search-memory-equivalence.json) confirmou novamente os mesmos campos e a mesma ordem em **173 consultas e 966 resultados**. A suíte passou com **951 testes e 100% de cobertura agregada de linhas e funções**, além de TypeScript, lint, build e auditoria. Os novos testes cobrem reutilização de buffers, limites entre palavras do bitmap, abertura por caminho, saída padrão e personalizada da CLI, JSON, substituição de índice, proteção da base e limpeza de temporários após falha.
-
-O comando `build-search-index --db data/dne.bin --output data/dne.search.cli.bin --quiet --json` gerou o índice completo em **20,22 s**, com bytes idênticos ao gerador existente. Ele grava um temporário no diretório de saída e só então substitui o destino por renomeação.
+Os buffers de trabalho são alocados na primeira consulta textual com termos conhecidos e reutilizados até `close()`: `8 × ceil(registros / 32) + 2 × sequências` bytes, sem listas de candidatos ou objetos por campo. As consultas são síncronas e reinicializam esses buffers a cada chamada.

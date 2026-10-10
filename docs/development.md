@@ -38,13 +38,15 @@ bun run benchmark
 bun run benchmark:download
 ```
 
-Outros scripts de benchmark específicos estão listados em [`package.json`](../package.json). Consulte [desempenho e reprodução dos benchmarks](performance.md) para comparar os leitores e interpretar as métricas de memória.
+Consulte [desempenho e reprodução dos benchmarks](performance.md) para comparar os leitores e interpretar as métricas de memória.
 
 ## Distribuição do pacote
 
-`bun run build` gera a CLI em `dist/index.js` e a biblioteca com declarações TypeScript em `dist/library.js` e `dist/library.d.ts`. `npm pack` e `bun pm pack` executam `prepack`: compilam essas entradas e geram `data/dne.bin` a partir da fonte pública dos Correios. A base completa acompanha o tarball; não há script de instalação para baixá-la. Os testes de publicação verificam a CLI e a leitura da base no pacote instalado.
+`bun run build` gera a CLI em `dist/index.js` e a biblioteca com declarações TypeScript em `dist/library.js` e `dist/library.d.ts`. Antes dessas etapas, `build:worker` empacota o worker e suas dependências em uma string JavaScript em `src/address-search-worker-source.ts`. Esse módulo gerado é versionado para permitir executar o pool diretamente do código-fonte; o pool usa a string para criar uma Blob URL por worker e a revoga no encerramento. Após alterar o worker ou suas dependências, execute `bun run build:worker` antes dos testes. O teste de distribuição executa `bun run scripts/build-address-search-worker.ts --check` para detectar uma versão desatualizada.
 
-O módulo `src/bundled-database.ts` declara a base como asset com `with { type: 'file' }`. O leitor carrega esse módulo somente quando nenhum caminho é informado, permitindo importar a biblioteca e gerar bases próprias antes de existir uma base do pacote. A compilação da CLI mantém esse asset externo porque seus comandos sempre recebem um caminho de banco; a biblioteca emitida por TypeScript preserva a dependência para o build da aplicação consumidora. Os testes de publicação também executam bundles, chunks e executáveis compilados após mover somente a saída e ocultar o pacote instalado.
+`npm pack` e `bun pm pack` executam `prepack`: compilam essas entradas e geram `data/dne.bin` a partir da fonte pública dos Correios. A base completa acompanha o tarball; não há script de instalação para baixá-la. Os testes de publicação verificam a CLI e a leitura da base no pacote instalado.
+
+O módulo `src/bundled-database.ts` declara a base como asset com `with { type: 'file' }`. O leitor ou o processo principal do pool carrega esse módulo somente quando nenhum caminho é informado, permitindo importar a biblioteca e gerar bases próprias antes de existir uma base do pacote. O worker recebe o caminho absoluto já resolvido e não depende de assets relativos à Blob URL. A compilação da CLI mantém esse asset externo porque seus comandos sempre recebem um caminho de banco; a biblioteca emitida por TypeScript preserva a dependência para o build da aplicação consumidora. Os testes de publicação executam buscas síncronas e pelo pool em bundles simples, bundles com chunks e executáveis compilados após mover somente a saída e ocultar o pacote instalado. Veja [como empacotar os dados com a aplicação](address-search.md#bundles-e-executáveis-do-bun).
 
 Para empacotar a partir de um diretório ou ZIP local, informe `DNE_PACKAGE_SOURCE`:
 
@@ -52,4 +54,4 @@ Para empacotar a partir de um diretório ou ZIP local, informe `DNE_PACKAGE_SOUR
 DNE_PACKAGE_SOURCE=/dados/eDNE_Basico.zip npm pack
 ```
 
-`bun run build:package-database` prepara somente a base incluída. Os arquivos gerados permanecem fora do Git.
+`bun run build:package-database` prepara somente a base incluída. Os arquivos de `dist` e `data` permanecem fora do Git.

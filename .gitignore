@@ -25,3 +25,5 @@ dne.db-shm
 .env.test
 
 .DS_Store
+
+docs/*.json

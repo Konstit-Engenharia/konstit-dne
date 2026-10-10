@@ -42,6 +42,7 @@ import {
 import { verifyBinaryDatabaseChecksum } from './binary-db-integrity.ts';
 import { cepToU32 } from './cep.ts';
 import { readTrustedFsstString } from './fsst.ts';
+import { readSharedFile } from './shared-file.ts';
 import {
   findLocalityRun,
   readLocalityRunsLayout,
@@ -156,7 +157,7 @@ export class DneBinaryDatabaseReader {
   private localityRuns: LocalityRuns;
   private logradouroIdBits: number;
   private header: BinaryHeader;
-  private bytes: Uint8Array<ArrayBuffer> | null;
+  private bytes: Uint8Array | null;
   private readonly metadataValue: Readonly<LoadMetadata>;
   private municipalityCache: (DecodedMunicipality | undefined)[];
 
@@ -167,18 +168,11 @@ export class DneBinaryDatabaseReader {
    * @throws {DneBinaryDatabaseVersionError} If the declared format version is unsupported.
    * @throws {DneBinaryDatabaseFormatError} If the minimum header, file size, or SHA-256 checksum is invalid.
    */
-  constructor(databasePath?: string) {
-    let bytes: Uint8Array<ArrayBuffer>;
-    try {
-      // Load the asset module only for the default database; Bun follows this literal dependency.
-      databasePath ??= (require('./bundled-database') as { default: string; }).default;
-      bytes = readFileSync(databasePath);
-    } catch (cause) {
-      throw new DneBinaryDatabaseIOError(
-        databasePath ?? fileURLToPath(new URL('../data/dne.bin', import.meta.url)),
-        { cause },
-      );
-    }
+  constructor(databasePath?: string);
+  /** @internal The pool owns this initialized snapshot and never writes to it after publication. */
+  constructor(snapshot: SharedArrayBuffer);
+  constructor(source?: string | SharedArrayBuffer) {
+    const bytes = source instanceof SharedArrayBuffer ? new Uint8Array(source) : readBinaryDatabaseBytes(source);
     try {
       const data = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
       verifyHeader(data);
@@ -663,6 +657,20 @@ export class DneBinaryDatabaseReader {
 
   private readUint32(offset: number) {
     return (this.data as DataView).getUint32(offset, true);
+  }
+}
+
+/** @internal Reads one owned file buffer, including the package asset when no path is supplied. */
+export function readBinaryDatabaseBytes(databasePath?: string, shared = false): Uint8Array {
+  try {
+    // Load the asset module only for the default database; Bun follows this literal dependency.
+    databasePath ??= (require('./bundled-database') as { default: string; }).default;
+    return shared ? new Uint8Array(readSharedFile(databasePath)) : readFileSync(databasePath);
+  } catch (cause) {
+    throw new DneBinaryDatabaseIOError(
+      databasePath ?? fileURLToPath(new URL('../data/dne.bin', import.meta.url)),
+      { cause },
+    );
   }
 }
 

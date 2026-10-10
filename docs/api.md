@@ -1,6 +1,6 @@
 # API de leitura
 
-Esta página descreve os leitores públicos exportados por `@konstit/dne`. Para o esquema físico do SQLite, consultas SQL, indicadores de localidade e migrações, veja [SQLite](sqlite.md). O ponto de entrada do projeto está no [README](../README.md).
+Esta página descreve os leitores públicos exportados por `@konstit/dne`. Os [exemplos executáveis](../examples/README.md) cobrem todas as APIs públicas do pacote. Para o esquema físico do SQLite, consultas SQL, indicadores de localidade e migrações, veja [SQLite](sqlite.md). O ponto de entrada do projeto está no [README](../README.md).
 
 ## Instalação
 
@@ -144,7 +144,7 @@ type DneFaixaCep = {
 
 As faixas preservam zeros à esquerda e os intervalos originais do e-DNE. Pertencer a uma faixa não garante, por si só, que o CEP esteja cadastrado na tabela de endereços.
 
-## Autocomplete experimental
+## Autocomplete de endereços
 
 `DneAddressSearch` oferece `searchAddresses(text, { uf?, municipioCodIbge?, limit? })`, retornando `DneRow[]`. Seu construtor aceita o leitor binário e o caminho do índice (`new DneAddressSearch(reader, './dne.search.bin')`) ou bytes em `Uint8Array`. Prefira o caminho para evitar uma cópia adicional em memória. Gere o índice com `buildAddressSearchIndex(reader)` ou `dne build-search-index --db ./dne.bin`. A busca permite inferir o município a partir de um CEP no texto. Consulte [autocomplete de endereços](address-search.md) para exemplos, ciclo de vida e regras de combinação dos filtros.
 
@@ -178,7 +178,7 @@ const result = sqliteReader.querySql(
 
 `tableSchema()` retorna a instrução `CREATE TABLE` armazenada no catálogo ou `undefined` quando não há definição. `querySql()` usa a conexão somente leitura, mantém no máximo `limit` linhas na memória e informa em `truncated` se havia outra linha disponível. Ele não aplica o filtro de comandos SQL da CLI; valide e limite o SQL da aplicação conforme necessário.
 
-Também são exportados `readDatabaseMetadata()`, `hasTable()`, `sqlitePathFromDatabaseUrl()`, `isBinaryDatabase()`, `parseUF()` e os helpers de CEP. `sqlitePathFromDatabaseUrl()` aceita caminhos comuns, `:memory:` e URLs `sqlite:///`; outros esquemas são rejeitados.
+Na raiz do pacote também são exportados `readBinaryDatabaseMetadata()`, `isBinaryDatabase()`, `parseUF()` e os helpers de CEP. A inspeção SQLite usa os métodos `metadata()` e `hasTable()` de `DneDatabaseReader`; os helpers internos `readDatabaseMetadata()`, `hasTable()` e `sqlitePathFromDatabaseUrl()` não fazem parte dos exports públicos.
 
 ## Conversões de UF
 

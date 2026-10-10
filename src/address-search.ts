@@ -36,8 +36,13 @@ export class DneAddressSearch {
   private workspace: { candidates: Uint32Array; matches: Uint32Array; scores: Uint16Array; } | null = null;
 
   /** Reads an owned file buffer or copies caller bytes, then validates. The caller owns the database reader. */
-  constructor(private readonly database: DneBinaryDatabaseReader, source: string | Uint8Array) {
-    const bytes = typeof source === 'string' ? readFileSync(source) : new Uint8Array(source);
+  constructor(database: DneBinaryDatabaseReader, source: string | Uint8Array);
+  /** @internal Borrows the pool's immutable snapshot without copying it. */
+  constructor(database: DneBinaryDatabaseReader, snapshot: SharedArrayBuffer);
+  constructor(private readonly database: DneBinaryDatabaseReader, source: string | Uint8Array | SharedArrayBuffer) {
+    const bytes = typeof source === 'string'
+      ? readFileSync(source)
+      : source instanceof SharedArrayBuffer ? new Uint8Array(source) : Uint8Array.from(source);
     this.index = parseAddressSearchIndex(bytes, database.checksum(), database.rowCount());
   }
 

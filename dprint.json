@@ -28,6 +28,7 @@
   "markdown": {},
   "toml": {},
   "excludes": [
+    "src/address-search-worker-source.ts",
     "**/.cache",
     "**/.vscode",
     "**/bin",

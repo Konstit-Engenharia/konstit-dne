@@ -1,5 +1,11 @@
 /** Optional address autocomplete and its database-bound index builder. */
 export { buildAddressSearchIndex } from './address-search-index.ts';
+export {
+  DneAddressSearchPoolClosedError,
+  DneAddressSearchQueueFullError,
+  DneAddressSearchWorkerError,
+} from './address-search-pool-errors.ts';
+export { type AddressSearchAsyncOptions, type AddressSearchPoolOptions, DneAddressSearchPool } from './address-search-pool.ts';
 export { type AddressSearchOptions, DneAddressSearch } from './address-search.ts';
 /** Public binary reader, format constants, file helpers, errors, and neighborhood types. */
 export {

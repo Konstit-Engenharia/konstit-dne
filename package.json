@@ -47,6 +47,7 @@
     "build:package-database": "bun run scripts/build-package-database.ts",
     "build:search-index": "bun run scripts/build-search-index.ts",
     "benchmark:search": "bun run bench/address-search.bench.ts",
+    "benchmark:search-http": "bun run bench/address-search-http.bench.ts",
     "prepack": "bun run build >&2 && bun run build:package-database >&2",
     "get": "bun run src/index.ts get",
     "test": "bun test --dots --parallel",
@@ -66,7 +67,8 @@
     "audit": "bun audit",
     "check": "bun run coverage && bun run --parallel tsc lint:biome lint:oxlint build audit",
     "build": "bun run build:artifacts",
-    "build:artifacts": "bun run build:clean && bun run --parallel build:js build:library",
+    "build:artifacts": "bun run build:worker && bun run build:clean && bun run --parallel build:js build:library",
+    "build:worker": "bun run scripts/build-address-search-worker.ts",
     "build:clean": "rm -rf ./dist",
     "build:js": "bun build ./src/index.ts --outdir ./dist --target=bun --format=esm --sourcemap=external --minify --keep-names --splitting --chunk-naming 'chunks/[name]-[hash].[ext]' --external '*data/dne.bin'",
     "build:library": "bunx --bun tsc -p tsconfig.build.json"

@@ -4,6 +4,7 @@
     "noEmit": false,
     "allowJs": false,
     "declaration": true,
+    "stripInternal": true,
     "sourceMap": true,
     "rewriteRelativeImportExtensions": true,
     "rootDir": "src",
