@@ -45,6 +45,8 @@ const LOCAL_FILE_HEADER = 0x04034b50;
  * Read-only access to decoded DNE files, whether stored in a directory or ZIP archive.
  */
 export type DneDataSource = {
+  /** Identities of the outer ZIP entries used by this source. */
+  zipEntries?: ZipEntryIdentity[];
   /**
    * Lists available source filenames matching a DNE basename pattern.
    * @param glob - Filename or wildcard pattern such as `LOG_LOGRADOURO_*.TXT`.
@@ -67,11 +69,20 @@ export type DneDataSource = {
 
 type ZipEntry = {
   name: string;
+  flags: number;
+  disk: number;
   compression: number;
   crc32: number;
   compressedSize: number;
   uncompressedSize: number;
   localHeaderOffset: number;
+};
+
+/** Content identity recorded in a ZIP central directory. */
+export type ZipEntryIdentity = {
+  name: string;
+  size: number;
+  crc32: string;
 };
 
 /**
@@ -213,17 +224,21 @@ export async function resolveZipDneSource(
 ): Promise<DneDataSource> {
   const entries = await readZipEntriesFromFile(path);
   const nested = findNestedDneZip(entries);
+  let source: DneDataSource;
 
   if (nested) {
     await materializeZipEntry(path, nested, nestedZipPath);
-    return resolveStreamedZipEntries(
+    source = resolveStreamedZipEntries(
       nestedZipPath,
       await readZipEntriesFromFile(nestedZipPath),
       schema,
     );
+  } else {
+    source = resolveStreamedZipEntries(path, entries, schema);
   }
 
-  return resolveStreamedZipEntries(path, entries, schema);
+  source.zipEntries = zipEntryIdentities(entries, schema);
+  return source;
 }
 
 /**
@@ -288,6 +303,18 @@ function findNestedDneZip(entries: ZipEntry[]) {
     const lowered = basename(entry.name).toLowerCase();
     return lowered.startsWith('edne_basico_') && lowered.endsWith('.zip');
   });
+}
+
+/** Selects the nested DNE ZIP or the required data entries in deterministic order. */
+export function zipEntryIdentities(entries: ZipEntry[], schema: TableDefinition[]): ZipEntryIdentity[] {
+  const nested = findNestedDneZip(entries);
+  return (nested ? [nested] : requiredDneEntries(entries, schema))
+    .map((entry) => ({
+      name: entry.name,
+      size: entry.uncompressedSize,
+      crc32: entry.crc32.toString(16).padStart(8, '0'),
+    }))
+    .sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
 }
 
 function isDirectory(path: string): boolean {
@@ -379,9 +406,11 @@ function readBufferedZipEntries(buffer: Buffer): ZipEntry[] {
   return parseCentralDirectory(buffer.subarray(centralDirectoryOffset, centralDirectoryEnd));
 }
 
-function parseCentralDirectory(directory: Buffer): ZipEntry[] {
+/** Parses a classic ZIP central directory, optionally checking its record count. */
+export function parseCentralDirectory(directory: Buffer, expectedEntries?: number): ZipEntry[] {
   const entries: ZipEntry[] = [];
   let offset = 0;
+  let recordCount = 0;
 
   while (offset < directory.length) {
     if (
@@ -414,6 +443,8 @@ function parseCentralDirectory(directory: Buffer): ZipEntry[] {
     if (!name.endsWith('/')) {
       entries.push({
         name,
+        flags: directory.readUInt16LE(offset + 8),
+        disk: directory.readUInt16LE(offset + 34),
         compression,
         crc32,
         compressedSize,
@@ -423,8 +454,12 @@ function parseCentralDirectory(directory: Buffer): ZipEntry[] {
     }
 
     offset += entrySize;
+    recordCount++;
   }
 
+  if (expectedEntries !== undefined && recordCount !== expectedEntries) {
+    throw new Error('Invalid ZIP central directory entry count');
+  }
   return entries;
 }
 

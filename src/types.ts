@@ -90,6 +90,8 @@ export type LoadMetadata = Record<string, string> & {
   source_last_modified?: string;
   /** Remote source URL used for validator comparisons. */
   source_url?: string;
+  /** JSON array of selected ZIP entry filenames, uncompressed sizes, and CRC32 values. */
+  source_zip_entries?: string;
 };
 
 /** Unified address returned by CEP lookups in current SQLite and binary databases. */

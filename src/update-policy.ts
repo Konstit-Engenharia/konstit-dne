@@ -3,10 +3,10 @@ import { DATABASE_SCHEMA_VERSION } from './schema.ts';
 import type { LoadMetadata } from './types.ts';
 
 /**
- * Determines whether a database uses the current schema and matches every available remote validator.
+ * Determines whether a database uses the current schema and matching ZIP entry identities.
  * @param metadata - Metadata from the last successful import.
- * @param remoteInfo - Current URL and HTTP validators for the source.
- * @returns True only for the same remote URL, current schema, and matching ETag or Last-Modified with no validator mismatches.
+ * @param remoteInfo - Current URL and ZIP entry identities for the source.
+ * @returns True only for the same remote URL, current schema, and matching entry names, sizes, and CRC32 values.
  */
 export function remoteMetadataMatches(
   metadata: LoadMetadata,
@@ -16,18 +16,12 @@ export function remoteMetadataMatches(
     metadata.schema_version !== DATABASE_SCHEMA_VERSION
     || metadata.source_kind !== 'remote'
     || metadata.source_url !== remoteInfo.url
-    || (!remoteInfo.etag && !remoteInfo.lastModified)
+    || !remoteInfo.zipEntries?.length
   ) {
     return false;
   }
 
-  const validators = [
-    validatorMatches(metadata.source_etag, remoteInfo.etag),
-    validatorMatches(metadata.source_last_modified, remoteInfo.lastModified),
-    validatorMatches(metadata.source_content_length, remoteInfo.contentLength),
-  ].filter((value) => value !== null);
-
-  return validators.every(Boolean);
+  return metadata.source_zip_entries === JSON.stringify(remoteInfo.zipEntries);
 }
 
 /**
@@ -55,16 +49,12 @@ export function buildLoadMetadata(
     metadata.source_last_modified = remoteInfo.lastModified ?? '';
     metadata.source_etag = remoteInfo.etag ?? '';
     metadata.source_content_length = remoteInfo.contentLength ?? '';
+    if (remoteInfo.zipEntries?.length) {
+      metadata.source_zip_entries = JSON.stringify(remoteInfo.zipEntries);
+    }
   }
 
   return metadata;
-}
-
-function validatorMatches(previous: string | undefined, current: string | null) {
-  if (!current) {
-    return null;
-  }
-  return previous === current;
 }
 
 function looksLikeUrl(value: string) {

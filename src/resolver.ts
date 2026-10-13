@@ -8,6 +8,7 @@ import {
   resolveDirectoryDneSource,
   resolveZipDneSource,
   type DneDataSource,
+  type ZipEntryIdentity,
 } from './dne-source.ts';
 import {
   downloadRemoteFile,
@@ -21,6 +22,8 @@ import { EDNE_DOWNLOAD_URL } from './settings.ts';
  * Remote-source identity and raw HTTP validators obtained without downloading the full archive.
  */
 export type RemoteDneSourceInfo = {
+  /** Selected ZIP entry identities, or null when range inspection failed. */
+  zipEntries?: ZipEntryIdentity[] | null;
   /**
    * Source URL used for inspection and subsequent download.
    */

@@ -1,3 +1,4 @@
+import type { BunFile } from 'bun';
 import type { Database } from 'bun:sqlite';
 import { spawnSync } from 'node:child_process';
 import {
@@ -87,6 +88,24 @@ export function createNestedZipFixture(directory: string, rows: number) {
   run('zip', ['-qr', innerZip, 'Delimitado'], dneDirectory);
   run('zip', ['-q', outerZip, basename(innerZip)], directory);
   return outerZip;
+}
+
+export function zipRangeResponse(request: Request, archive: BunFile | Buffer, headers: Record<string, string> = {}) {
+  const range = request.headers.get('range');
+  if (!range) {
+    return null;
+  }
+  const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+  if (!match || (!match[1] && !match[2])) {
+    return new Response(null, { status: 416 });
+  }
+  const size = Buffer.isBuffer(archive) ? archive.length : archive.size;
+  const start = match[1] ? Number(match[1]) : Math.max(0, size - Number(match[2]));
+  const end = match[1] && match[2] ? Math.min(Number(match[2]), size - 1) : size - 1;
+  const responseHeaders = new Headers(headers);
+  responseHeaders.set('content-range', `bytes ${start}-${end}/${size}`);
+  responseHeaders.set('content-length', String(end - start + 1));
+  return new Response(archive.slice(start, end + 1), { status: 206, headers: responseHeaders });
 }
 
 export function fetchDatabase(databasePath: string, sourcePath: string) {

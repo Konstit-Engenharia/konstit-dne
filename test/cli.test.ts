@@ -39,6 +39,7 @@ import {
 import {
   createFixture,
   createNestedZipFixture,
+  zipRangeResponse,
 } from './helpers.ts';
 
 const workDir = mkdtempSync(join(tmpdir(), 'edne-cli-test-'));
@@ -252,7 +253,7 @@ describe('CLI contract', () => {
   });
 
   test('checks remote updates and diagnoses unreachable sources', async () => {
-    const fixture = Bun.file(createNestedZipFixture(join(workDir, 'direct-remote'), 20));
+    let fixture = Bun.file(createNestedZipFixture(join(workDir, 'direct-remote'), 20));
     let etag = '"v1"';
     let downloads = 0;
     const server = Bun.serve({
@@ -262,11 +263,18 @@ describe('CLI contract', () => {
         if (new URL(request.url).pathname === '/unavailable') {
           return new Response(null, { status: 503 });
         }
-        if (request.method !== 'HEAD') {
+        const headers = { etag, 'content-length': String(fixture.size), 'last-modified': 'Sun, 30 Aug 2026 07:00:00 GMT' };
+        if (
+          request.method !== 'HEAD' && (!request.headers.has('range') || request.headers.get('range') === `bytes=0-${fixture.size - 1}`)
+        ) {
           downloads++;
         }
+        const range = zipRangeResponse(request, fixture, headers);
+        if (range) {
+          return range;
+        }
         return new Response(request.method === 'HEAD' ? null : fixture, {
-          headers: { etag, 'content-length': String(fixture.size), 'last-modified': 'Sun, 30 Aug 2026 07:00:00 GMT' },
+          headers,
         });
       },
     });
@@ -282,6 +290,9 @@ describe('CLI contract', () => {
       const current = await runCli(['build', '--check', '--db', target, '--source', url]);
       expect(current.stdout).toContain('Estado: atualizada');
       etag = '"v2"';
+      const same = await runCli(['build', '--check', '--db', target, '--source', url]);
+      expect(same.stdout).toContain('Estado: atualizada');
+      fixture = Bun.file(createNestedZipFixture(join(workDir, 'direct-remote-changed'), 21));
       const stale = await runCli(['build', '--check', '--db', target, '--source', url]);
       expect(stale.stdout).toContain('Estado: atualização disponível');
       const healthy = await runCli(['doctor', '--db', target, '--source', url]);
@@ -293,6 +304,122 @@ describe('CLI contract', () => {
       const failed = await runCli(['build', '--check', '--db', target, '--source', unavailableUrl, '--json']);
       expect(failed.status).toBe(1);
       expect(failed.stderr).toContain('source-unavailable');
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  test.each(['sqlite', 'binary'])('skips unchanged ZIPs and falls back to full downloads for %s', async (format) => {
+    const fixture = readFileSync(createNestedZipFixture(join(workDir, `zip-identity-${format}`), 20));
+    const changed = readFileSync(createNestedZipFixture(join(workDir, `zip-identity-changed-${format}`), 21));
+    let archive = fixture;
+    let mode = 'ranges';
+    let downloads = 0;
+    let requests = 0;
+    const server = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch(request) {
+        requests++;
+        const headers = {
+          'content-length': String(archive.length),
+          'etag': `"request-${requests}"`,
+          'last-modified': `Sun, 30 Aug 2026 07:00:${String(requests % 60).padStart(2, '0')} GMT`,
+        };
+        if (request.method === 'HEAD') {
+          return new Response(null, { status: mode === 'no-inspection' ? 405 : 200, headers });
+        }
+        const range = request.headers.get('range');
+        const isDownload = range === null || range === `bytes=0-${archive.length - 1}`;
+        if (isDownload) {
+          downloads++;
+        }
+        if (range) {
+          if (mode === 'refused' || mode === 'no-inspection') {
+            return new Response(null, { status: 416 });
+          }
+          if (mode === 'ignored') {
+            return new Response(archive, { headers });
+          }
+          const response = zipRangeResponse(request, archive, headers);
+          if (mode === 'malformed') {
+            response?.headers.set('content-range', 'invalid');
+          }
+          return response ?? new Response(null, { status: 500 });
+        }
+        return new Response(archive, { headers });
+      },
+    });
+    const target = join(workDir, `zip-identity.${format === 'binary' ? 'bin' : 'db'}`);
+    const args = ['build', '--format', format, '--db', target, '--source', server.url.href, '--json', '--quiet'];
+    try {
+      const first = await runCli(args);
+      expect(first.status).toBe(0);
+      const metadata = parseJson(first.stdout).data.database.metadata;
+      expect(JSON.parse(metadata.source_zip_entries)).toHaveLength(1);
+      expect(downloads).toBe(1);
+      expect(parseJson((await runCli(args)).stdout).data.status).toBe('unchanged');
+      expect(downloads).toBe(1);
+      expect(parseJson((await runCli([...args, '--force'])).stdout).data.status).toBe('updated');
+      expect(downloads).toBe(2);
+
+      for (const failure of ['ignored', 'refused', 'malformed', 'no-inspection']) {
+        mode = failure;
+        const before = downloads;
+        if (failure !== 'no-inspection') {
+          const check = await runCli([...args, '--check']);
+          expect(check.status).toBe(0);
+          expect(parseJson(check.stdout).data.status).toBe('update-available');
+          expect(downloads).toBe(before);
+        }
+        const fallback = await runCli(args);
+        expect(fallback.status).toBe(0);
+        expect(parseJson(fallback.stdout).data.status).toBe('updated');
+        expect(downloads).toBe(before + 1);
+        mode = 'ranges';
+        expect(parseJson((await runCli(args)).stdout).data.status).toBe('unchanged');
+        expect(downloads).toBe(before + 1);
+      }
+
+      archive = changed;
+      const update = await runCli(args);
+      expect(update.status).toBe(0);
+      expect(parseJson(update.stdout).data.status).toBe('updated');
+      expect(parseJson(update.stdout).data.database.metadata.source_zip_entries).not.toBe(metadata.source_zip_entries);
+      expect(parseJson((await runCli(args)).stdout).data.status).toBe('unchanged');
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  test('records the downloaded ZIP identity if the source changes after inspection', async () => {
+    const first = readFileSync(createNestedZipFixture(join(workDir, 'zip-race-first'), 20));
+    const second = readFileSync(createNestedZipFixture(join(workDir, 'zip-race-second'), 21));
+    let archive = first;
+    let downloads = 0;
+    const server = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch(request) {
+        const range = request.headers.get('range');
+        if (range?.startsWith('bytes=0-') || !range) {
+          archive = second;
+          downloads++;
+          // A changed representation rejects the old range and forces a serial download.
+          return new Response(second);
+        }
+        return zipRangeResponse(request, archive) ?? new Response(null, { status: 500 });
+      },
+    });
+    const args = ['build', '--db', join(workDir, 'zip-race.db'), '--source', server.url.href, '--json', '--quiet'];
+    try {
+      const built = await runCli(args);
+      expect(built.status).toBe(0);
+      expect(downloads).toBe(2);
+      const next = await runCli(args);
+      expect(next.status).toBe(0);
+      expect(parseJson(next.stdout).data.status).toBe('unchanged');
+      expect(downloads).toBe(2);
     } finally {
       await server.stop(true);
     }
@@ -708,15 +835,21 @@ describe('CLI contract', () => {
       hostname: '127.0.0.1',
       port: 0,
       async fetch(request) {
-        if (request.method !== 'HEAD') {
-          downloadCount++;
-          notifyDownloadStarted?.();
-          await Bun.sleep(100);
-        }
         const headers = {
           'content-length': String(fixture.size),
           'last-modified': lastModified,
         };
+        if (
+          request.method !== 'HEAD' && (!request.headers.has('range') || request.headers.get('range') === `bytes=0-${fixture.size - 1}`)
+        ) {
+          downloadCount++;
+          notifyDownloadStarted?.();
+          await Bun.sleep(100);
+        }
+        const range = zipRangeResponse(request, fixture, headers);
+        if (range) {
+          return range;
+        }
         return new Response(request.method === 'HEAD' ? null : fixture, { headers });
       },
     });

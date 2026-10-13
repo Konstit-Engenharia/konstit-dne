@@ -47,6 +47,7 @@ import { DneSourceQualityError } from './dne-source-quality.ts';
 import { UserError } from './errors.ts';
 import { acquireFetchLock } from './fetch-lock.ts';
 import { readPackageVersion } from './package-version.ts';
+import { inspectRemoteDneZipSource } from './remote-zip.ts';
 import {
   DneResolver,
   inspectRemoteDneSource,
@@ -445,7 +446,7 @@ async function executeFetch(
   const schema = buildDneSchema();
   const sourceInput = options.source;
   const remoteInfo = looksLikeUrl(sourceInput)
-    ? await inspectRemoteSource(sourceInput, progress)
+    ? await inspectRemoteSource(sourceInput, progress, schema, !options.check)
     : null;
   progress.finish();
 
@@ -503,6 +504,9 @@ async function executeFetch(
 
   try {
     const source = await resolver.resolve(schema);
+    if (remoteInfo) {
+      remoteInfo.zipEntries = source.zipEntries ?? null;
+    }
     progress(options.format === 'binary' ? 'Carregando a base binária' : 'Carregando a base SQLite');
     rowCount = await writer.loadFromSource(
       source,
@@ -815,11 +819,19 @@ async function querySql(options: { limit: number; query: string; }, globals: Glo
   return 0;
 }
 
-async function inspectRemoteSource(source: string, progress: (message: string) => void) {
+async function inspectRemoteSource(
+  source: string,
+  progress: (message: string) => void,
+  schema: ReturnType<typeof buildDneSchema>,
+  allowDownloadFallback: boolean,
+) {
   progress('Inspecionando a fonte DNE remota');
   try {
-    return await inspectRemoteDneSource(source);
+    return await inspectRemoteDneZipSource(source, schema);
   } catch (error) {
+    if (allowDownloadFallback) {
+      return { url: source, etag: null, lastModified: null, contentLength: null, acceptRanges: null, zipEntries: null };
+    }
     throw new UserError('source-unavailable', humanErrorMessage(error));
   }
 }
@@ -833,6 +845,7 @@ function remoteSourceData(source: string, info: RemoteDneSourceInfo | null) {
       kind: 'remote',
       last_modified: info.lastModified,
       url: info.url,
+      zip_entries: info.zipEntries ?? null,
     }
     : {
       input: source,

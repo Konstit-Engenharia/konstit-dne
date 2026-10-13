@@ -15,6 +15,7 @@ const remote: RemoteDneSourceInfo = {
   etag: '"v2"',
   lastModified: 'Sun, 30 Aug 2026 12:00:00 GMT',
   url: 'https://example.test/dne.zip',
+  zipEntries: [{ name: 'eDNE_Basico_26092.zip', size: 456, crc32: '4866f6ad' }],
 };
 
 describe('remote update policy', () => {
@@ -25,36 +26,51 @@ describe('remote update policy', () => {
     expect(remoteMetadataMatches({ ...metadata, schema_version: '1' }, remote)).toBe(false);
   });
 
-  test('requires every available validator to match exactly', () => {
+  test('ignores unstable or missing HTTP validators when ZIP identities match', () => {
     const metadata = buildLoadMetadata(remote.url, remote, '1.2.3');
     expect(remoteMetadataMatches(metadata, remote)).toBe(true);
-    expect(remoteMetadataMatches(metadata, { ...remote, etag: '"v3"' })).toBe(false);
     expect(remoteMetadataMatches(metadata, {
       ...remote,
+      etag: '"v3"',
       lastModified: 'Sun, 30 Aug 2026 12:05:00 GMT',
-    })).toBe(false);
-    expect(remoteMetadataMatches(metadata, { ...remote, contentLength: '124' })).toBe(false);
+      contentLength: '124',
+    })).toBe(true);
+    expect(remoteMetadataMatches(metadata, { ...remote, etag: null, lastModified: null, contentLength: null })).toBe(true);
   });
 
-  test('does not assume the source is current without validators', () => {
+  test.each([
+    { name: 'eDNE_Basico_26093.zip', size: 456, crc32: '4866f6ad' },
+    { name: 'eDNE_Basico_26092.zip', size: 457, crc32: '4866f6ad' },
+    { name: 'eDNE_Basico_26092.zip', size: 456, crc32: '4866f6ae' },
+  ])('detects changed entry identity: %j', (entry) => {
     const metadata = buildLoadMetadata(remote.url, remote, '1.2.3');
-    expect(remoteMetadataMatches(metadata, {
-      ...remote,
-      contentLength: null,
-      etag: null,
-      lastModified: null,
-    })).toBe(false);
+    expect(remoteMetadataMatches(metadata, { ...remote, zipEntries: [entry] })).toBe(false);
   });
 
-  test.each([null, ''])('does not treat matching content length as a freshness validator (%s)', (missing) => {
-    const sizeOnly = { ...remote, etag: missing, lastModified: missing };
-    const metadata = buildLoadMetadata(remote.url, sizeOnly, '1.2.3');
-    expect(remoteMetadataMatches(metadata, sizeOnly)).toBe(false);
+  test.each([{ zipEntries: null }, { zipEntries: undefined }, { zipEntries: [] }])(
+    'requires a download when ZIP inspection is unavailable (%j)',
+    ({ zipEntries }) => {
+      const metadata = buildLoadMetadata(remote.url, remote, '1.2.3');
+      expect(remoteMetadataMatches(metadata, { ...remote, zipEntries: zipEntries ? [...zipEntries] : zipEntries })).toBe(false);
+    },
+  );
+
+  test('requires one new import for databases without ZIP identities', () => {
+    const metadata = buildLoadMetadata(remote.url, { ...remote, zipEntries: null }, '1.2.3');
+    expect(metadata.source_zip_entries).toBeUndefined();
+    expect(remoteMetadataMatches(metadata, remote)).toBe(false);
   });
 
-  test.each(['etag', 'lastModified'] as const)('can establish freshness using only %s', (validator) => {
-    const info = { ...remote, contentLength: null, etag: null, lastModified: null, [validator]: remote[validator] };
-    const metadata = buildLoadMetadata(remote.url, info, '1.2.3');
-    expect(remoteMetadataMatches(metadata, info)).toBe(true);
+  test('requires the same remote source', () => {
+    const metadata = buildLoadMetadata(remote.url, remote, '1.2.3');
+    expect(remoteMetadataMatches({ ...metadata, source_kind: 'local' }, remote)).toBe(false);
+    expect(remoteMetadataMatches({ ...metadata, source_url: 'https://example.test/other.zip' }, remote)).toBe(false);
+  });
+
+  test('persists ZIP identities alongside diagnostic HTTP headers', () => {
+    const metadata = buildLoadMetadata(remote.url, remote, '1.2.3');
+    expect(metadata.source_zip_entries).toBe(JSON.stringify(remote.zipEntries));
+    expect(metadata.source_etag).toBe(remote.etag ?? '');
+    expect(metadata.source_last_modified).toBe(remote.lastModified ?? '');
   });
 });
