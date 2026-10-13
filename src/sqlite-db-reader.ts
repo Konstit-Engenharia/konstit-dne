@@ -1,4 +1,4 @@
-import { Database } from 'bun:sqlite';
+import { Database, type Statement } from 'bun:sqlite';
 import {
   isBairroId,
   type DneBairro,
@@ -52,6 +52,10 @@ export class DneDatabaseReader implements Disposable {
   private readonly db: Database;
   private closed = false;
   private normalizedSchemaReady = false;
+  private cepStatement: Statement<StoredDneRow, [string]> | undefined;
+  private neighborhoodStatement: Statement<DneBairro, [number]> | undefined;
+  private neighborhoodByCepStatement: Statement<DneBairro, [string]> | undefined;
+  private neighborhoodCepRangesStatement: Statement<DneFaixaCep, [number]> | undefined;
 
   /**
    * Opens an existing SQLite database in read-only mode with a 30-second busy timeout.
@@ -75,7 +79,7 @@ export class DneDatabaseReader implements Disposable {
   }
 
   /**
-   * Closes the SQLite connection. Repeated calls are safe; subsequent reads throw.
+   * Finalizes retained statements and closes the SQLite connection. Repeated calls are safe; subsequent reads throw.
    * @throws {DneDatabaseIOError} If SQLite cannot close the connection.
    */
   close() {
@@ -83,7 +87,11 @@ export class DneDatabaseReader implements Disposable {
       return;
     }
     try {
-      this.db.close();
+      this.db.close(true);
+      this.cepStatement = undefined;
+      this.neighborhoodStatement = undefined;
+      this.neighborhoodByCepStatement = undefined;
+      this.neighborhoodCepRangesStatement = undefined;
       this.closed = true;
     } catch (cause) {
       throw new DneDatabaseIOError(this.databasePath, { cause });
@@ -147,8 +155,10 @@ export class DneDatabaseReader implements Disposable {
         return undefined;
       }
       this.requireCurrentSchema();
-      const row = this.db.query(`SELECT * FROM ${quoteIdent(cepViewName(SQLITE_CEP_TABLE_NAME))} WHERE cep = ?`)
-        .get(cep.length === 8 ? cep : `${cep.slice(0, 5)}${cep.slice(6)}`) as StoredDneRow | null;
+      this.cepStatement ??= this.db.prepare<StoredDneRow, [string]>(
+        `SELECT * FROM ${quoteIdent(cepViewName(SQLITE_CEP_TABLE_NAME))} WHERE cep = ?`,
+      );
+      const row = this.cepStatement.get(cep.length === 8 ? cep : `${cep.slice(0, 5)}${cep.slice(6)}`);
       if (!row) {
         return undefined;
       }
@@ -178,8 +188,10 @@ export class DneDatabaseReader implements Disposable {
         return undefined;
       }
       this.requireCurrentSchema();
-      const row = this.db.query(`SELECT * FROM ${quoteIdent(SQLITE_BAIRROS_TABLE_NAME)} WHERE bairro_id = ?`)
-        .get(neighborhoodId) as DneBairro | null;
+      this.neighborhoodStatement ??= this.db.prepare<DneBairro, [number]>(
+        `SELECT * FROM ${quoteIdent(SQLITE_BAIRROS_TABLE_NAME)} WHERE bairro_id = ?`,
+      );
+      const row = this.neighborhoodStatement.get(neighborhoodId);
       return row ?? undefined;
     });
   }
@@ -198,11 +210,12 @@ export class DneDatabaseReader implements Disposable {
         return undefined;
       }
       this.requireCurrentSchema();
-      const row = this.db.query(`
+      this.neighborhoodByCepStatement ??= this.db.prepare<DneBairro, [string]>(`
         SELECT b.* FROM ${quoteIdent(SQLITE_CEP_TABLE_NAME)} d
         JOIN ${quoteIdent(SQLITE_BAIRROS_TABLE_NAME)} b ON b.bairro_id = d.bairro_id
         WHERE d.cep = ?
-      `).get(cep.replace('-', '')) as DneBairro | null;
+      `);
+      const row = this.neighborhoodByCepStatement.get(cep.replace('-', ''));
       return row ?? undefined;
     });
   }
@@ -221,10 +234,11 @@ export class DneDatabaseReader implements Disposable {
         return [];
       }
       this.requireCurrentSchema();
-      return this.db.query(`
+      this.neighborhoodCepRangesStatement ??= this.db.prepare<DneFaixaCep, [number]>(`
         SELECT cep_inicial, cep_final FROM ${quoteIdent(SQLITE_BAIRRO_FAIXAS_TABLE_NAME)}
         WHERE bairro_id = ? ORDER BY cep_inicial, cep_final
-      `).all(neighborhoodId) as DneFaixaCep[];
+      `);
+      return this.neighborhoodCepRangesStatement.all(neighborhoodId);
     });
   }
 

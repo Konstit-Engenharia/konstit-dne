@@ -125,12 +125,16 @@ describe('normalized neighborhoods', () => {
     const reader = new DneDatabaseReader(sqlite);
     try {
       expect(reader.queryNeighborhood(11)?.nome).toBe('Centro');
+      expect(reader.queryCep('21000000')?.bairro).toBe('Centro');
+      expect(reader.queryNeighborhoodByCep('21000000')?.nome).toBe('Centro');
+      expect(reader.queryNeighborhoodCepRanges(11)).toHaveLength(2);
       const bairrosPath = join(source, 'LOG_BAIRRO.TXT');
       writeFileSync(bairrosPath, readFileSync(bairrosPath, 'latin1').replace('Centro@Ctr', 'Changed@New'), 'latin1');
       appendFileSync(join(source, 'LOG_FAIXA_BAIRRO.TXT'), '\n11@02000000@02000010', 'latin1');
       fetchDatabase(sqlite, source);
       expect(reader.queryNeighborhood(11)?.nome).toBe('Changed');
       expect(reader.queryCep('21000000')?.bairro).toBe('Changed');
+      expect(reader.queryNeighborhoodByCep('21000000')?.nome).toBe('Changed');
       expect(reader.queryNeighborhoodCepRanges(11)).toHaveLength(3);
     } finally {
       reader.close();

@@ -57,6 +57,8 @@ try {
 
 A base incluída no pacote é binária. Para usar o leitor SQLite, informe o caminho de uma base própria gerada pela CLI ou por outro processo de importação. `close()` é idempotente; qualquer leitura posterior, inclusive com entrada inválida, lança `DneDatabaseClosedError`.
 
+As consultas fixas de CEP, bairro, bairro por CEP e faixas de CEP preparam seus statements na primeira chamada válida, depois da verificação do esquema. Cada leitor reutiliza esses statements nas chamadas seguintes e os finaliza em `close()` ou no descarte com `using`. A abertura do leitor continua sem preparar as consultas, e `querySql()` mantém statements separados.
+
 Os dois leitores aceitam CEP com oito dígitos (`01141000`) ou no formato `01141-000`. Espaços ao redor não são aceitos. `queryCep()` retorna `undefined` quando a entrada é inválida ou o CEP não existe.
 
 ## Fechamento automático com `using`
