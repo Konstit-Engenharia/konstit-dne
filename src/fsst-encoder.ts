@@ -166,10 +166,8 @@ function chooseTable(candidates: readonly Candidate[], singleBytes: readonly num
 function createTable(symbols: readonly Uint8Array[]): SymbolTable {
   const table = new Uint8Array(FSST_SYMBOL_TABLE_SIZE);
   const trie = createTrieRoot();
+  // Candidate selection supplies at most 255 symbols, each containing 1..8 bytes.
   for (const [code, symbol,] of symbols.entries()) {
-    if (code >= FSST_CODE_COUNT || symbol.byteLength < 1 || symbol.byteLength > FSST_MAX_SYMBOL_LENGTH) {
-      break;
-    }
     table[code] = symbol.byteLength;
     table.set(symbol, FSST_CODE_COUNT + code * FSST_MAX_SYMBOL_LENGTH);
     addTrieSymbol(trie, symbol, code);

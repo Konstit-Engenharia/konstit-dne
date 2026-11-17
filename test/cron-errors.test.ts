@@ -180,14 +180,20 @@ describe('cron failure handling', () => {
     expect(() => showCronSchedule(options.database)).toThrow(expect.objectContaining({ code: 'ELOOP' }));
   });
 
-  test('uses the platform state directory when XDG_STATE_HOME is absent', async () => {
+  test.each(['darwin', 'linux'] as const)('uses the %s state directory when XDG_STATE_HOME is absent', async (platform) => {
     delete Bun.env['XDG_STATE_HOME'];
-    const preview = await installCronSchedule({ ...options, dryRun: true });
-    const expected = process.platform === 'darwin'
-      ? join(homedir(), 'Library', 'Application Support')
-      : join(homedir(), '.local', 'state');
-    expect(preview.runner.startsWith(expected)).toBe(true);
-    expect(preview.status).toBe('preview');
-    expect(calls).toEqual([]);
+    const descriptor = Object.getOwnPropertyDescriptor(process, 'platform') as PropertyDescriptor;
+    Object.defineProperty(process, 'platform', { ...descriptor, value: platform });
+    try {
+      const preview = await installCronSchedule({ ...options, dryRun: true });
+      const expected = platform === 'darwin'
+        ? join(homedir(), 'Library', 'Application Support')
+        : join(homedir(), '.local', 'state');
+      expect(preview.runner.startsWith(expected)).toBe(true);
+      expect(preview.status).toBe('preview');
+      expect(calls).toEqual([]);
+    } finally {
+      Object.defineProperty(process, 'platform', descriptor);
+    }
   });
 });

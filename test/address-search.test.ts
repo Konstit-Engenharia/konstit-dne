@@ -91,6 +91,12 @@ function ceps(rows: DneRow[]): string[] {
 }
 
 describe('address autocomplete', () => {
+  test('returns no results when known terms occur only in different addresses', () => {
+    expect(search.searchAddresses('paulista')).not.toBeEmpty();
+    expect(search.searchAddresses('meireles')).not.toBeEmpty();
+    expect(search.searchAddresses('paulista meireles')).toEqual([]);
+  });
+
   test('loads a file snapshot directly and keeps it independent of later file changes', async () => {
     const path = join(directory, 'direct.search.bin');
     await Bun.write(path, bytes);

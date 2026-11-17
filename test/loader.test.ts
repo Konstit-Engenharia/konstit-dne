@@ -6,6 +6,7 @@ import {
   test,
 } from 'bun:test';
 import {
+  appendFileSync,
   existsSync,
   mkdtempSync,
   readdirSync,
@@ -27,6 +28,7 @@ import {
   getUnifiedTable,
 } from '../src/schema.ts';
 import { SQLITE_CEP_TABLE_NAME } from '../src/settings.ts';
+import { captureRejection } from './assertions.ts';
 import {
   createFixture,
   createLocalityFixture,
@@ -41,6 +43,21 @@ afterAll(() => {
 });
 
 describe('loader', () => {
+  test('loads a special address without a comma or complement', async () => {
+    const directory = join(workDir, 'address-without-complement');
+    createLocalityFixture(directory);
+    replaceDelimitedField(join(directory, 'Delimitado', 'LOG_GRANDE_USUARIO.TXT'), 0, 6, ' Rua Central ');
+    const path = join(directory, 'dne.db');
+    const writer = new DneDatabaseWriter(path, buildSchema({ cep_unificado: SQLITE_CEP_TABLE_NAME }));
+    try {
+      expect(await writer.loadFromSource(new DirectoryDneSource(join(directory, 'Delimitado')))).toBe(20);
+    } finally {
+      writer.close();
+    }
+    using reader = new DneDatabaseReader(path);
+    expect(reader.queryCep('52000000')).toMatchObject({ logradouro: 'Rua Central', complemento: null });
+  });
+
   test('loads buffered source text with CRLF, empty lines, and an unterminated final record', async () => {
     const directory = join(workDir, 'buffered-source');
     createLocalityFixture(directory);
@@ -208,6 +225,99 @@ describe('loader', () => {
       expect(db.query('SELECT count(*) FROM dne').values()).toEqual([[20]]);
     } finally {
       db.close();
+    }
+  });
+
+  test.each(
+    [
+      ['LOG_LOCALIDADE.TXT', 0, 1, 'XX', 'invalid_uf'],
+      ['LOG_LOCALIDADE.TXT', 0, 3, '123', 'invalid_cep'],
+      ['LOG_LOCALIDADE.TXT', 1, 0, '1', 'duplicate_localidade'],
+      ['LOG_LOCALIDADE.TXT', 2, 1, 'RJ', 'localidade_uf_mismatch'],
+      ['LOG_LOCALIDADE.TXT', 0, 8, '', 'missing_ibge'],
+      ['LOG_BAIRRO.TXT', 0, 3, '', 'missing_bairro'],
+      ['LOG_BAIRRO.TXT', 0, 0, '-1', 'invalid_bairro_identifier'],
+      ['LOG_BAIRRO.TXT', 0, 2, '-1', 'invalid_bairro_identifier'],
+      ['LOG_BAIRRO.TXT', 0, 1, 'XX', 'invalid_uf'],
+      ['LOG_BAIRRO.TXT', 0, 1, 'RJ', 'bairro_uf_mismatch'],
+      ['LOG_BAIRRO.TXT', 1, 0, '11', 'duplicate_bairro'],
+      ['LOG_LOGRADOURO_SP.TXT', 0, 5, '', 'missing_logNo'],
+      ['LOG_LOGRADOURO_SP.TXT', 0, 1, 'XX', 'invalid_uf'],
+      ['LOG_LOGRADOURO_SP.TXT', 0, 8, '', 'missing_tloTx'],
+      ['LOG_LOGRADOURO_SP.TXT', 0, 3, '999', 'missing_bairro'],
+      ['LOG_LOGRADOURO_SP.TXT', 0, 1, 'RJ', 'logradouro_uf_mismatch'],
+      ['LOG_LOGRADOURO_SP.TXT', 0, 3, '12', 'bairro_localidade_mismatch'],
+      ['LOG_CPC.TXT', 0, 3, '', 'missing_nome'],
+      ['LOG_CPC.TXT', 0, 5, '123', 'invalid_cep'],
+      ['LOG_CPC.TXT', 0, 1, 'RJ', 'cpc_uf_mismatch'],
+      ['LOG_GRANDE_USUARIO.TXT', 0, 5, '', 'missing_nome'],
+      ['LOG_GRANDE_USUARIO.TXT', 0, 1, 'XX', 'invalid_uf'],
+      ['LOG_GRANDE_USUARIO.TXT', 0, 7, '123', 'invalid_cep'],
+      ['LOG_GRANDE_USUARIO.TXT', 0, 3, '999', 'missing_bairro'],
+      ['LOG_GRANDE_USUARIO.TXT', 0, 1, 'RJ', 'address_uf_mismatch'],
+      ['LOG_GRANDE_USUARIO.TXT', 0, 3, '11', 'bairro_localidade_mismatch'],
+      ['LOG_UNID_OPER.TXT', 0, 7, '123', 'invalid_cep'],
+    ] as const,
+  )('rejects %s row %i field %i = %s with %s and rolls back', async (file, row, field, value, reason) => {
+    const directory = mkdtempSync(join(workDir, 'invalid-field-'));
+    createLocalityFixture(directory);
+    const path = join(directory, 'dne.db');
+    const source = new DirectoryDneSource(join(directory, 'Delimitado'));
+    const writer = new DneDatabaseWriter(path, buildSchema({ cep_unificado: SQLITE_CEP_TABLE_NAME }));
+    try {
+      expect(await writer.loadFromSource(source, { source_kind: 'valid' })).toBe(20);
+      replaceDelimitedField(join(directory, 'Delimitado', file), row, field, value);
+      expect(await captureRejection(writer.loadFromSource(source, { source_kind: 'invalid' })))
+        .toMatchObject({ message: expect.stringContaining(reason) });
+    } finally {
+      writer.close();
+    }
+    using reader = new DneDatabaseReader(path);
+    expect(reader.rowCount(SQLITE_CEP_TABLE_NAME)).toBe(20);
+    expect(reader.metadata()?.['source_kind']).toBe('valid');
+  });
+
+  test('rejects addresses whose parent municipality was rejected', async () => {
+    const directory = join(workDir, 'rejected-parent');
+    createLocalityFixture(directory);
+    const locality = join(directory, 'Delimitado', 'LOG_LOCALIDADE.TXT');
+    appendFileSync(locality, '\n9@SP@Rejected Parent@@1@M@999@@3500009', 'latin1');
+    for (const row of [3, 6, 7]) {
+      replaceDelimitedField(locality, row, 6, '9');
+    }
+    const writer = new DneDatabaseWriter(':memory:', buildSchema({ cep_unificado: SQLITE_CEP_TABLE_NAME }));
+    try {
+      expect(await captureRejection(writer.loadFromSource(new DirectoryDneSource(join(directory, 'Delimitado')))))
+        .toMatchObject({ message: expect.stringContaining('missing_municipality') });
+    } finally {
+      writer.close();
+    }
+  });
+
+  test('rejects a source that has municipalities but produces no CEPs', async () => {
+    const directory = join(workDir, 'no-ceps');
+    createLocalityFixture(directory);
+    const delimited = join(directory, 'Delimitado');
+    for (const file of readdirSync(delimited)) {
+      writeFileSync(join(delimited, file), file === 'LOG_LOCALIDADE.TXT' ? '1@SP@Municipio@@1@M@@@3500001' : '');
+    }
+    const writer = new DneDatabaseWriter(':memory:', buildSchema({ cep_unificado: SQLITE_CEP_TABLE_NAME }));
+    try {
+      expect(await captureRejection(writer.loadFromSource(new DirectoryDneSource(delimited))))
+        .toMatchObject({ message: expect.stringContaining('no CEP rows produced') });
+    } finally {
+      writer.close();
+    }
+  });
+
+  test('reports a missing source table definition', async () => {
+    const schema = buildSchema({ cep_unificado: SQLITE_CEP_TABLE_NAME }).filter((table) => table.originalName !== 'log_localidade');
+    const writer = new DneDatabaseWriter(':memory:', schema);
+    try {
+      expect(await captureRejection(writer.loadFromSource(new DirectoryDneSource(workDir))))
+        .toMatchObject({ message: 'Table with original name \'log_localidade\' not found' });
+    } finally {
+      writer.close();
     }
   });
 

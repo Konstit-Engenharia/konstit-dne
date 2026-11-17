@@ -4,6 +4,7 @@ import {
   afterEach,
   describe,
   expect,
+  spyOn,
   test,
 } from 'bun:test';
 import {
@@ -13,6 +14,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
+import * as fsPromises from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BINARY_DATABASE_MAGIC } from '../src/binary-db-format.ts';
@@ -57,6 +59,25 @@ afterAll(() => {
 });
 
 describe('database service', () => {
+  test('rejects unsupported database URLs', () => {
+    expect(() => databasePath('postgres://example.test/database')).toThrow('Only sqlite:/// database URLs are supported');
+  });
+
+  test('reports a database that disappears during inspection', async () => {
+    const path = join(workDir, 'removed-during-inspection.db');
+    new Database(path).close();
+    const failure = Object.assign(new Error('File disappeared'), { code: 'ENOENT' });
+    const stat = spyOn(fsPromises, 'stat').mockImplementationOnce(async () => {
+      rmSync(path);
+      throw failure;
+    });
+    try {
+      expect(await inspectDatabase(path)).toMatchObject({ exists: true, ready: false, size_bytes: null, error: expect.any(String) });
+    } finally {
+      stat.mockRestore();
+    }
+  });
+
   test('reads metadata and table presence without creating missing databases', async () => {
     const missing = join(workDir, 'missing-metadata.db');
     expect(await readDatabaseMetadata(missing)).toBeUndefined();

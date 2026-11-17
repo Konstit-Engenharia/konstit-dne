@@ -100,6 +100,20 @@ test('validates a complete FSST dictionary with two-byte lengths and literal esc
   expect(() => validateBinaryDatabaseBytes(fsstBytes)).not.toThrow();
 });
 
+test('validates and reads an FSST dictionary with one-byte lengths', async () => {
+  const offset = dictionaryOffset(original, 'logradouroDictionary');
+  const values = readPlainDictionary(original, offset);
+  const idWidth = new DataView(original.buffer).getUint8(offset + 28);
+  const converted = repackDatabase(original, encodeFsstDictionary(values, idWidth, 1));
+  expect(converted.layout.lengthWidth).toBe(1);
+  expect(() => validateBinaryDatabaseBytes(converted.bytes)).not.toThrow();
+  const path = join(workDir, 'one-byte-fsst.bin');
+  sealBinaryDatabaseBytes(converted.bytes);
+  await Bun.write(path, converted.bytes);
+  using reader = new DneBinaryDatabaseReader(path);
+  expect(reader.queryCep('30000001')?.logradouro).toBe('Rua Endereco 1');
+});
+
 test('rejects an FSST suffix above the compressed byte limit', () => {
   const bytes = fsstBytes.slice();
   const dictionary = bytes.slice(fsstLayout.regionOffset, fsstLayout.regionOffset + fsstLayout.regionLength);
@@ -288,10 +302,9 @@ function readPlainDictionary(source: Uint8Array, regionOffset: number) {
   return values;
 }
 
-function encodeFsstDictionary(values: Uint8Array[], idWidth: number) {
+function encodeFsstDictionary(values: Uint8Array[], idWidth: number, lengthWidth: 1 | 2 = 2) {
   const count = values.length;
   const blockCount = Math.ceil(count / DICTIONARY_BLOCK_SIZE);
-  const lengthWidth = 2;
   const blockOffsetsRelative = DICTIONARY_HEADER_SIZE;
   const lengthsRelative = blockOffsetsRelative + blockCount * 4;
   const prefixesRelative = lengthsRelative + count * lengthWidth;
@@ -339,7 +352,12 @@ function encodeFsstDictionary(values: Uint8Array[], idWidth: number) {
     data.setUint32(blockOffsetsRelative + index * 4, offset, true);
   }
   for (const [index, length,] of lengths.entries()) {
-    data.setUint16(lengthsRelative + index * 2, length, true);
+    if (lengthWidth === 1) {
+      expect(length).toBeLessThan(256);
+      data.setUint8(lengthsRelative + index, length);
+    } else {
+      data.setUint16(lengthsRelative + index * 2, length, true);
+    }
   }
   region.set(prefixes, prefixesRelative);
   let cursor = suffixDataRelative;

@@ -33,6 +33,17 @@ beforeAll(() => {
 afterAll(() => rmSync(workDir, { recursive: true, force: true }));
 
 describe('remote ZIP inspection', () => {
+  test.each(['bytes=-', 'invalid'])('rejects malformed HTTP range %s', (range) => {
+    const request = new Request('http://localhost/dne.zip', { headers: { range } });
+    expect(zipRangeResponse(request, archive)?.status).toBe(416);
+  });
+
+  test('falls back to metadata when a range response has no body', async () => {
+    const result = await inspect(archive, (response) => new Response(null, { status: response.status, headers: response.headers }));
+    expect(result.info.zipEntries).toBeNull();
+    expect(result.heads).toBe(1);
+  });
+
   test('reads only the trailer and directory and matches the imported nested ZIP', async () => {
     const result = await inspect(archive);
     const inner = readFileSync(join(workDir, 'fixture', 'eDNE_Basico_12345.zip'));

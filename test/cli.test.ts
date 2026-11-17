@@ -57,6 +57,22 @@ afterAll(() => {
 });
 
 describe('CLI contract', () => {
+  test('uses EDNE_SOURCE_URL when source is omitted and gives the argument precedence', async () => {
+    const fromEnvironment = join(workDir, 'environment-source.db');
+    const result = await runCli(['build', '--db', fromEnvironment, '--json'], undefined, {
+      ...process.env,
+      EDNE_SOURCE_URL: sourcePath,
+    });
+    expect(result.status).toBe(0);
+    expect(parseJson(result.stdout).data.database.row_count).toBe(24);
+    const explicit = await runCli(['build', '--db', ':memory:', '--source', sourcePath, '--json'], undefined, {
+      ...process.env,
+      EDNE_SOURCE_URL: join(workDir, 'missing-environment-source'),
+    });
+    expect(explicit.status).toBe(0);
+    expect(parseJson(explicit.stdout).data.database.row_count).toBe(24);
+  });
+
   test.each([
     { args: ['build'] },
     { args: ['build', '--check'] },
@@ -64,7 +80,7 @@ describe('CLI contract', () => {
     { args: ['cron', 'install', '--dry-run'] },
     { args: ['doctor'] },
   ])(
-    'requires an explicit source for %j',
+    'requires a source argument or environment variable for %j',
     async ({ args }) => {
       const target = join(workDir, 'missing-source.db');
       const fetch = spyOn(globalThis, 'fetch');
@@ -313,6 +329,22 @@ describe('CLI contract', () => {
       const unchanged = await runCli(['build', '--db', target, '--source', url]);
       expect(unchanged.stdout).toContain('A base DNE já está atualizada:');
       expect(downloads).toBe(1);
+      const rowCount = Object.getOwnPropertyDescriptor(DneDatabaseReader.prototype, 'rowCount')?.value as DneDatabaseReader['rowCount'];
+      const count = spyOn(DneDatabaseReader.prototype, 'rowCount')
+        .mockImplementationOnce(function(this: DneDatabaseReader, table) {
+          return rowCount.call(this, table);
+        })
+        .mockImplementationOnce(() => {
+          throw new Error('Database became unavailable during reporting');
+        });
+      try {
+        const unavailableCount = await runCli(['build', '--db', target, '--source', url]);
+        expect(unavailableCount.status).toBe(0);
+        expect(unavailableCount.stdout).toContain('quantidade desconhecida de registros');
+        expect(downloads).toBe(1);
+      } finally {
+        count.mockRestore();
+      }
       const current = await runCli(['build', '--check', '--db', target, '--source', url]);
       expect(current.stdout).toContain('Estado: atualizada');
       etag = '"v2"';
@@ -1049,7 +1081,12 @@ describe('CLI contract', () => {
   });
 });
 
-async function runCli(args: string[], input?: string, env = process.env, tty = false) {
+async function runCli(
+  args: string[],
+  input?: string,
+  env: Record<string, string | undefined> = { ...process.env, EDNE_SOURCE_URL: undefined },
+  tty = false,
+) {
   let stdout = '';
   let stderr = '';
   const originalEnvironment = { ...process.env };

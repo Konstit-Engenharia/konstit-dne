@@ -55,11 +55,7 @@ export class BatchedUnifiedInsert implements UnifiedInsert {
     this.rows = [];
     const params = Array.from({ length: rows.length * 11 }, () => null as UnifiedInsertValue);
 
-    for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
-      const row = rows[rowIndex];
-      if (!row) {
-        throw new Error(`Missing row at index ${rowIndex}`);
-      }
+    for (const [rowIndex, row,] of rows.entries()) {
       const offset = rowIndex * 11;
       for (let column = 0; column < row.length; column++) {
         params[offset + column] = row[column] ?? null;

@@ -2,6 +2,7 @@ import {
   afterAll,
   describe,
   expect,
+  spyOn,
   test,
 } from 'bun:test';
 import {
@@ -11,6 +12,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
+import * as fsPromises from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -21,6 +23,7 @@ import {
   type DneDataSource,
 } from '../src/dne-source.ts';
 import type { TableDefinition } from '../src/schema.ts';
+import { captureRejection } from './assertions.ts';
 
 const workDir = mkdtempSync(join(tmpdir(), 'edne-dne-source-test-'));
 
@@ -252,6 +255,35 @@ describe('streamed ZIP DNE source', () => {
     expect(await lines(first, 'EXACT.TXT')).toEqual(['nested streamed']);
     const second = await resolveZipDneSource(outerPath, [exactTable], nestedPath);
     expect(await lines(second, 'EXACT.TXT')).toEqual(['nested streamed']);
+  });
+
+  test.each([false, true])('handles nested ZIP publication failures with concurrent target=%s', async (targetExists) => {
+    const inner = createZip([zipEntry('Delimitado/EXACT.TXT', 'nested streamed')]);
+    const outerPath = writeZip(`publish-failure-${targetExists}.zip`, [
+      zipEntry('EDNE_BASICO_publish.zip', inner, { compression: 8 }),
+    ]);
+    const directory = join(workDir, `publish-failure-${targetExists}`);
+    const nestedPath = join(directory, 'inner.zip');
+    const failure = Object.assign(new Error('Unable to publish ZIP'), { code: 'EACCES' });
+    const rename = spyOn(fsPromises, 'rename').mockImplementationOnce(async () => {
+      if (targetExists) {
+        writeFileSync(nestedPath, inner);
+      }
+      throw failure;
+    });
+    try {
+      const source = resolveZipDneSource(outerPath, [exactTable], nestedPath);
+      if (targetExists) {
+        expect(await lines(await source, 'EXACT.TXT')).toEqual(['nested streamed']);
+        expect(readdirSync(directory)).toEqual(['inner.zip']);
+      } else {
+        expect(await captureRejection(source)).toBe(failure);
+        expect(readdirSync(directory)).toEqual([]);
+      }
+      expect(rename).toHaveBeenCalledTimes(1);
+    } finally {
+      rename.mockRestore();
+    }
   });
 
   test('cleans a partial nested file when extraction fails', async () => {

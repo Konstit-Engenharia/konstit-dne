@@ -46,6 +46,21 @@ async function getRejection(promise: Promise<unknown>) {
 }
 
 describe('parallel download', () => {
+  test.each(['ECONNRESET', 'ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH'])(
+    'retries network errors with code %s',
+    async (code) => {
+      const fetch = spyOn(globalThis, 'fetch')
+        .mockRejectedValueOnce(Object.assign(new Error('Connection failed'), { code }))
+        .mockResolvedValueOnce(new Response('recovered'));
+      try {
+        expect(await requestWithRetry('https://example.test', {}, (response) => response.text(), noRetryDelay)).toBe('recovered');
+        expect(fetch).toHaveBeenCalledTimes(2);
+      } finally {
+        fetch.mockRestore();
+      }
+    },
+  );
+
   test('retries transient network errors but preserves non-Error failures', async () => {
     const fetch = spyOn(globalThis, 'fetch')
       .mockRejectedValueOnce(new TypeError('network disconnected'))

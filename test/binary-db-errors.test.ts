@@ -3,6 +3,7 @@ import {
   beforeAll,
   describe,
   expect,
+  spyOn,
   test,
 } from 'bun:test';
 import {
@@ -33,6 +34,7 @@ import {
 import { validateBinaryDatabaseBytes } from '../src/binary-db-validator.ts';
 import { buildBinaryDatabase } from '../src/binary-db-writer.ts';
 import type { UF } from '../src/types.ts';
+import { captureRejection } from './assertions.ts';
 import {
   createLocalityFixture,
   fetchDatabase,
@@ -54,6 +56,48 @@ beforeAll(async () => {
 afterAll(() => rmSync(workDir, { recursive: true, force: true }));
 
 describe('binary reader error contract', () => {
+  test('wraps failures while inspecting the database signature', async () => {
+    const file = Bun.file(binaryPath);
+    const failure = new Error('File inspection failed');
+    const exists = spyOn(file, 'exists').mockRejectedValue(failure);
+    const bunFile = spyOn(Bun, 'file').mockReturnValue(file);
+    try {
+      expect(await captureRejection(isBinaryDatabase(binaryPath))).toMatchObject({ code: 'IO_ERROR', path: binaryPath, cause: failure });
+    } finally {
+      bunFile.mockRestore();
+      exists.mockRestore();
+    }
+  });
+
+  test.each(
+    [
+      [10, 'header size'],
+      [22, 'block layout'],
+      [24, 'section table'],
+    ] as const,
+  )('rejects incompatible binary header field %i', async (offset, message) => {
+    const bytes = original.slice();
+    bytes[offset] = (bytes[offset] ?? 0) ^ 1;
+    const path = join(workDir, `invalid-header-${offset}.bin`);
+    await Bun.write(path, bytes);
+    expect(() => new DneBinaryDatabaseReader(path)).toThrow(message);
+  });
+
+  test('wraps malformed metadata after verifying the checksum', async () => {
+    const bytes = original.slice();
+    const section = SECTION_TABLE_OFFSET + BINARY_SECTION_NAMES.indexOf('metadata') * 8;
+    const offset = new DataView(bytes.buffer).getUint32(section, true);
+    bytes[offset] = 0;
+    const checksumOffset = bytes.length - BINARY_DATABASE_CHECKSUM_SIZE;
+    bytes.set(new Bun.CryptoHasher('sha256').update(bytes.subarray(0, checksumOffset)).digest(), checksumOffset);
+    const path = join(workDir, 'invalid-metadata.bin');
+    await Bun.write(path, bytes);
+    const error = captureError(() => new DneBinaryDatabaseReader(path));
+    expect(error).toBeInstanceOf(DneBinaryDatabaseFormatError);
+    expect(error.message).toBe('Unable to decode binary database');
+    expect(error.cause).toBeInstanceOf(SyntaxError);
+  });
+
   test('wraps file access failures with a path, stable code, and original cause', async () => {
     const missing = join(workDir, 'missing.bin');
     const error = captureError(() => new DneBinaryDatabaseReader(missing));
