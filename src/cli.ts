@@ -248,6 +248,7 @@ export const cli = command(BINARY_NAME, {
               required: true,
               describe: 'Diretório DNE, arquivo ZIP ou URL usado pelo agendamento.',
               valueName: 'CAMINHO|URL',
+              env: 'EDNE_SOURCE_URL',
             }),
           ],
           about: 'Instalar ou substituir o agendamento desta base',
