@@ -1,6 +1,6 @@
 {
   "name": "@konstit/dne",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Build, update, and query local Brazilian postal code databases from DNE sources.",
   "repository": {
     "type": "git",
