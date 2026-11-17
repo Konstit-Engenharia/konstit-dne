@@ -71,14 +71,15 @@
     "build:worker": "bun run scripts/build-address-search-worker.ts",
     "build:clean": "rm -rf ./dist",
     "build:js": "bun build ./src/index.ts --outdir ./dist --target=bun --format=esm --sourcemap=external --minify --keep-names --splitting --chunk-naming 'chunks/[name]-[hash].[ext]' --external '*data/dne.bin'",
-    "build:library": "bunx --bun tsc -p tsconfig.build.json"
+    "build:library": "bunx --bun tsc -p tsconfig.build.json",
+    "cli": "bun run src/index.ts"
   },
   "dependencies": {
-    "@konstit/cli": "0.0.4"
+    "@konstit/cli": "0.0.6"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.9",
-    "@types/bun": "1.4.2",
+    "@types/bun": "1.4.4",
     "dprint": "^0.56.0",
     "mitata": "^1.0.34",
     "oxlint": "^1.79.0",

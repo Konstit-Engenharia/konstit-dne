@@ -1,0 +1,13 @@
+name: konstit_dne
+description: Consulta offline de CEPs em bases binárias v5 do pacote @konstit/dne.
+version: 0.1.0
+repository: https://github.com/Konstit-Engenharia/konstit-cli
+
+environment:
+  sdk: ^3.4.0
+
+dependencies:
+  crypto: ^3.0.7
+
+dev_dependencies:
+  test: ^1.25.0
