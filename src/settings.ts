@@ -18,9 +18,6 @@ export const SQLITE_CACHE_SIZE = -200000; // ~195 MiB; negative means cache size
 /** Maximum number of CEP rows bound in one batched INSERT statement. */
 export const SQLITE_INSERT_BATCH_SIZE = 1000;
 
-/** Default Correios e-DNE source archive URL. */
-export const EDNE_DOWNLOAD_URL = 'https://www2.correios.com.br/sistemas/edne/download/eDNE_Basico.zip';
-
 /** Maximum number of simultaneous byte-range download workers. */
 export const HTTP_FETCH_CONCURRENCY = 8;
 /** Target byte-range size in bytes for parallel downloads. */

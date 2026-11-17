@@ -8,10 +8,10 @@ import {
   type AddressSearchPoolOptions,
 } from '../src/library.ts';
 
-const databasePath = process.env['DNE_DATABASE'];
+const databasePath = process.env['DNE_DATABASE'] ?? './data/dne.bin';
 const options: AddressSearchPoolOptions = {
   databasePath,
-  indexPath: process.env['DNE_SEARCH_INDEX'] ?? `${databasePath ?? './data/dne.bin'}.search.bin`,
+  indexPath: process.env['DNE_SEARCH_INDEX'] ?? `${databasePath}.search.bin`,
   workers: 2,
   maxQueue: 8,
 };

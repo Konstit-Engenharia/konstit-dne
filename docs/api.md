@@ -12,7 +12,7 @@ A biblioteca pode ser importada diretamente. Importá-la não executa a CLI nem 
 
 ## Leitor binário
 
-`DneBinaryDatabaseReader` carrega uma base binária integralmente em memória e faz consultas síncronas nessa cópia. Sem argumento, ele abre `data/dne.bin` dentro do pacote instalado, independentemente do diretório de trabalho:
+`DneBinaryDatabaseReader` exige o caminho de uma base binária existente, carrega seus bytes integralmente em memória e faz consultas síncronas nessa cópia. Caminhos relativos usam o diretório de trabalho.
 
 ```typescript
 import {
@@ -20,7 +20,7 @@ import {
   type DneRow,
 } from '@konstit/dne';
 
-const reader = new DneBinaryDatabaseReader();
+const reader = new DneBinaryDatabaseReader('./dne.bin');
 try {
   const endereco: DneRow | undefined = reader.queryCep('01141-000');
   console.log(endereco);
@@ -29,13 +29,13 @@ try {
 }
 ```
 
-Nenhum download é feito na instalação ou na consulta. A base incluída corresponde à fonte usada no empacotamento daquela versão do pacote; instale uma versão mais recente para receber outra cópia. Para usar uma base própria, passe o caminho do arquivo:
+Gere a base com `bunx @konstit/dne build --format binary --source ./eDNE_Basico.zip`. Também é possível fornecer um caminho absoluto ao leitor.
 
 ```typescript
 const reader = new DneBinaryDatabaseReader('/dados/dne.bin');
 ```
 
-O banco padrão é um asset reconhecido pelo bundler do Bun. `bun build --target=bun` o inclui no diretório de saída, que deve ser distribuído por inteiro. `bun build --compile` o incorpora no executável. Ambos preservam `new DneBinaryDatabaseReader()` sem argumento. O leitor usa `readFileSync()` para arquivos físicos e assets embutidos, sem extrair a base para disco nem exigir permissão de escrita. A validação e as consultas são as mesmas em todos os modos. Cada leitor mantém os bytes da base em memória até liberar suas referências com `close()`; o runtime controla quando a memória é recuperada.
+O leitor usa `readFileSync()` para arquivos físicos e assets importados pela aplicação. Para incorporar a base em um bundle ou executável Bun, importe seu arquivo com `with { type: 'file' }` e passe o caminho resolvido ao construtor. Cada leitor mantém os bytes da base em memória até liberar suas referências com `close()`. O runtime controla quando a memória é recuperada. Consulte o [guia de distribuição](address-search.md#bundles-e-executáveis-do-bun).
 
 O arquivo deve permanecer imutável durante o carregamento. Alterar ou remover o arquivo depois da abertura não modifica a cópia do leitor; abra outro leitor para receber uma versão atualizada. A geração valida integralmente os bytes serializados antes de registrar o SHA-256. Ao abrir, o construtor verifica o cabeçalho mínimo, a versão, o tamanho declarado e o checksum; depois usa o layout validado para preparar o leitor. `close()` pode ser chamado mais de uma vez. Depois de fechar, as consultas lançam `DneBinaryDatabaseClosedError`; `metadata()` e `rowCount()` continuam disponíveis.
 
@@ -55,7 +55,7 @@ try {
 }
 ```
 
-A base incluída no pacote é binária. Para usar o leitor SQLite, informe o caminho de uma base própria gerada pela CLI ou por outro processo de importação. `close()` é idempotente; qualquer leitura posterior, inclusive com entrada inválida, lança `DneDatabaseClosedError`.
+Para usar o leitor SQLite, informe o caminho de uma base gerada pela CLI ou por outro processo de importação. `close()` é idempotente. Qualquer leitura posterior, inclusive com entrada inválida, lança `DneDatabaseClosedError`.
 
 As consultas fixas de CEP, bairro, bairro por CEP e faixas de CEP preparam seus statements na primeira chamada válida, depois da verificação do esquema. Cada leitor reutiliza esses statements nas chamadas seguintes e os finaliza em `close()` ou no descarte com `using`. A abertura do leitor continua sem preparar as consultas, e `querySql()` mantém statements separados.
 
@@ -69,7 +69,7 @@ Os dois leitores aceitam CEP com oito dígitos (`01141000`) ou no formato `01141
 import { DneBinaryDatabaseReader, DneDatabaseReader } from '@konstit/dne';
 
 {
-  using binary = new DneBinaryDatabaseReader();
+  using binary = new DneBinaryDatabaseReader('./dne.bin');
   console.log(binary.queryCep('01141-000'));
 }
 
@@ -175,7 +175,7 @@ As faixas preservam zeros à esquerda e os intervalos originais do e-DNE. Perten
 Ambos os leitores expõem `metadata()`. O leitor binário expõe `rowCount()`; o leitor SQLite recebe o nome da tabela em `rowCount(tableName)`:
 
 ```typescript
-const binaryReader = new DneBinaryDatabaseReader();
+const binaryReader = new DneBinaryDatabaseReader('./dne.bin');
 const sqliteReader = new DneDatabaseReader('/dados/dne.db');
 const metadata = binaryReader.metadata();
 const totalBinary = binaryReader.rowCount();
@@ -281,7 +281,7 @@ import {
   DneBinaryDatabaseReader,
 } from '@konstit/dne';
 
-const reader = new DneBinaryDatabaseReader();
+const reader = new DneBinaryDatabaseReader('./dne.bin');
 try {
   console.log(reader.queryCep('01141000'));
 } catch (error) {

@@ -6,8 +6,8 @@ import {
   type AddressSearchOptions,
 } from '../src/library.ts';
 
-const databasePath = process.env['DNE_DATABASE'];
-const indexPath = process.env['DNE_SEARCH_INDEX'] ?? `${databasePath ?? './data/dne.bin'}.search.bin`;
+const databasePath = process.env['DNE_DATABASE'] ?? './data/dne.bin';
+const indexPath = process.env['DNE_SEARCH_INDEX'] ?? `${databasePath}.search.bin`;
 const text = process.argv[2] ?? 'paulista';
 using database = new DneBinaryDatabaseReader(databasePath);
 {

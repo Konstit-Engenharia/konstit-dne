@@ -6,7 +6,7 @@ import {
 
 const cep = process.argv[2] ?? '01001-000';
 {
-  using binary = new DneBinaryDatabaseReader(process.env['DNE_DATABASE']);
+  using binary = new DneBinaryDatabaseReader(process.env['DNE_DATABASE'] ?? './data/dne.bin');
   console.log({ binary: binary.queryCep(cep), rows: binary.rowCount() });
   // Symbol.dispose calls close() on scope exit, including if a query throws.
 }
@@ -17,6 +17,6 @@ const cep = process.argv[2] ?? '01001-000';
 }
 
 // Manual disposal is also available and can be combined with an earlier close().
-const reader = new DneBinaryDatabaseReader(process.env['DNE_DATABASE']);
+const reader = new DneBinaryDatabaseReader(process.env['DNE_DATABASE'] ?? './data/dne.bin');
 reader.close();
 reader[Symbol.dispose]();

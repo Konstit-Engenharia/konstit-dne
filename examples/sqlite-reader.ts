@@ -7,7 +7,6 @@ import {
   type LoadMetadata,
 } from '../src/library.ts';
 
-// SQLite requires a database generated separately; the package includes a binary database.
 const reader = new DneDatabaseReader(process.env['DNE_SQLITE_DATABASE'] ?? './data/dne.db');
 try {
   const metadata: LoadMetadata | undefined = reader.metadata();

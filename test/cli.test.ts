@@ -57,6 +57,32 @@ afterAll(() => {
 });
 
 describe('CLI contract', () => {
+  test.each([
+    { args: ['build'] },
+    { args: ['build', '--check'] },
+    { args: ['build', '--force'] },
+    { args: ['cron', 'install', '--dry-run'] },
+    { args: ['doctor'] },
+  ])(
+    'requires an explicit source for %j',
+    async ({ args }) => {
+      const target = join(workDir, 'missing-source.db');
+      const fetch = spyOn(globalThis, 'fetch');
+      try {
+        const result = await runCli([...args, '--db', target, '--json']);
+        expect(result.status).toBe(2);
+        expect(parseJson(result.stderr)).toMatchObject({
+          ok: false,
+          error: { code: 'invalid-arguments', message: expect.stringContaining('--source') },
+        });
+        expect(fetch).not.toHaveBeenCalled();
+        expect(existsSync(target)).toBe(false);
+      } finally {
+        fetch.mockRestore();
+      }
+    },
+  );
+
   test('builds a usable search index with default or explicit output and stable JSON', async () => {
     const binary = join(workDir, 'search-source.bin');
     const built = await runCli(['build', '--format', 'binary', '--db', binary, '--source', sourcePath, '--quiet']);
@@ -175,7 +201,7 @@ describe('CLI contract', () => {
     const memory = await runCli(['build', '--db', ':memory:', '--source', sourcePath]);
     expect(memory.status).toBe(0);
     expect(memory.stdout).toContain('24 registros, tamanho desconhecido');
-    const invalid = await runCli(['build', '--format=binary', '--db', ':memory:', '--json']);
+    const invalid = await runCli(['build', '--format=binary', '--db', ':memory:', '--source', sourcePath, '--json']);
     expect(invalid.status).toBe(2);
     expect(parseJson(invalid.stderr).error.code).toBe('invalid-format');
     const updateTarget = join(workDir, 'direct-update.db');
@@ -430,11 +456,11 @@ describe('CLI contract', () => {
     const env = { ...process.env, XDG_STATE_HOME: join(workDir, 'text-cron'), DNE_TEST_CRON_CALLS: join(workDir, 'text-cron.jsonl') };
     const missing = await runCliWithFakeCron(['cron', 'status', '--db', target], env);
     expect(missing.stdout).toContain('Nenhum agendamento instalado');
-    const preview = await runCliWithFakeCron(['cron', 'install', '--dry-run', '--db', target], env);
+    const preview = await runCliWithFakeCron(['cron', 'install', '--dry-run', '--db', target, '--source', sourcePath], env);
     expect(preview.stdout).toContain('Agendamento que seria instalado');
-    const installed = await runCliWithFakeCron(['cron', 'install', '--db', target], env);
+    const installed = await runCliWithFakeCron(['cron', 'install', '--db', target, '--source', sourcePath], env);
     expect(installed.stdout).toContain('Agendamento instalado');
-    const updated = await runCliWithFakeCron(['cron', 'install', '--db', target], env);
+    const updated = await runCliWithFakeCron(['cron', 'install', '--db', target, '--source', sourcePath], env);
     expect(updated.stdout).toContain('Agendamento atualizado');
     const status = await runCliWithFakeCron(['cron', 'status', '--db', target], env);
     expect(status.stdout).toContain('Próxima execução:');
@@ -526,7 +552,7 @@ describe('CLI contract', () => {
     });
 
     const preview = await runCliWithFakeCron(
-      ['cron', 'install', '--dry-run', '--db', target, '--json'],
+      ['cron', 'install', '--dry-run', '--db', target, '--source', scheduledSource, '--json'],
       cronEnvironment,
     );
     expect(preview.status).toBe(0);
@@ -569,7 +595,7 @@ describe('CLI contract', () => {
     });
 
     const updated = await runCliWithFakeCron(
-      ['cron', 'install', '30 6 * * 5', '--db', target, '--json'],
+      ['cron', 'install', '30 6 * * 5', '--db', target, '--source', scheduledSource, '--json'],
       cronEnvironment,
     );
     expect(updated.status).toBe(0);
@@ -592,7 +618,7 @@ describe('CLI contract', () => {
 
     const otherTarget = join(workDir, 'other-cron.db');
     const otherInstalled = await runCliWithFakeCron(
-      ['cron', 'install', '--db', otherTarget, '--json'],
+      ['cron', 'install', '--db', otherTarget, '--source', scheduledSource, '--json'],
       cronEnvironment,
     );
     expect(otherInstalled.status).toBe(0);
@@ -618,7 +644,7 @@ describe('CLI contract', () => {
     expect(otherRemoved.status).toBe(0);
     expect(existsSync(parseJson(otherInstalled.stdout).data.runner)).toBe(false);
 
-    const invalid = await runCliWithFakeCron(['cron', 'install', 'not cron', '--json'], cronEnvironment);
+    const invalid = await runCliWithFakeCron(['cron', 'install', 'not cron', '--source', scheduledSource, '--json'], cronEnvironment);
     expect(invalid.status).toBe(2);
     expect(parseJson(invalid.stderr.slice(invalid.stderr.indexOf('{'))).error.message).toContain('expressão cron válida');
   });

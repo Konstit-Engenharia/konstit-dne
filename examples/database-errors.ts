@@ -53,7 +53,7 @@ for (const kind of ['binary', 'sqlite'] as const) {
   let reader: DneBinaryDatabaseReader | DneDatabaseReader | undefined;
   try {
     reader = kind === 'binary'
-      ? new DneBinaryDatabaseReader(process.env['DNE_DATABASE'])
+      ? new DneBinaryDatabaseReader(process.env['DNE_DATABASE'] ?? './data/dne.bin')
       : new DneDatabaseReader(process.env['DNE_SQLITE_DATABASE'] ?? './data/dne.db');
     console.log({ kind, address: reader.queryCep(process.argv[2] ?? '01001-000') });
     reader.close();

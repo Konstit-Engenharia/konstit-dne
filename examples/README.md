@@ -8,7 +8,7 @@ Os exemplos usam somente exports de [`src/library.ts`](../src/library.ts), o pon
 | --- | --- | --- |
 | [`cep-and-address.ts`](cep-and-address.ts) | `normalizeCep`, `cepToU32`, `formatCep`, `ufForCep`, `CEP_RANGES`, `expandAddress`. | Nenhum. |
 | [`states.ts`](states.ts) | `ALL_UFS`, `parseUF`, `ufToStateName`, `stateNameToUF`, `ufToStateCode`, `stateCodeToUF`, tipo `UF`. | Nenhum. |
-| [`binary-reader.ts`](binary-reader.ts) | `DneBinaryDatabaseReader`: abertura padrão ou por caminho, `queryCep`, `queryMunicipality`, `queryMunicipalityCodesByUf`, `queryNeighborhood`, `queryNeighborhoodByCep`, `queryNeighborhoodCepRanges`, `metadata`, `rowCount`, `checksum`, `entries`, `close`. | Base binária. |
+| [`binary-reader.ts`](binary-reader.ts) | `DneBinaryDatabaseReader`, abertura por caminho, `queryCep`, `queryMunicipality`, `queryMunicipalityCodesByUf`, `queryNeighborhood`, `queryNeighborhoodByCep`, `queryNeighborhoodCepRanges`, `metadata`, `rowCount`, `checksum`, `entries`, `close`. | Base binária. |
 | [`binary-inspection.ts`](binary-inspection.ts) | `BINARY_DATABASE_VERSION`, `BINARY_DATABASE_HEADER_SIZE`, `isBinaryDatabase`, `readBinaryDatabaseMetadata`. | Caminho de um arquivo. |
 | [`sqlite-reader.ts`](sqlite-reader.ts) | `DneDatabaseReader`: abertura por caminho, `queryCep`, `queryNeighborhood`, `queryNeighborhoodByCep`, `queryNeighborhoodCepRanges`, `metadata`, `hasTable`, `rowCount`, `tableSchema`, `querySql`, `close`. | Base SQLite. |
 | [`reader-disposal.ts`](reader-disposal.ts) | `Disposable`, `using` e `[Symbol.dispose]()` nos leitores binário e SQLite, com fechamento automático ao sair do bloco. | Base binária e SQLite. |
@@ -39,14 +39,14 @@ bun examples/cep-and-address.ts ' 01001-000 '
 bun examples/states.ts ' sp '
 ```
 
-Os leitores e as buscas não baixam dados. Se as bases ainda não existirem, gere-as com a CLI; estes comandos baixam e importam a fonte pública:
+Gere as bases usadas pelos exemplos com a CLI, fornecendo sua fonte e-DNE em `--source`.
 
 ```sh
-bun run src/index.ts build --format binary --db ./data/dne.bin
-bun run src/index.ts build --db ./data/dne.db
+bun run src/index.ts build --format binary --db ./data/dne.bin --source /dados/eDNE_Basico.zip
+bun run src/index.ts build --db ./data/dne.db --source /dados/eDNE_Basico.zip
 ```
 
-Para uma fonte já disponível, acrescente `--source /dados/eDNE_Basico.zip` ou o caminho de um diretório DNE a cada comando. A base SQLite é necessária apenas para seus exemplos. Execute as consultas:
+`--source` também aceita uma URL ou um diretório DNE. A base SQLite é necessária apenas para seus exemplos. Execute as consultas abaixo.
 
 ```sh
 DNE_DATABASE=./data/dne.bin bun examples/binary-reader.ts 01001-000
@@ -56,7 +56,7 @@ DNE_DATABASE=./data/dne.bin DNE_SQLITE_DATABASE=./data/dne.db bun examples/reade
 DNE_DATABASE=./data/dne.bin DNE_SQLITE_DATABASE=./data/dne.db bun examples/database-errors.ts
 ```
 
-`DNE_DATABASE` é opcional nos exemplos de leitor, geração de índice e busca: sem essa variável, eles usam a base binária incluída no pacote. No repositório, ela fica em `data/dne.bin`. `DNE_SQLITE_DATABASE` tem padrão `./data/dne.db`. CEPs ausentes retornam `undefined`, e consultas sem correspondências retornam listas vazias; o resultado depende da base fornecida.
+Os exemplos usam `./data/dne.bin` como caminho local padrão. Informe `DNE_DATABASE` para abrir outra base. `DNE_SQLITE_DATABASE` tem padrão `./data/dne.db`. CEPs ausentes retornam `undefined`, e consultas sem correspondências retornam listas vazias. O resultado depende da base fornecida.
 
 Gere um índice para a mesma base usada nas buscas. O exemplo de geração exige um caminho de saída novo e não sobrescreve um índice existente:
 
@@ -78,8 +78,8 @@ Requer Bun 1.4 ou mais recente e uma base binária. Execute na raiz do repositó
 
 ```sh
 bun install
-# Se ainda não houver uma base local, este comando baixa e importa os dados:
-bun run src/index.ts build --format binary --db ./data/dne.bin
+# Gere a base local a partir do arquivo e-DNE fornecido.
+bun run src/index.ts build --format binary --db ./data/dne.bin --source /dados/eDNE_Basico.zip
 # O índice precisa ter sido gerado a partir dessa mesma base:
 bun run build:search-index ./data/dne.bin ./data/dne.bin.search.bin
 bun examples/address-search-server.ts
@@ -139,6 +139,6 @@ Copie o exemplo e altere o import de `../src/library.ts` para `@konstit/dne`. In
 
 O pool incorpora o código do worker e o inicia por Blob URL. Você pode incluir `@konstit/dne` em um bundle Bun, inclusive com `--splitting`, ou em um executável `--compile`, sem um arquivo separado do worker ou um segundo entrypoint.
 
-Este servidor recebe caminhos por variáveis de ambiente: a base e o índice continuam sendo arquivos externos ao empacotá-lo. Para um executável com os dados embutidos, importe o índice e, se houver, a base personalizada com `with { type: 'file' }`, resolva esses caminhos a partir de `import.meta.url` e passe-os a `open()`. A base padrão do pacote já é um asset. O [guia de distribuição](../docs/address-search.md#bundles-e-executáveis-do-bun) contém um exemplo completo e os comandos de build. Em bundles JavaScript, distribua também os assets e chunks gerados no diretório de saída.
+Este servidor recebe caminhos por variáveis de ambiente e lê a base e o índice de arquivos externos. Para um executável com os dados embutidos, importe a base e o índice com `with { type: 'file' }`, resolva esses caminhos a partir de `import.meta.url` e passe-os a `open()`. Em bundles JavaScript, distribua também os assets e chunks gerados no diretório de saída. Consulte o exemplo completo e os comandos de build no [guia de distribuição](../docs/address-search.md#bundles-e-executáveis-do-bun).
 
 Na interface de autocomplete, faça debounce e aborte a requisição anterior quando o texto mudar. Comece com um worker e meça latência e memória sob concorrência antes de aumentar a quantidade. Mais workers não garantem que uma consulta individual fique mais rápida. O prazo e o limite da fila do exemplo são escolhas iniciais, não resultados de dimensionamento.

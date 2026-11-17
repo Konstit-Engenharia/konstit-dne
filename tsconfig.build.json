@@ -10,5 +10,5 @@
     "rootDir": "src",
     "outDir": "dist"
   },
-  "include": ["src/library.ts", "src/bundled-database.ts", "src/assets.d.ts"]
+  "include": ["src/library.ts"]
 }

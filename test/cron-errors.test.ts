@@ -29,7 +29,6 @@ import {
   removeCronSchedule,
   showCronSchedule,
 } from '../src/cron-service.ts';
-import { EDNE_DOWNLOAD_URL } from '../src/settings.ts';
 import { captureRejection } from './assertions.ts';
 
 const directory = mkdtempSync(join(tmpdir(), 'dne-cron-errors-'));
@@ -41,6 +40,7 @@ const options = {
   dryRun: false,
   expression: '0 0 * * 5',
   packageVersion: '1.2.3',
+  source: 'https://example.com/dne.zip',
 };
 
 beforeEach(() => {
@@ -162,7 +162,9 @@ describe('cron failure handling', () => {
     const saved = JSON.parse(readFileSync(metadata, 'utf8'));
     delete saved.source;
     writeFileSync(metadata, JSON.stringify(saved));
-    expect(showCronSchedule(options.database).source).toBe(EDNE_DOWNLOAD_URL);
+    expect(showCronSchedule(options.database).source).toBeNull();
+    expect(await installCronSchedule(options)).toMatchObject({ source: options.source, status: 'updated' });
+    expect(showCronSchedule(options.database).source).toBe(options.source);
     writeFileSync(metadata, JSON.stringify({ ...saved, database: 'different.db' }));
     expect(() => showCronSchedule(options.database)).toThrow(expect.objectContaining({ code: 'cron-config-invalid' }));
     writeFileSync(metadata, '{');

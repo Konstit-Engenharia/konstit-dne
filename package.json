@@ -1,7 +1,7 @@
 {
   "name": "@konstit/dne",
   "version": "0.2.0",
-  "description": "Query bundled Brazilian postal codes or build and update local SQLite and binary databases.",
+  "description": "Build, update, and query local Brazilian postal code databases from DNE sources.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Konstit-Engenharia/konstit-dne.git"
@@ -38,17 +38,15 @@
   },
   "files": [
     "dist",
-    "data/dne.bin",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "build:database": "bun run src/index.ts build",
-    "build:package-database": "bun run scripts/build-package-database.ts",
+    "build:database": "bun run scripts/build-database.ts",
     "build:search-index": "bun run scripts/build-search-index.ts",
     "benchmark:search": "bun run bench/address-search.bench.ts",
     "benchmark:search-http": "bun run bench/address-search-http.bench.ts",
-    "prepack": "bun run build >&2 && bun run build:package-database >&2",
+    "prepack": "bun run build >&2",
     "get": "bun run src/index.ts get",
     "test": "bun test --dots --parallel",
     "benchmark": "bun run bench/benchmark.ts",
@@ -70,7 +68,7 @@
     "build:artifacts": "bun run build:worker && bun run build:clean && bun run --parallel build:js build:library",
     "build:worker": "bun run scripts/build-address-search-worker.ts",
     "build:clean": "rm -rf ./dist",
-    "build:js": "bun build ./src/index.ts --outdir ./dist --target=bun --format=esm --sourcemap=external --minify --keep-names --splitting --chunk-naming 'chunks/[name]-[hash].[ext]' --external '*data/dne.bin'",
+    "build:js": "bun build ./src/index.ts --outdir ./dist --target=bun --format=esm --sourcemap=external --minify --keep-names --splitting --chunk-naming 'chunks/[name]-[hash].[ext]'",
     "build:library": "bunx --bun tsc -p tsconfig.build.json",
     "cli": "bun run src/index.ts"
   },

@@ -76,6 +76,7 @@ jobs:
 
       - name: Smoke test npm tarball
         env:
+          EDNE_SOURCE_URL: ${{ secrets.EDNE_SOURCE_URL }}
           TARBALL: ${{ steps.package.outputs.tarball }}
         run: |
           SMOKE_DIR="$(mktemp -d)"
@@ -83,11 +84,12 @@ jobs:
           npm install --prefix "$SMOKE_DIR" "$GITHUB_WORKSPACE/$TARBALL" --ignore-scripts --no-audit --no-fund
           cd "$SMOKE_DIR"
           bunx --no-install @konstit/dne --help
+          bunx --no-install @konstit/dne build --format binary --db ./dne.bin --source "$EDNE_SOURCE_URL"
           bun --eval '
             import { DneBinaryDatabaseReader } from "@konstit/dne";
-            const reader = new DneBinaryDatabaseReader();
+            const reader = new DneBinaryDatabaseReader("./dne.bin");
             if (!reader.queryCep("01001000") || reader.rowCount() === 0) {
-              throw new Error("Bundled database lookup failed");
+              throw new Error("Remote database lookup failed");
             }
             reader.close();
           '

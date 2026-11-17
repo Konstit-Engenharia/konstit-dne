@@ -1,6 +1,6 @@
 # @konstit/dne: CEPs do Brasil
 
-Consulte CEPs do Brasil localmente em aplicações Bun, com uma base compacta incluída no pacote e dados do e-DNE dos Correios. As consultas funcionam offline, sem servidor. A CLI também permite criar e atualizar bases próprias em SQLite ou formato binário.
+Crie e consulte bases locais de CEPs do Brasil em aplicações Bun a partir de dados do e-DNE dos Correios. Informe um diretório, arquivo ZIP ou URL com `--source` para gerar uma base SQLite ou binária. As consultas funcionam offline, sem servidor.
 
 Consulte os [benchmarks de leitura e importação](https://github.com/Konstit-Engenharia/konstit-dne/blob/main/docs/performance.md) para os resultados medidos em cada formato.
 
@@ -9,12 +9,13 @@ Consulte os [benchmarks de leitura e importação](https://github.com/Konstit-En
 - Bun 1.4 ou mais recente
 - macOS ou Linux
 
-## Início rápido: consultar a base incluída
+## Início rápido
 
 Instale o pacote:
 
 ```sh
 bun add @konstit/dne
+bunx @konstit/dne build --format binary --db ./dne.bin --source ./eDNE_Basico.zip
 ```
 
 Salve como `consulta.ts`:
@@ -22,7 +23,7 @@ Salve como `consulta.ts`:
 ```typescript
 import { DneBinaryDatabaseReader } from '@konstit/dne';
 
-const db = new DneBinaryDatabaseReader();
+const db = new DneBinaryDatabaseReader('./dne.bin');
 console.log(db.queryCep('01141-000'));
 db.close();
 ```
@@ -44,9 +45,9 @@ Execute com `bun consulta.ts`. Saída para a base usada neste exemplo:
 }
 ```
 
-O leitor abre a base incluída no pacote, independentemente do diretório de trabalho, sem baixar dados adicionais. Ela representa a fonte usada no empacotamento daquela versão: atualize o pacote para receber outra cópia ou informe o caminho de uma base própria ao construtor.
+O leitor exige o caminho de uma base existente. Caminhos relativos usam o diretório de trabalho. Para atualizar os dados, execute novamente `build` com a fonte desejada e abra outro leitor.
 
-Ao empacotar uma aplicação com `bun build --target=bun`, o Bun inclui a base como asset no diretório de saída. Distribua esse diretório completo. Com `bun build --compile`, a base fica embutida no executável. Nos dois casos, o construtor continua sem argumento. Arquivos físicos e assets embutidos são lidos integralmente em memória, sem criar arquivos temporários ou exigir permissão de escrita. As consultas usam essa cópia até o leitor ser fechado.
+Arquivos físicos e assets importados pela aplicação são lidos integralmente em memória. As consultas usam essa cópia até o leitor ser fechado. Para distribuir seus dados com um bundle ou executável Bun, consulte o [guia de distribuição](docs/address-search.md#bundles-e-executáveis-do-bun).
 
 `queryCep()` aceita `01141000` ou `01141-000` e retorna `undefined` para CEPs inválidos ou ausentes. Consulte a [referência da API](https://github.com/Konstit-Engenharia/konstit-dne/blob/main/docs/api.md) para consultas de bairros e faixas de CEP, tipos e tratamento de erros.
 
@@ -54,9 +55,9 @@ Ao empacotar uma aplicação com `bun build --target=bun`, o Bun inclui a base c
 
 | Necessidade                                    | Formato | Como usar                       |
 | ---------------------------------------------- | ------- | ------------------------------- |
-| Consultar a base incluída no pacote            | Binário | `new DneBinaryDatabaseReader()` |
-| Gerar uma base compacta para consultas por CEP | Binário | `build --format binary`         |
-| Executar SQL ou integrar ferramentas SQLite    | SQLite  | `build --db ./dne.db`           |
+| Consultar uma base compacta                    | Binário | `new DneBinaryDatabaseReader('./dne.bin')` |
+| Gerar uma base compacta para consultas por CEP | Binário | `build --format binary --source ./eDNE_Basico.zip` |
+| Executar SQL ou integrar ferramentas SQLite    | SQLite  | `build --db ./dne.db --source ./eDNE_Basico.zip` |
 
 Os dois leitores oferecem consultas por CEP, bairro e faixas de CEP. O leitor binário também oferece `queryMunicipality(municipioCodIbge)`, que retorna `{ municipio, uf }` a partir do código IBGE, e `queryMunicipalityCodesByUf(uf)`, que lista os códigos IBGE de uma UF. Para abrir arquivos próprios na API, use `new DneBinaryDatabaseReader('/dados/dne.bin')` ou `new DneDatabaseReader('/dados/dne.db')`, importados de `@konstit/dne`.
 
@@ -72,36 +73,36 @@ Para endpoints, `DneAddressSearchPool` oferece a mesma busca de forma assíncron
 
 ## CLI: criar e consultar sua própria base
 
-Execute sem instalação global. Para criar uma base SQLite a partir do arquivo público do e-DNE e consultar um CEP:
+Execute sem instalação global. Forneça o arquivo e-DNE para criar uma base SQLite e consultar um CEP.
 
 ```sh
-bunx @konstit/dne build --db ./dne.db
+bunx @konstit/dne build --db ./dne.db --source ./eDNE_Basico.zip
 bunx @konstit/dne get 01001-000 --db ./dne.db --json
 ```
 
 Para gerar e consultar uma base binária:
 
 ```sh
-bunx @konstit/dne build --format binary --db ./dne.bin
+bunx @konstit/dne build --format binary --db ./dne.bin --source ./eDNE_Basico.zip
 bunx @konstit/dne get 01001-000 --db ./dne.bin --json
 ```
 
-A CLI usa `./dne.db` por padrão; `build --format binary` gera `./dne.bin` por padrão. A CLI não seleciona automaticamente a base incluída no pacote: informe `--db` para consultar outro arquivo. `get`, `status` e `schema` detectam o formato do arquivo informado. O comando `sql` exige SQLite.
+A CLI usa `./dne.db` por padrão. `build --format binary` gera `./dne.bin` por padrão. Informe `--db` para consultar outro arquivo. `get`, `status` e `schema` detectam o formato do arquivo informado. O comando `sql` exige SQLite.
 
 ### Criar e atualizar
 
-`build` aceita a fonte pública, um ZIP local ou um diretório com os arquivos do e-DNE. Ao usar uma fonte remota, repetir o comando atualiza a base somente quando necessário. `--check` verifica a fonte sem alterar a base.
+`build` exige `--source` com uma URL, um ZIP local ou um diretório com os arquivos do e-DNE. Ao usar uma fonte remota, repetir o comando atualiza a base somente quando necessário. `--check` verifica a fonte sem alterar a base.
 
 ```sh
 bunx @konstit/dne build --db ./dne.db --source ./eDNE_Basico.zip
-bunx @konstit/dne build --db ./dne.db --check --json
+bunx @konstit/dne build --db ./dne.db --source ./eDNE_Basico.zip --check --json
 bunx @konstit/dne status --db ./dne.db --json
 ```
 
 Para agendar a atualização semanal de uma base SQLite no Linux ou macOS:
 
 ```sh
-bunx @konstit/dne cron install --db ./dne.db
+bunx @konstit/dne cron install --db ./dne.db --source https://example.com/eDNE_Basico.zip
 ```
 
 O agendamento padrão executa à meia-noite de sexta-feira e fixa a versão atual do pacote. Consulte [atualização automática](https://github.com/Konstit-Engenharia/konstit-dne/blob/main/docs/cli.md#atualização-automática) para alterar a agenda, verificar o job ou removê-lo.

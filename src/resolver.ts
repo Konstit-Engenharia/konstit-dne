@@ -16,7 +16,6 @@ import {
   type HttpRequestOptions,
 } from './parallel-download.ts';
 import type { TableDefinition } from './schema.ts';
-import { EDNE_DOWNLOAD_URL } from './settings.ts';
 
 /**
  * Remote-source identity and raw HTTP validators obtained without downloading the full archive.
@@ -68,11 +67,11 @@ export class DneResolver {
 
   /**
    * Configures a source resolver without reading or downloading data.
-   * @param source - Directory, ZIP path, or HTTP(S) URL; omission selects the configured Correios source.
+   * @param source - Directory, ZIP path, or HTTP(S) URL.
    * @param options - Optional progress callback and remote-source headers.
    */
   constructor(
-    private source?: string,
+    private source: string,
     private options: DneResolverOptions = {},
   ) {}
 
@@ -84,10 +83,7 @@ export class DneResolver {
    */
   async resolve(schema: TableDefinition[]): Promise<DneDataSource> {
     try {
-      return await this.resolveSource(
-        this.source ?? EDNE_DOWNLOAD_URL,
-        schema,
-      );
+      return await this.resolveSource(this.source, schema);
     } catch (error) {
       await this.cleanup();
       throw error;

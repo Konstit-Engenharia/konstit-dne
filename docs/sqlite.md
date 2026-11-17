@@ -109,10 +109,9 @@ Um município com CEP geral ainda pode ter CEPs específicos de estabelecimentos
 
 ## Migrações e compatibilidade
 
-O esquema SQLite atual está na versão `4`, gravada em `schema_version` dentro de `edne_metadata`. Essa versão do esquema é independente da versão do formato binário. Bases anteriores precisam de uma nova importação para recuperar `bairros`, `bairro_faixas`, a view normalizada e os indicadores de localidade. Informe `--source` quando a base usa uma fonte própria:
+O esquema SQLite atual está na versão `4`, gravada em `schema_version` dentro de `edne_metadata`. Essa versão do esquema é independente da versão do formato binário. Bases anteriores precisam de uma nova importação para recuperar `bairros`, `bairro_faixas`, a view normalizada e os indicadores de localidade. Informe a fonte em `--source` ao importar novamente.
 
 ```sh
-bunx @konstit/dne build --force --db ./dne.db
 bunx @konstit/dne build --force --db ./dne.db --source /dados/eDNE_Basico.zip
 ```
 

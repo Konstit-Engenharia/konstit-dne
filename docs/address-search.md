@@ -86,7 +86,7 @@ Em um servidor, crie o pool na inicialização, reutilize-o em todas as requisi�
 
 | Opção | Padrão | Regra |
 | --- | --- | --- |
-| `databasePath` | Base incluída no pacote | Caminho opcional e não vazio. |
+| `databasePath` | Obrigatório | Caminho não vazio da base binária. |
 | `indexPath` | Obrigatório | Caminho não vazio do índice já gerado para essa base. |
 | `workers` | `1` | Inteiro positivo e seguro. |
 | `maxQueue` | `64` | Inteiro seguro maior ou igual a zero. Conta apenas consultas aguardando; `0` admite somente consultas que possam iniciar imediatamente. |
@@ -132,18 +132,20 @@ O pool cria workers a partir de Blob URLs. O JavaScript do worker e suas depend�
 O pacote instalado, bundles ESM simples, bundles com `--splitting` e executáveis `--compile` são suportados. Não é necessário usar `--external @konstit/dne` nem fornecer o worker como um segundo entrypoint. Um bundle JavaScript ainda precisa do Bun para executar. Os arquivos de dados seguem as regras abaixo:
 
 - Caminhos fornecidos como strings em `databasePath` e `indexPath` apontam para arquivos externos. Use caminhos absolutos ou distribua esses arquivos em relação ao diretório de execução.
-- A base padrão do pacote é resolvida no processo principal, antes de iniciar o primeiro worker. O bundler do Bun inclui esse asset no build.
-- Para incorporar o índice, importe-o com `with { type: 'file' }` e resolva seu caminho a partir de `import.meta.url`. O índice precisa corresponder à base.
+- `databasePath` e `indexPath` são obrigatórios. O processo principal resolve os caminhos antes de iniciar o primeiro worker.
+- Para incorporar a base e o índice, importe-os com `with { type: 'file' }` e resolva seus caminhos a partir de `import.meta.url`. O índice precisa corresponder à base.
 - Em bundles JavaScript, distribua todo o diretório de saída, incluindo os arquivos `.bin` e eventuais chunks. Em um executável, os assets importados ficam embutidos no próprio arquivo.
 
-Exemplo de `app.ts` usando a base padrão e um índice já gerado para ela:
+O exemplo de `app.ts` abaixo importa a base da aplicação e um índice gerado para ela.
 
 ```typescript
 import { fileURLToPath } from 'node:url';
 import { DneAddressSearchPool } from '@konstit/dne';
+import databaseAsset from './data/dne.bin' with { type: 'file' };
 import indexAsset from './data/dne.search.bin' with { type: 'file' };
 
 const pool = await DneAddressSearchPool.open({
+  databasePath: fileURLToPath(new URL(databaseAsset, import.meta.url)),
   indexPath: fileURLToPath(new URL(indexAsset, import.meta.url)),
   workers: 2,
 });
@@ -159,12 +161,12 @@ try {
 bun build ./app.ts --target=bun --outdir ./build
 bun ./build/app.js
 
-# Um executável contendo runtime, código, base padrão e índice importado.
+# Um executável contendo runtime, código, base e índice importados.
 bun build ./app.ts --compile --outfile ./address-search
 ./address-search
 ```
 
-Uma base personalizada também pode ser importada como asset de um arquivo próprio da aplicação e passada por `databasePath`; seu índice deve ser gerado a partir dessa mesma base. Para projetos TypeScript, declare `module '*.bin'` com um export default do tipo `string`, se necessário.
+Para projetos TypeScript, declare `module '*.bin'` com um export default do tipo `string`, se necessário.
 
 Arquivos externos são lidos diretamente nas alocações compartilhadas. Para assets embutidos que não oferecem um descritor de arquivo nativo no Bun, a carga inicial usa `readFileSync` e uma cópia para `SharedArrayBuffer`. Isso pode aumentar a memória transitória na inicialização; os demais workers continuam recebendo os mesmos buffers, sem uma cópia da base e do índice por worker.
 

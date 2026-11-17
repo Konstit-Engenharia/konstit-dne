@@ -1,5 +1,4 @@
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import {
   readBairroRunIndex,
   readBairroRunsLayout,
@@ -163,15 +162,15 @@ export class DneBinaryDatabaseReader implements Disposable {
 
   /**
    * Reads and verifies a complete binary database from a physical file or embedded asset.
-   * @param databasePath - Optional path to an existing binary database. Defaults to this package's database asset.
+   * @param databasePath - Path to an existing binary database.
    * @throws {DneBinaryDatabaseIOError} If the file cannot be resolved or read.
    * @throws {DneBinaryDatabaseVersionError} If the declared format version is unsupported.
    * @throws {DneBinaryDatabaseFormatError} If the minimum header, file size, or SHA-256 checksum is invalid.
    */
-  constructor(databasePath?: string);
+  constructor(databasePath: string);
   /** @internal The pool owns this initialized snapshot and never writes to it after publication. */
   constructor(snapshot: SharedArrayBuffer);
-  constructor(source?: string | SharedArrayBuffer) {
+  constructor(source: string | SharedArrayBuffer) {
     const bytes = source instanceof SharedArrayBuffer ? new Uint8Array(source) : readBinaryDatabaseBytes(source);
     try {
       const data = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -665,17 +664,12 @@ export class DneBinaryDatabaseReader implements Disposable {
   }
 }
 
-/** @internal Reads one owned file buffer, including the package asset when no path is supplied. */
-export function readBinaryDatabaseBytes(databasePath?: string, shared = false): Uint8Array {
+/** @internal Reads one owned file buffer from the supplied database path. */
+export function readBinaryDatabaseBytes(databasePath: string, shared = false): Uint8Array {
   try {
-    // Load the asset module only for the default database; Bun follows this literal dependency.
-    databasePath ??= (require('./bundled-database') as { default: string; }).default;
     return shared ? new Uint8Array(readSharedFile(databasePath)) : readFileSync(databasePath);
   } catch (cause) {
-    throw new DneBinaryDatabaseIOError(
-      databasePath ?? fileURLToPath(new URL('../data/dne.bin', import.meta.url)),
-      { cause },
-    );
+    throw new DneBinaryDatabaseIOError(databasePath, { cause });
   }
 }
 

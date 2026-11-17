@@ -124,7 +124,7 @@ describe('database service', () => {
 });
 
 describe('cron service', () => {
-  test('installs, preserves the source, reports, and removes a schedule', async () => {
+  test('installs, updates, reports, and removes a schedule with an explicit source', async () => {
     const calls: { action: string; title: string; }[] = [];
     setCron(fakeCron(calls));
     Bun.env['XDG_STATE_HOME'] = join(workDir, 'state');
@@ -156,6 +156,7 @@ describe('cron service', () => {
       dryRun: false,
       expression: '30 6 * * 5',
       packageVersion: '1.2.3',
+      source,
     });
     expect(updated).toMatchObject({ source, status: 'updated' });
 

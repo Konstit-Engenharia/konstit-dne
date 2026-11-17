@@ -174,7 +174,9 @@ describe('address search worker pool', () => {
   });
 
   test('rejects empty paths before creating workers', async () => {
-    expect(await captureRejection(DneAddressSearchPool.open({ indexPath: '' }))).toBeInstanceOf(TypeError);
+    expect(await captureRejection(DneAddressSearchPool.open({ databasePath, indexPath: '' }))).toBeInstanceOf(TypeError);
+    // @ts-expect-error JavaScript callers must also supply a database path.
+    expect(await captureRejection(DneAddressSearchPool.open({ indexPath }))).toBeInstanceOf(TypeError);
     expect(await captureRejection(DneAddressSearchPool.open({ databasePath: ' ', indexPath }))).toBeInstanceOf(TypeError);
   });
 

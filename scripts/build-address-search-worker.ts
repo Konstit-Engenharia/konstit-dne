@@ -8,16 +8,6 @@ const build = await Bun.build({
   format: 'esm',
   splitting: false,
   minify: { syntax: true, whitespace: true, identifiers: false },
-  plugins: [{
-    name: 'worker-database-path',
-    setup(builder) {
-      // The parent resolves the package asset. Workers only receive absolute paths or shared bytes.
-      builder.onLoad({ filter: /[/\\]bundled-database\.ts$/ }, () => ({
-        loader: 'js',
-        contents: "throw new Error('Address search workers require a resolved database path'); export default '';",
-      }));
-    },
-  }],
 });
 if (!build.success) {
   throw new AggregateError(build.logs, 'Unable to bundle the address search worker');

@@ -87,6 +87,8 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Build and install npm tarball
+        env:
+          EDNE_SOURCE_URL: ${{ secrets.EDNE_SOURCE_URL }}
         run: |
           PACK_RESULT="$(npm pack --json)"
           TARBALL="$(node -e "process.stdout.write(JSON.parse(process.argv[1])[0].filename)" "$PACK_RESULT")"
@@ -95,11 +97,12 @@ jobs:
           npm install --prefix "$SMOKE_DIR" "$GITHUB_WORKSPACE/$TARBALL" --ignore-scripts --no-audit --no-fund
           cd "$SMOKE_DIR"
           bunx --no-install @konstit/dne --help
+          bunx --no-install @konstit/dne build --format binary --db ./dne.bin --source "$EDNE_SOURCE_URL"
           bun --eval '
             import { DneBinaryDatabaseReader } from "@konstit/dne";
-            const reader = new DneBinaryDatabaseReader();
+            const reader = new DneBinaryDatabaseReader("./dne.bin");
             if (!reader.queryCep("01001000") || reader.rowCount() === 0) {
-              throw new Error("Bundled database lookup failed");
+              throw new Error("Remote database lookup failed");
             }
             reader.close();
           '

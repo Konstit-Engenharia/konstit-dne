@@ -13,7 +13,6 @@ import {
 } from 'node:path';
 import { databasePath } from './database-service.ts';
 import { UserError } from './errors.ts';
-import { EDNE_DOWNLOAD_URL } from './settings.ts';
 
 /**
  * Persisted configuration of one database-update schedule registered through Bun.cron.
@@ -40,9 +39,9 @@ export type CronEntry = {
    */
   runner: string;
   /**
-   * Source URL or absolute local source path stored for future runs.
+   * Stored source URL or absolute path, or null when older metadata omitted it.
    */
-  source: string;
+  source: string | null;
   /**
    * Bun.cron title, equal to the stable schedule identifier.
    */
@@ -66,9 +65,9 @@ type InstallCronOptions = {
    */
   packageVersion: string;
   /**
-   * Optional source override; omission retains the existing source or uses the configured default.
+   * Directory, ZIP path, or HTTP(S) URL used by the scheduled build.
    */
-  source?: string;
+  source: string;
 };
 
 /**
@@ -80,7 +79,7 @@ type InstallCronOptions = {
 export async function installCronSchedule(options: InstallCronOptions) {
   const database = cronDatabasePath(options.database);
   const previous = readCronEntry(database);
-  const source = cronSource(options.source ?? previous?.source ?? EDNE_DOWNLOAD_URL);
+  const source = cronSource(options.source);
   const entry = createCronEntry(options.expression, database, source, options.packageVersion);
   const status = options.dryRun ? 'preview' : previous ? 'updated' : 'installed';
 
@@ -317,10 +316,7 @@ function readCronEntry(database: string): CronEntry | null {
       throw new Error('invalid cron metadata');
     }
     Bun.cron.parse(value.expression);
-    return {
-      ...value,
-      source: typeof value.source === 'string' ? value.source : EDNE_DOWNLOAD_URL,
-    } as CronEntry;
+    return { ...value, source: typeof value.source === 'string' ? value.source : null } as CronEntry;
   } catch {
     throw new UserError(
       'cron-config-invalid',

@@ -9,8 +9,7 @@ import {
   type LocalidadeTipo,
 } from '../src/library.ts';
 
-// Omitting DNE_DATABASE uses the binary database bundled with the package.
-const reader = new DneBinaryDatabaseReader(process.env['DNE_DATABASE']);
+const reader = new DneBinaryDatabaseReader(process.env['DNE_DATABASE'] ?? './data/dne.bin');
 try {
   const metadata: Readonly<LoadMetadata> = reader.metadata();
   console.log({ rows: reader.rowCount(), checksum: reader.checksum(), metadata });

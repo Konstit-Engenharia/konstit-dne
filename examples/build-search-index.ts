@@ -9,7 +9,7 @@ const output = process.argv[2];
 if (!output) {
   throw new Error('Usage: bun examples/build-search-index.ts <new-index-path>');
 }
-const database = new DneBinaryDatabaseReader(process.env['DNE_DATABASE']);
+const database = new DneBinaryDatabaseReader(process.env['DNE_DATABASE'] ?? './data/dne.bin');
 try {
   // Build once for this exact database snapshot, outside the request path.
   const bytes: Uint8Array = buildAddressSearchIndex(database);

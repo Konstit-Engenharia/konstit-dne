@@ -109,7 +109,7 @@ export async function openReadyDatabase(path: string, tableName = SQLITE_CEP_TAB
     reader.close();
     throw new UserError(
       'database-not-ready',
-      `A base '${path}' não contém a tabela '${tableName}'. Execute bunx @konstit/dne build primeiro.`,
+      `A base '${path}' não contém a tabela '${tableName}'. Execute bunx @konstit/dne build --source CAMINHO_OU_URL primeiro.`,
     );
   }
   return reader;

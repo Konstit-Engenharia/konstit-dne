@@ -60,7 +60,6 @@ import {
 } from './schema.ts';
 import {
   BINARY_NAME,
-  EDNE_DOWNLOAD_URL,
   SQLITE_CEP_TABLE_NAME,
   SQLITE_FILE_NAME,
   SQLITE_METADATA_TABLE_NAME,
@@ -125,12 +124,12 @@ export const cli = command(BINARY_NAME, {
   about: 'Criar e consultar uma base local com os CEPs do Brasil.',
   afterHelp: [
     'Exemplos:',
-    '  bunx @konstit/dne build --db ./dne.db',
-    '  bunx @konstit/dne build --format binary',
+    '  bunx @konstit/dne build --db ./dne.db --source ./eDNE_Basico.zip',
+    '  bunx @konstit/dne build --format binary --source ./eDNE_Basico.zip',
     '  bunx @konstit/dne build-search-index --db ./dne.bin',
     '  bunx @konstit/dne get 01001-000 --db ./dne.db',
     '  bunx @konstit/dne status --db ./dne.db',
-    '  bunx @konstit/dne cron install --db ./dne.db',
+    '  bunx @konstit/dne cron install --db ./dne.db --source https://example.com/eDNE_Basico.zip',
   ].join('\n'),
   args: [databaseArgument, jsonArgument, quietArgument, colorArgument],
   version: VERSION,
@@ -143,9 +142,10 @@ export const cli = command(BINARY_NAME, {
           valueName: 'sqlite|binary',
         }),
         option('source', parsers.string, {
-          default: EDNE_DOWNLOAD_URL,
+          required: true,
           describe: 'Diretório DNE, arquivo ZIP ou URL.',
           valueName: 'CAMINHO|URL',
+          env: 'EDNE_SOURCE_URL',
         }),
         flag('force', {
           describe: 'Ignorar metadados de atualização e recriar a base.',
@@ -207,9 +207,9 @@ export const cli = command(BINARY_NAME, {
           describe: 'Não verificar a fonte remota.',
         }),
         option('source', parsers.string, {
-          default: EDNE_DOWNLOAD_URL,
-          describe: 'URL da fonte remota que será verificada.',
+          describe: 'URL da fonte remota. Obrigatória sem --offline.',
           valueName: 'URL',
+          env: 'EDNE_SOURCE_URL',
         }),
       ],
       about: 'Verificar Bun, configuração da base e acesso à fonte',
@@ -245,6 +245,7 @@ export const cli = command(BINARY_NAME, {
               describe: 'Exibir o agendamento sem alterar o sistema.',
             }),
             option('source', parsers.string, {
+              required: true,
               describe: 'Diretório DNE, arquivo ZIP ou URL usado pelo agendamento.',
               valueName: 'CAMINHO|URL',
             }),
@@ -346,7 +347,7 @@ function globalOptions(context: HandlerContext): GlobalOptions {
 }
 
 async function installCron(
-  options: { 'dry-run': boolean; 'expression': string; 'source': string | undefined; },
+  options: { 'dry-run': boolean; 'expression': string; 'source': string; },
   globals: GlobalOptions,
 ) {
   const result = await installCronSchedule({
@@ -732,16 +733,19 @@ async function showSchema(options: { expected: boolean; }, globals: GlobalOption
   return 0;
 }
 
-async function doctor(options: { offline: boolean; source: string; }, globals: GlobalOptions) {
+async function doctor(options: { offline: boolean; source: string | undefined; }, globals: GlobalOptions) {
+  if (!options.offline && !options.source) {
+    throw new UserError('invalid-arguments', 'Informe --source URL ou use --offline.', EXIT_INVALID_INPUT);
+  }
   const inspection = await inspectDatabase(databasePath(globals.database));
   const runtimeCompatible = bunVersionIsCompatible(Bun.version);
   let source: Record<string, unknown> = {
     checked: false,
     reachable: null,
-    url: options.source,
+    url: options.source ?? null,
   };
 
-  if (!options.offline) {
+  if (!options.offline && options.source) {
     try {
       const info = await inspectRemoteDneSource(options.source);
       source = {
@@ -773,7 +777,7 @@ async function doctor(options: { offline: boolean; source: string; }, globals: G
       name: 'bun',
       version: Bun.version,
     },
-    setup: inspection.ready ? null : `Execute bunx @konstit/dne build --db ${shellQuote(inspection.path)}`,
+    setup: inspection.ready ? null : `Execute bunx @konstit/dne build --db ${shellQuote(inspection.path)} --source CAMINHO_OU_URL`,
     source,
     version: VERSION,
   };

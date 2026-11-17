@@ -16,8 +16,8 @@ import workerSource from './address-search-worker-source.ts';
 
 /** Native Bun workers share immutable database/index bytes and own their search workspaces. */
 export type AddressSearchPoolOptions = {
-  /** Defaults to the database bundled with the package. Relative paths use the caller's current directory at open(). */
-  databasePath?: string;
+  /** Path to the binary database. Relative paths use the caller's current directory at open(). */
+  databasePath: string;
   /** Path to the prebuilt index matching the database. */
   indexPath: string;
   /** Positive integer. Defaults to 1; additional workers consume additional memory. */
@@ -66,7 +66,7 @@ export class DneAddressSearchPool {
     }
     if (
       typeof options.indexPath !== 'string' || !options.indexPath.trim()
-      || (options.databasePath !== undefined && (typeof options.databasePath !== 'string' || !options.databasePath.trim()))
+      || typeof options.databasePath !== 'string' || !options.databasePath.trim()
     ) {
       throw new TypeError('Address search pool requires nonempty file paths');
     }
@@ -74,10 +74,7 @@ export class DneAddressSearchPool {
     try {
       const data: AddressSearchWorkerData = {
         type: 'load',
-        // Asset URLs must be resolved in the parent module, never relative to the worker's blob URL.
-        databasePath: options.databasePath === undefined
-          ? (require('./bundled-database') as { default: string; }).default
-          : resolve(options.databasePath),
+        databasePath: resolve(options.databasePath),
         indexPath: resolve(options.indexPath),
       };
       const snapshot = await pool.spawn(data);
