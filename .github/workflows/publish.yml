@@ -42,7 +42,7 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -79,6 +79,7 @@ jobs:
           EDNE_SOURCE_URL: ${{ secrets.EDNE_SOURCE_URL }}
           TARBALL: ${{ steps.package.outputs.tarball }}
         run: |
+          : "${EDNE_SOURCE_URL:?Configure EDNE_SOURCE_URL in the npm-publish environment}"
           SMOKE_DIR="$(mktemp -d)"
           trap 'rm -rf "$SMOKE_DIR"' EXIT
           npm install --prefix "$SMOKE_DIR" "$GITHUB_WORKSPACE/$TARBALL" --ignore-scripts --no-audit --no-fund

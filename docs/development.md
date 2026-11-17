@@ -2,7 +2,7 @@
 
 [Voltar ao README](../README.md)
 
-Instale as dependências na raiz do repositório:
+Use Bun 1.4.4, a versão de desenvolvimento definida em `package.json` e usada pelos jobs de cobertura e publicação. Instale as dependências na raiz do repositório:
 
 ```sh
 bun install
@@ -57,7 +57,9 @@ Consulte [desempenho e reprodução dos benchmarks](performance.md) para compara
 
 Os testes de distribuição empacotam o projeto, instalam o tarball e usam a CLI instalada para gerar uma base a partir de uma fixture local. Também verificam consultas síncronas e pelo pool em bundles simples, bundles com chunks e executáveis compilados com assets fornecidos pela aplicação. Veja [como empacotar os dados com a aplicação](address-search.md#bundles-e-executáveis-do-bun).
 
-Os workflows de CI e publicação usam o secret `EDNE_SOURCE_URL` como `--source` no teste do pacote instalado. Esse teste importa o ZIP remoto e consulta a base gerada.
+A verificação do worker compara o código gerado byte a byte. Gere o worker e execute a cobertura com a versão de desenvolvimento do Bun, pois versões diferentes do bundler podem produzir código diferente.
+
+Os workflows de CI e publicação usam o secret `EDNE_SOURCE_URL` do environment `npm-publish` como `--source` no teste do pacote instalado. Esse teste importa o ZIP remoto e consulta a base gerada.
 
 Para gerar o tarball, execute o comando abaixo.
 
